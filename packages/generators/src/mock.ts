@@ -435,6 +435,18 @@ function matchSegment(tseg, seg, params) {
   return true;
 }
 
+/** The query as a record; a key repeated on the wire (an exploded array) is an array. */
+function queryCapture(params) {
+  const out = {};
+  for (const [name, value] of params) {
+    const existing = out[name];
+    if (existing === undefined) out[name] = value;
+    else if (Array.isArray(existing)) existing.push(value);
+    else out[name] = [existing, value];
+  }
+  return out;
+}
+
 /** Match a path template against a concrete path; returns captured params or null. */
 function matchPath(template, path) {
   const t = template.split("/").filter(Boolean);
@@ -644,7 +656,7 @@ createServer((req, res) => {
       method: req.method ?? "GET",
       url: req.url ?? "/",
       path: url.pathname,
-      query: Object.fromEntries(query.entries()),
+      query: queryCapture(query),
       headers: redactHeaders(req.headers),
       credentialKind:
         req.headers.authorization === "Bearer anvil-hermetic-upstream-token"

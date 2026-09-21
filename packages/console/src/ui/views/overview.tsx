@@ -1,8 +1,18 @@
+import type { ConsoleApi } from "../api.js";
 import { Chip, KV, Label, Panel, Tag } from "../components.js";
 import { href, type Inspector } from "../model.js";
 import { Command, Metric, PageHeader, shellArg } from "../workbench-components.js";
+import { HistoryPanel } from "./history.js";
 
-export function OverviewView({ inspector }: { inspector: Inspector }) {
+export function OverviewView({
+  api,
+  bundleId,
+  inspector,
+}: {
+  api: ConsoleApi;
+  bundleId: string;
+  inspector: Inspector;
+}) {
   const { operations, service, id } = inspector;
   const pending = operations.filter(
     (op) => op.state === "generated" || op.state === "review_required",
@@ -159,8 +169,13 @@ export function OverviewView({ inspector }: { inspector: Inspector }) {
             <Label>Open the same workspace</Label>
             <Command>{`anvil console ${path} --open`}</Command>
           </div>
+          <div>
+            <Label>List retained generations</Label>
+            <Command>{`anvil rollback ${path} --list`}</Command>
+          </div>
         </div>
       </Panel>
+      <HistoryPanel api={api} bundleId={bundleId} />
       {pending.length > 0 ? (
         <Panel
           title="Operations awaiting review"

@@ -14,6 +14,7 @@ import {
   installGeneratedBundle,
   loadBundleAir,
   readBundleDir,
+  recordBundleManifest,
   verifyCertification,
 } from "@anvil/generators";
 import type { ConsoleResponse } from "../contract.js";
@@ -108,6 +109,8 @@ export async function createBundle(
     }
     try {
       const written = installGeneratedBundle(destination, bundle);
+      // The compile's manifest, kept beside the bundle exactly as `anvil compile` keeps it.
+      recordBundleManifest(destination, body.manifest);
       return {
         id,
         snapshotId: added.snapshot.snapshotId,

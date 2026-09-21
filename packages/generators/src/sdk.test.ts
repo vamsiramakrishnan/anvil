@@ -5,14 +5,16 @@ import { compile } from "@anvil/compiler";
 import { beforeAll, describe, expect, it } from "vitest";
 import { generateBundle } from "./bundle.js";
 import { certifyBundle } from "./certify.js";
-import { sdkAuthDrift } from "./sdk/certify.js";
+import { sdkAuthDrift, sdkDryRunDrift, sdkGateDrift } from "./sdk/certify.js";
 import {
+  dryRunnable,
   generateSdks,
   SDK_LANGUAGES,
   type SdkLanguage,
   sdkManifest,
   sdkPlan,
 } from "./sdk/index.js";
+import { GRANT_TOKEN_EXCHANGE } from "./sdk/oauth-grants.js";
 
 /**
  * The SDK surface.
@@ -478,6 +480,289 @@ describe("auth scheme parity: custom-header, mtls, and delegated-token carriers"
     expect(generateSdks(CUSTOM_HEADER_DOC)).toEqual(generateSdks(CUSTOM_HEADER_DOC));
     expect(generateSdks(MTLS_DOC)).toEqual(generateSdks(MTLS_DOC));
     expect(generateSdks(AUTH_CODE_DOC)).toEqual(generateSdks(AUTH_CODE_DOC));
+  });
+});
+
+/**
+ * The two grants a generated client can run on its own, and the dry-run
+ * preview every client offers. Same discipline as the block above: the plan
+ * is asserted first (what AIR says), then that every language's emitted
+ * source backs it up, then that `sdkAuthDrift`/`sdkGateDrift` would notice a
+ * language that stopped doing so. `sdk-token-grants.test.ts` and
+ * `sdk-compile.test.ts` drive the real code paths against loopback servers.
+ */
+describe("token grants the SDK mints itself, and the dry-run preview", () => {
+  function withAuth(auth: AuthRequirement): AirDocument {
+    const target = air.operations.find((op) => op.id === "payments.customers.get");
+    if (!target) throw new Error("fixture no longer has payments.customers.get");
+    const retyped = OperationSchema.parse({ ...target, auth });
+    return { ...air, operations: air.operations.map((op) => (op.id === target.id ? retyped : op)) };
+  }
+
+  /** Every file under one language's SDK root, joined. */
+  function joined(emitted: Record<string, string>, language: SdkLanguage): string {
+    return Object.entries(emitted)
+      .filter(([path]) => path.startsWith(`sdk/${language}/`))
+      .map(([, contents]) => contents)
+      .join("\n");
+  }
+
+  describe("oauth2_client_credentials (the payments fixture's own scheme)", () => {
+    it("plans a client-credentials grant from the declared token endpoint, keeping the static token as fallback", () => {
+      const plan = sdkPlan(air);
+      expect(plan.auth.type).toBe("oauth2_client_credentials");
+      expect(plan.auth.envVar).toBe("PAYMENTS_TOKEN");
+      expect(plan.auth.clientCredentials).toEqual({
+        tokenEndpoint: "https://auth.example.com/token",
+        clientIdEnvVar: "PAYMENTS_CLIENT_ID",
+        clientSecretEnvVar: "PAYMENTS_CLIENT_SECRET",
+        // Unstated by the contract, so the runtime resolver's own default.
+        clientAuth: "client_secret_basic",
+        scopes: ["payments.read"],
+      });
+      expect(plan.auth.tokenExchange).toBeUndefined();
+      expect(plan.auth.tokenRefresh).toBeUndefined();
+    });
+
+    it("plans no grant when the contract names no token endpoint — the static token is all there is", () => {
+      const plan = sdkPlan(
+        withAuth({
+          type: "oauth2_client_credentials",
+          scopes: ["payments.read"],
+          principal: "service",
+          secretSource: "env",
+          provider: { grant: "client_credentials" },
+        }),
+      );
+      expect(plan.auth.clientCredentials).toBeUndefined();
+      const emitted = generateSdks(
+        withAuth({
+          type: "oauth2_client_credentials",
+          scopes: [],
+          principal: "service",
+          secretSource: "env",
+        }),
+      );
+      for (const language of SDK_LANGUAGES) {
+        expect(joined(emitted, language), language).not.toMatch(
+          /createClientCredentialsTokenProvider|create_client_credentials_token_provider|NewClientCredentialsTokenProvider|clientCredentialsTokenProvider/,
+        );
+      }
+    });
+
+    it("carries the minting helper, the env-var names, and the declared client auth in every language (mutant: sdk/client-credentials-honours-declared-client-auth)", () => {
+      const symbol: Record<SdkLanguage, string> = {
+        typescript: "createClientCredentialsTokenProvider",
+        python: "create_client_credentials_token_provider",
+        go: "NewClientCredentialsTokenProvider",
+        java: "Oauth.clientCredentialsTokenProvider",
+      };
+      for (const language of SDK_LANGUAGES) {
+        const source = joined(files, language);
+        expect(source, `${language} helper`).toContain(symbol[language]);
+        expect(source, `${language} client id env var`).toContain("PAYMENTS_CLIENT_ID");
+        expect(source, `${language} client secret env var`).toContain("PAYMENTS_CLIENT_SECRET");
+        expect(source, `${language} declared client auth`).toContain('"client_secret_basic"');
+        expect(source, `${language} grant type`).toContain("client_credentials");
+        // The static token path is a fallback, never removed: the env var the
+        // manifest has always promised is still read.
+        expect(source, `${language} static token env var`).toContain("PAYMENTS_TOKEN");
+      }
+    });
+
+    it("passes sdkAuthDrift for a freshly generated bundle, and flags a language that drops the grant", () => {
+      const plan = sdkPlan(air);
+      expect(sdkAuthDrift(files, plan.auth, sdkManifest(plan).auth)).toEqual([]);
+      const stripped = Object.fromEntries(
+        Object.entries(files).map(([path, contents]) => [
+          path,
+          path.startsWith("sdk/python/")
+            ? contents.replaceAll("create_client_credentials_token_provider", "create_static_token")
+            : contents,
+        ]),
+      );
+      expect(sdkAuthDrift(stripped, plan.auth, sdkManifest(plan).auth)).toEqual([
+        "the python SDK does not carry a client-credentials grant (create_client_credentials_token_provider)",
+      ]);
+    });
+  });
+
+  describe("oauth2_on_behalf_of", () => {
+    let OBO_DOC: AirDocument;
+    let OBO_ACTOR_DOC: AirDocument;
+    beforeAll(() => {
+      OBO_DOC = withAuth({
+        type: "oauth2_on_behalf_of",
+        scopes: ["payments.read"],
+        principal: "delegated",
+        secretSource: "env",
+        audience: "https://api.example.com",
+        provider: {
+          tokenEndpoint: "https://auth.example.com/token",
+          grant: "token_exchange",
+          clientAuth: "client_secret_post",
+          subjectTokenType: "jwt",
+        },
+      });
+      OBO_ACTOR_DOC = withAuth({
+        type: "oauth2_on_behalf_of",
+        scopes: [],
+        principal: "impersonation",
+        secretSource: "env",
+        delegation: { actor: "agent" },
+        provider: { tokenEndpoint: "https://auth.example.com/token", grant: "token_exchange" },
+      });
+    });
+
+    it("plans an RFC 8693 exchange from the declared endpoint, with the declared client auth and token types", () => {
+      const plan = sdkPlan(OBO_DOC);
+      expect(plan.auth.tokenExchange).toEqual({
+        tokenEndpoint: "https://auth.example.com/token",
+        clientIdEnvVar: "PAYMENTS_CLIENT_ID",
+        clientSecretEnvVar: "PAYMENTS_CLIENT_SECRET",
+        clientAuth: "client_secret_post",
+        scopes: ["payments.read"],
+        audience: "https://api.example.com",
+        subjectTokenType: "jwt",
+        requestedTokenType: "access_token",
+      });
+      expect(plan.auth.clientCredentials).toBeUndefined();
+      // The actor token is service material and reads like one, under the
+      // runtime's own suffix — but only when the contract names an actor.
+      expect(sdkPlan(OBO_ACTOR_DOC).auth.tokenExchange?.actorTokenEnvVar).toBe(
+        "PAYMENTS_ACTOR_TOKEN",
+      );
+      expect(plan.auth.tokenExchange?.actorTokenEnvVar).toBeUndefined();
+    });
+
+    it("carries the exchanger, the RFC 8693 grant, and the declared client auth in every language (mutant: sdk/token-exchange-sends-rfc8693-grant)", () => {
+      const emitted = generateSdks(OBO_DOC);
+      const withActor = generateSdks(OBO_ACTOR_DOC);
+      const symbol: Record<SdkLanguage, string> = {
+        typescript: "createTokenExchanger",
+        python: "create_token_exchanger",
+        go: "NewTokenExchanger",
+        java: "Oauth.tokenExchanger",
+      };
+      for (const language of SDK_LANGUAGES) {
+        const source = joined(emitted, language);
+        expect(source, `${language} exchanger`).toContain(symbol[language]);
+        expect(source, `${language} grant type`).toContain(GRANT_TOKEN_EXCHANGE);
+        expect(source, `${language} subject token type`).toContain(
+          "urn:ietf:params:oauth:token-type:jwt",
+        );
+        expect(source, `${language} declared client auth`).toContain('"client_secret_post"');
+        expect(source, `${language} client id env var`).toContain("PAYMENTS_CLIENT_ID");
+        expect(source, `${language} no actor without one declared`).not.toContain(
+          "PAYMENTS_ACTOR_TOKEN",
+        );
+        expect(joined(withActor, language), `${language} actor env var`).toContain(
+          "PAYMENTS_ACTOR_TOKEN",
+        );
+      }
+    });
+
+    it("passes sdkAuthDrift for a freshly generated bundle, and flags a language that stops sending the exchange grant", () => {
+      const plan = sdkPlan(OBO_ACTOR_DOC);
+      const emitted = generateSdks(OBO_ACTOR_DOC);
+      expect(sdkAuthDrift(emitted, plan.auth, sdkManifest(plan).auth)).toEqual([]);
+      const downgraded = Object.fromEntries(
+        Object.entries(emitted).map(([path, contents]) => [
+          path,
+          path.startsWith("sdk/java/")
+            ? contents.replaceAll(GRANT_TOKEN_EXCHANGE, "client_credentials")
+            : contents,
+        ]),
+      );
+      expect(sdkAuthDrift(downgraded, plan.auth, sdkManifest(plan).auth)).toEqual([
+        `the java SDK does not send the RFC 8693 grant ${GRANT_TOKEN_EXCHANGE}`,
+      ]);
+    });
+
+    it("re-emits byte-identical files for the same model", () => {
+      expect(generateSdks(OBO_DOC)).toEqual(generateSdks(OBO_DOC));
+    });
+  });
+
+  describe("dry-run", () => {
+    it("declares every approved operation previewable, except a subscription the client cannot build a request for", () => {
+      const manifest = sdkManifest(sdkPlan(air));
+      expect(manifest.methods.length).toBeGreaterThan(0);
+      for (const method of manifest.methods)
+        expect(method.dryRunnable, method.operationId).toBe(true);
+      const [first] = sdkPlan(air).operations;
+      if (!first) throw new Error("fixture has no approved operation");
+      expect(dryRunnable({ ...first, wireProtocol: "graphql_sse" })).toBe(false);
+    });
+
+    it("names the dry-run control like AIR names confirm: the familiar key unless a business field owns it", () => {
+      for (const op of sdkPlan(air).operations) expect(op.safetyKeys.dryRun).toBe("dry_run");
+      const target = air.operations.find((op) => op.id === "payments.customers.get");
+      if (!target) throw new Error("fixture no longer has payments.customers.get");
+      const shadowed = OperationSchema.parse({
+        ...target,
+        input: {
+          ...target.input,
+          schema: undefined,
+          params: [
+            ...target.input.params,
+            { name: "dry_run", in: "query", required: false, schema: { type: "boolean" } },
+          ],
+        },
+      });
+      const doc = {
+        ...air,
+        operations: air.operations.map((op) => (op.id === target.id ? shadowed : op)),
+      };
+      const planned = sdkPlan(doc).operations.find((op) => op.id === target.id);
+      expect(planned?.safetyKeys.dryRun).toBe("anvil_dry_run");
+      // Python is the one language that flattens the control into the argument
+      // list, so it is the one where the collision would have been silent.
+      const python = Object.entries(generateSdks(doc)).find(([path]) =>
+        path.endsWith("client.py"),
+      )?.[1];
+      expect(python).toContain("anvil_dry_run: bool = False");
+      expect(python).toContain("dry_run: Optional[bool] = None");
+    });
+
+    it("carries a dry-run plan builder in every language, called from the one call path (mutant: sdk/dry-run-never-sends)", () => {
+      const symbol: Record<SdkLanguage, string> = {
+        typescript: "dryRunPlan(",
+        python: "dry_run_plan(",
+        go: "dryRunPlan(",
+        java: "DryRun.plan(",
+      };
+      for (const language of SDK_LANGUAGES) {
+        const source = joined(files, language);
+        expect(source, `${language} plan builder`).toContain(symbol[language]);
+        // A dry run never resolves a credential: the plan is built under a
+        // context with the token and the provider stripped.
+        expect(source, `${language} builds without a credential`).toMatch(
+          /withoutCredential|token: undefined, tokenProvider: undefined|auth, None, resolved_key/,
+        );
+      }
+      expect(sdkDryRunDrift(files)).toEqual([]);
+      expect(sdkGateDrift(files, air)).toEqual([]);
+    });
+
+    it("flags a language whose call path no longer reaches the plan, and a manifest that drops the capability", () => {
+      const stripped = Object.fromEntries(
+        Object.entries(files).filter(([path]) => !path.endsWith("/_dry_run.py")),
+      );
+      expect(sdkDryRunDrift(stripped)).toEqual([
+        "the python SDK does not carry a dry-run plan (dry_run_plan)",
+      ]);
+      const manifest = JSON.parse(files["sdk/manifest.json"] as string) as {
+        methods: Array<Record<string, unknown>>;
+      };
+      for (const method of manifest.methods) method.dryRunnable = false;
+      const tampered = { ...files, "sdk/manifest.json": `${JSON.stringify(manifest, null, 2)}\n` };
+      const check = certifyBundle(tampered, air).checks.find(
+        (candidate) => candidate.id === "safety.sdk-gates-match",
+      );
+      expect(check?.status).toBe("failed");
+      expect(check?.detail).toContain("dryRunnable");
+    });
   });
 });
 

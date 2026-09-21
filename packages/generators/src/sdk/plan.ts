@@ -9,6 +9,7 @@ import {
   type Operation,
   operationInputSchema,
   operationSafetyInputKeys,
+  type ParamStyle,
   pascalCase,
   resolveAsyncContract,
   resolveIdempotencyCarrier,
@@ -44,6 +45,9 @@ export interface SdkField {
 
 export interface SdkParam extends SdkField {
   in: "path" | "query" | "header" | "cookie" | "body";
+  /** OpenAPI serialization, only when the source declared it (see @anvil/air's param-style.ts). */
+  style?: ParamStyle;
+  explode?: boolean;
 }
 
 export interface SdkIdempotency {
@@ -206,7 +210,24 @@ export interface SdkOperation {
    * keyword arguments) names them exactly as the CLI and MCP surfaces do — and
    * so a business field genuinely called `confirm` can never shadow the gate.
    */
-  safetyKeys: { confirm: string; idempotencyKey: string };
+  safetyKeys: { confirm: string; idempotencyKey: string; dryRun: string };
+}
+
+/**
+ * A grant the SDK can run against a declared token endpoint, by env-var NAME
+ * only. Suffixes match the runtime resolver's (`_CLIENT_ID`/`_CLIENT_SECRET`)
+ * so one operator environment serves the runtime and every generated SDK.
+ */
+export interface SdkTokenGrant {
+  tokenEndpoint: string;
+  clientIdEnvVar: string;
+  clientSecretEnvVar: string;
+  /** How the client authenticates to the token endpoint; the runtime's default when unstated. */
+  clientAuth: TokenRefreshClientAuth;
+  /** The contract's scopes, sent as one space-joined `scope` when non-empty. */
+  scopes: string[];
+  audience?: string;
+  resource?: string;
 }
 
 export interface SdkPlan {
@@ -259,6 +280,28 @@ export interface SdkPlan {
        * carries `client_id` (and the secret, when present) in the form body.
        */
       clientAuth: TokenRefreshClientAuth;
+    };
+    /**
+     * Client-credentials minting for `oauth2_client_credentials` (RFC 6749
+     * §4.4), present only when the contract names a token endpoint. The SDK
+     * mints its own bearer the way the runtime does — client id and secret
+     * from the environment (by NAME only) or from an explicit option — and
+     * keeps the static `envVar` token as the fallback a caller can still
+     * choose. Scopes are the contract's; a caller may narrow them.
+     */
+    clientCredentials?: SdkTokenGrant;
+    /**
+     * RFC 8693 token exchange for `oauth2_on_behalf_of`, present only when
+     * the contract names a token endpoint. The caller supplies the subject
+     * token (the inbound end-user credential) and, when the contract names an
+     * actor, an actor token; the SDK exchanges it at the declared endpoint
+     * with the declared client authentication and caches per subject.
+     */
+    tokenExchange?: SdkTokenGrant & {
+      /** Present only when AIR's `delegation.actor` names an acting party. */
+      actorTokenEnvVar?: string;
+      subjectTokenType: "access_token" | "jwt" | "id_token";
+      requestedTokenType: "access_token" | "jwt" | "id_token";
     };
   };
   operations: SdkOperation[];
@@ -402,6 +445,8 @@ function paramsOf(op: Operation): SdkParam[] {
       type: typeKind(param.schema),
       description: commentLine(param.description) || undefined,
       enumValues: enumValues(param.schema),
+      ...(param.style ? { style: param.style } : {}),
+      ...(param.explode !== undefined ? { explode: param.explode } : {}),
     }));
 }
 
@@ -573,6 +618,71 @@ function tokenRefreshOf(
   };
 }
 
+function tokenGrantOf(auth: AuthRequirement, prefix: string): SdkTokenGrant | undefined {
+  const tokenEndpoint = auth.provider?.tokenEndpoint;
+  if (!tokenEndpoint) return undefined;
+  return {
+    tokenEndpoint,
+    clientIdEnvVar: `${prefix}_CLIENT_ID`,
+    clientSecretEnvVar: `${prefix}_CLIENT_SECRET`,
+    clientAuth: auth.provider?.clientAuth ?? DEFAULT_TOKEN_REFRESH_CLIENT_AUTH,
+    scopes: [...auth.scopes],
+    ...(auth.audience ? { audience: auth.audience } : {}),
+    ...(auth.provider?.resource ? { resource: auth.provider.resource } : {}),
+  };
+}
+
+/**
+ * `oauth2_client_credentials` minting, present only when the contract names a
+ * token endpoint. Without one the SDK keeps reading the static `envVar`
+ * token, exactly as before — it cannot mint against an endpoint it does not
+ * know, and guessing one would be a credential sent to an unreviewed host.
+ */
+function clientCredentialsOf(
+  auth: AuthRequirement,
+  prefix: string,
+): SdkPlan["auth"]["clientCredentials"] {
+  return auth.type === "oauth2_client_credentials" ? tokenGrantOf(auth, prefix) : undefined;
+}
+
+/**
+ * `oauth2_on_behalf_of` token exchange (RFC 8693), present only when the
+ * contract names a token endpoint. The subject token is never an env var —
+ * it is the inbound caller's credential, supplied per client by the caller —
+ * but an actor token is service material and reads like one, under the same
+ * `_ACTOR_TOKEN` suffix the runtime resolves.
+ */
+function tokenExchangeOf(auth: AuthRequirement, prefix: string): SdkPlan["auth"]["tokenExchange"] {
+  if (auth.type !== "oauth2_on_behalf_of") return undefined;
+  const grant = tokenGrantOf(auth, prefix);
+  if (!grant) return undefined;
+  return {
+    ...grant,
+    ...(auth.delegation?.actor ? { actorTokenEnvVar: `${prefix}_ACTOR_TOKEN` } : {}),
+    subjectTokenType: auth.provider?.subjectTokenType ?? "access_token",
+    requestedTokenType: auth.provider?.requestedTokenType ?? "access_token",
+  };
+}
+
+/**
+ * The caller-facing name of the dry-run control, allocated the way AIR
+ * allocates `confirm`/`idempotency_key`: the familiar `dry_run` unless a real
+ * business field already owns that name, then the namespaced spelling the MCP
+ * surface reserves (`anvil_dry_run`). Only Python flattens it into the
+ * argument list, but every language carries the same name so the manifest
+ * can promise one.
+ */
+function dryRunKeyOf(op: SdkOperation["params"], body: SdkOperation["body"]): string {
+  const occupied = new Set(op.map((param) => param.key));
+  if (body?.projection === "fields") for (const field of body.fields) occupied.add(field.key);
+  else if (body) occupied.add("body");
+  if (!occupied.has("dry_run")) return "dry_run";
+  if (!occupied.has("anvil_dry_run")) return "anvil_dry_run";
+  for (let suffix = 2; ; suffix += 1) {
+    if (!occupied.has(`anvil_dry_run_${suffix}`)) return `anvil_dry_run_${suffix}`;
+  }
+}
+
 /** Project AIR onto the language-neutral SDK plan. Pure and deterministic. */
 export function sdkPlan(air: AirDocument): SdkPlan {
   const byId = new Map(air.operations.map((op) => [op.id, op]));
@@ -599,6 +709,10 @@ export function sdkPlan(air: AirDocument): SdkPlan {
       envVar: auth.type === "custom_header" ? `${prefix}_HEADER_VALUE` : `${prefix}_TOKEN`,
       ...(auth.type === "mtls" ? { tls: tlsEnvVarsOf(auth, prefix) } : {}),
       ...(tokenRefreshOf(auth, prefix) ? { tokenRefresh: tokenRefreshOf(auth, prefix) } : {}),
+      ...(clientCredentialsOf(auth, prefix)
+        ? { clientCredentials: clientCredentialsOf(auth, prefix) }
+        : {}),
+      ...(tokenExchangeOf(auth, prefix) ? { tokenExchange: tokenExchangeOf(auth, prefix) } : {}),
     },
     operations: sdkOperations(air).map((op) => ({
       id: op.id,
@@ -628,7 +742,10 @@ export function sdkPlan(air: AirDocument): SdkPlan {
       pagination: paginationOf(op),
       pager: pagerOf(paginationOf(op)),
       async: asyncOf(op, byId),
-      safetyKeys: operationSafetyInputKeys(op),
+      safetyKeys: {
+        ...operationSafetyInputKeys(op),
+        dryRun: dryRunKeyOf(paramsOf(op), bodyOf(op)),
+      },
       cliCommand: op.cli.command,
       mcpToolName: op.mcp.toolName,
       errorCodes: [...new Set(op.errors.map((error) => error.code))].sort(),

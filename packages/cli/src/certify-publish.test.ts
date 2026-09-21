@@ -98,6 +98,41 @@ describe("anvil certify", () => {
     expect(io.text()).toContain("No generated surface was executed");
   });
 
+  it("--executable boots the simulator and records the executable phase, still writing certification.json", () => {
+    const io = bufferIO();
+    expect(runCertify(dir, { executable: true }, io, { now: clock("2026-07-10T00:00:00Z") })).toBe(
+      0,
+    );
+    const cert = JSON.parse(readFileSync(join(dir, "certification.json"), "utf8"));
+    expect(cert.status).toBe("passed");
+    // The four generated-byte gates are still static; the engine phase is not.
+    expect(cert.assuranceLevel).toBe("static");
+    expect(cert.assurance).toMatchObject({ level: "executable", engine: "@anvil/certification" });
+    expect(["simulator_exercised", "certified"]).toContain(cert.assurance.engineStatus);
+    const bridged = cert.checks.filter((c: { id: string }) =>
+      c.id.startsWith("contract.certification-core."),
+    );
+    expect(bridged.some((c: { id: string }) => c.id.includes(".exec."))).toBe(true);
+    const mutants = bridged.filter((c: { id: string }) => c.id.includes(".mutation."));
+    expect(mutants.length).toBeGreaterThan(0);
+    for (const m of mutants as Array<{ detail: string }>) {
+      expect(m.detail).toMatch(/^(killed by |inapplicable)/);
+    }
+    expect(io.text()).toContain("Executable assurance");
+    expect(io.text()).not.toContain("No generated surface was executed");
+    expect(io.text()).toContain("were not booted");
+    // The record's freshness binding is unchanged by the mode.
+    expect(verifyCertification(readBundleDir(dir)).ok).toBe(true);
+  });
+
+  it("--executable --json emits the certification as one document", () => {
+    const io = bufferIO();
+    expect(runCertify(join(dir, "air.yaml"), { executable: true, json: true }, io)).toBe(0);
+    const parsed = JSON.parse(io.stdout.join("\n"));
+    expect(parsed.assurance.level).toBe("executable");
+    expect(parsed.status).toBe("passed");
+  });
+
   it("re-certifying an unchanged bundle reproduces the certification (minus certifiedAt)", () => {
     certify(bufferIO(), clock("2026-07-10T00:00:00Z"));
     const first = JSON.parse(readFileSync(join(dir, "certification.json"), "utf8"));
@@ -186,6 +221,36 @@ describe("anvil publish (gated)", () => {
     expect(record.publishedAt).toBeUndefined();
     expect(record.cloudCallsMade).toBe(false);
     expect(record.operatorActionRequired).toBe(true);
+  });
+
+  it("prepares a kubernetes plan under the same gates, pointing at the kustomize artifacts", async () => {
+    // Ungated first: the kubernetes target fails closed exactly as cloud-run does.
+    const refused = bufferIO();
+    expect(runPublish(dir, { target: "kubernetes", env: "prod" }, refused, { env: noEnv })).toBe(1);
+    expect(refused.text()).toContain("uncertified_publish_refused");
+
+    certify();
+    writePassingExecutableEvidence();
+    const io = bufferIO();
+    expect(
+      await runAnvilCli(["publish", dir, "--env", "prod", "--target", "kubernetes"], { io }),
+      io.text(),
+    ).toBe(0);
+    expect(io.text()).toContain("Deployment plan prepared for payments → kubernetes ('prod')");
+    expect(io.text()).toContain("Kubernetes deployment plan only");
+    expect(io.text()).toContain("No cluster call is made");
+    expect(io.text()).not.toContain("gcloud builds submit");
+    const record = JSON.parse(readFileSync(join(dir, "publication.json"), "utf8"));
+    expect(record.target).toBe("kubernetes");
+    expect(record.cloudCallsMade).toBe(false);
+    expect(record.artifacts).toContain("deploy/kubernetes/kustomization.yaml");
+    expect(record.artifacts).toContain("deploy/kubernetes/deployment.yaml");
+    expect(record.artifacts).toContain("deploy/Dockerfile");
+    expect(record.artifacts).not.toContain("deploy/terraform/main.tf");
+    // The record is schema-valid for status, like a cloud-run one.
+    const status = await buildStatusReport(dir);
+    expect(status.publication.state).toBe("planned");
+    expect(status.publication.target).toBe("kubernetes");
   });
 
   it("defaults the sole publish target to cloud-run at the CLI boundary", async () => {

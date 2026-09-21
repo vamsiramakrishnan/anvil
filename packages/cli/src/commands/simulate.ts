@@ -23,7 +23,8 @@ import { annotate } from "./meta.js";
  * safety matrix from the contract (every approved operation crossed with every
  * dimension that applies to it — auth, confirmation, idempotency, fault,
  * pagination, disclosure) and drives every cell through the contract-faithful, deterministic
- * simulator, then runs the safety mutation battery. Where `anvil selftest` and
+ * simulator, then runs the safety mutation battery (executable: each mutant is
+ * killed only by a check that fails against it). Where `anvil selftest` and
  * `anvil conformance` prove the generated surfaces, this proves the *coverage*:
  * a number for how much of the safety contract was actually exercised, plus
  * proof that a weakened contract would be caught. Writes simulation.report.json.
@@ -35,7 +36,7 @@ export function registerSimulate(parent: Command, ctx: CommandContext): void {
       .command("simulate")
       .summary("Drive the full safety matrix through the simulator and report coverage.")
       .description(
-        "Mechanistic coverage for a bundle's approved surface. Enumerates the matrix (each operation × the dimensions that apply: auth scope gating, confirmation refusal, required-idempotency + replay, injected faults, pagination, and disclosure cost against the agent's context budget) and drives every cell through the deterministic simulator, checking each against an independent contract expectation. Then runs the mutation battery — deliberately weakening each safety control and proving the surface signature detects it. Reports per-dimension coverage and mutants killed. Deterministic: same seed + contract → same cells. Writes simulation.report.json. Exit 0 only when every cell holds and every applicable safety mutant is killed.",
+        "Mechanistic coverage for a bundle's approved surface. Enumerates the matrix (each operation × the dimensions that apply: auth scope gating, confirmation refusal, required-idempotency + replay, injected faults, pagination, and disclosure cost against the agent's context budget) and drives every cell through the deterministic simulator, checking each against an independent contract expectation. Then runs the mutation battery — deliberately weakening each safety control, booting the weakened surface, and requiring a static or executable check to fail against it (a mutant that only moves the surface digest is reported as a survivor, naming why). Reports per-dimension coverage and, per mutant, the check that killed it. Deterministic: same seed + contract → same cells. Writes simulation.report.json. Exit 0 only when every cell holds and every applicable safety mutant is killed.",
       )
       .argument("<dir>", "generated bundle directory (or its air.yaml)")
       .option("--seed <n>", "deterministic simulator seed", "1")
@@ -78,7 +79,10 @@ export function runSimulate(path: string, opts: SimulateOptions, io: CliIO): num
   }
 
   const coverage = coverageMatrix(air, { seed });
-  const mutants = runMutationBattery(air);
+  // The executable battery: each weakened contract is booted and held to this
+  // contract's expectations, and a mutant counts as killed only when a check
+  // fails against it — never on the digest alone (see @anvil/certification).
+  const mutants = runMutationBattery(air, { executable: true, seed });
   const applicable = mutants.filter((m) => m.applicable);
   const killed = applicable.filter((m) => m.killed);
   const ok = coverage.summary.failed === 0 && applicable.every((m) => m.killed);
@@ -146,8 +150,8 @@ function renderSimulationSummary(report: SimulationReport, dir: string): string 
     const mark = !m.applicable ? "–" : m.killed ? "✓" : "✗";
     const note = m.applicable
       ? m.killed
-        ? `killed (${m.classification})`
-        : `SURVIVED (${m.classification})`
+        ? `killed by ${(m.killedBy ?? []).join(", ")} (${m.classification})`
+        : `SURVIVED — ${m.survivedBy} (${m.classification})`
       : "inapplicable";
     lines.push(`    ${mark} ${m.name.padEnd(24)} ${note}`);
   }

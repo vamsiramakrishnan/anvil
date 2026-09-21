@@ -106,6 +106,42 @@ string it hasn't re-verified. An uncertified bundle still serves; `/readyz`
 just says so, and the whole fleet's `ready` folds to `false` until every
 mounted bundle is certified `passed` AND fresh.
 
+### Over StreamableHTTP
+
+```bash
+anvil serve mcp <workspace-root> --fleet --http 8788            # 127.0.0.1 only
+anvil serve mcp <workspace-root> --fleet --http 8788 --host 0.0.0.0   # needs inbound auth
+```
+
+`--http <port>` serves the same fleet over StreamableHTTP instead of stdio,
+at `/mcp`, with `/readyz` and `/healthz` on the same listener (no separate
+`ANVIL_FLEET_READYZ_PORT` listener in this mode). Discovery, prefixing,
+collision refusal, certification-verified readiness, and per-bundle
+credential namespacing are the ones above. The wiring lives in
+[`packages/cli/src/commands/serve-fleet-http.ts`](../packages/cli/src/commands/serve-fleet-http.ts)
+and composes one fleet server per StreamableHTTP session (an MCP server
+binds to exactly one transport) from bundles discovered and verified once
+at start.
+
+The inbound-auth gate is the deployed server's own: `loadInboundAuthConfig`,
+`verifyInboundToken`, and `verifiedPrincipalFingerprint` from
+`@anvil/mcp-runtime`'s `inbound-auth.ts`, applied to every `/mcp` request
+before a session exists. Configure it with the same `ANVIL_INBOUND_*` family
+`deploy/env.schema.json` documents; a missing or invalid token is a `401`
+with `WWW-Authenticate`, a session belongs to the verified caller that
+opened it, and `/.well-known/oauth-protected-resource` stays open for
+discovery. An incomplete `ANVIL_INBOUND_*` configuration is a refusal before
+the port is bound.
+
+Binding is loopback (`127.0.0.1`) unless `--host` names an interface, and a
+non-loopback bind with `ANVIL_INBOUND_AUTH_MODE` unset is refused outright:
+it would hand every mounted tool to the network with no gate at all. Over
+HTTP the session principal is the caller's bearer token looked up in
+`ANVIL_PRINCIPALS` (the rule below); a configured directory plus an unlisted
+token is refused `policy/principal_unresolved` by `execute()`, never
+promoted to anonymous, the same fail-closed rule stdio's `ANVIL_PRINCIPAL`
+follows.
+
 ## Principals
 
 A `Principal` (`{ id, scopes[] }`,
@@ -128,10 +164,21 @@ Configure named principals with `ANVIL_PRINCIPALS`, either inline
 (`token:id:scope1,scope2;token2:id2:scope3`) or as JSON
 (`{"tok_abc": {"id": "alice", "scopes": ["orders.read"]}}`):
 
-- **streamable-http**: the caller's bearer token looks itself up in the
-  directory.
-- **stdio**: `ANVIL_PRINCIPAL=<token>` names one principal for the whole
-  session (one caller per process lifetime).
+- **streamable-http and SSE** (the deployed `runtime/server.js`, the
+  generated `mcp/server-sse.js`): the verified inbound caller looks itself up
+  in the directory, per request, by the first key that matches: the exact
+  bearer it presented, then `issuer:subject`, then `subject`, then `email`
+  (the last three come from the token `ANVIL_INBOUND_AUTH_MODE` verified, so
+  a rotating JWT still resolves to one principal). `ANVIL_PRINCIPAL` is never
+  consulted for an inbound caller.
+- **stdio and the generated CLI**: `ANVIL_PRINCIPAL=<token>` names one
+  principal for the whole session (one caller per process lifetime).
+
+Every serving surface resolves the caller through the same composition root
+(`bootRuntime`), so these variables, and the rate and spend limits below, are
+enforced identically by `anvil serve mcp` (with or without `--fleet`), the
+deployed Cloud Run server, both generated MCP entrypoints, and the generated
+CLI. A drift test in `@anvil/generators` fails if any surface stops doing so.
 
 **Once a directory IS configured, an unresolved caller is refused
 fail-closed — never anonymous.** A missing, mistyped, or unlisted

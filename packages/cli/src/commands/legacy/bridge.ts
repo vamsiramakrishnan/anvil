@@ -16,6 +16,7 @@ import { emitRefusal } from "../../envelope.js";
 import type { CliIO } from "../../io.js";
 import type { CommandContext } from "../context.js";
 import { annotate } from "../meta.js";
+import { registerLegacyBridgeServe } from "./bridge-serve.js";
 
 const REPORT_TYPE = "anvil.legacy-bridge-plan";
 const CONFORMANCE_REPORT_TYPE = "anvil.legacy-bridge-conformance";
@@ -53,7 +54,7 @@ interface BridgeConformanceOptions {
   json?: boolean;
 }
 
-class LegacyBridgeCommandError extends Error {
+export class LegacyBridgeCommandError extends Error {
   constructor(
     readonly code: string,
     message: string,
@@ -107,6 +108,8 @@ export function registerLegacyBridge(parent: Command, ctx: CommandContext): void
       }),
     { mutates: true },
   );
+
+  registerLegacyBridgeServe(bridge, ctx);
 }
 
 function runBridgePlan(decisionPath: string, options: BridgePlanOptions, io: CliIO): number {
@@ -212,7 +215,7 @@ function readPlan(path: string): z.infer<typeof LegacyBridgePlan> {
   return LegacyBridgePlan.parse(value);
 }
 
-function readBinding(path: string): z.infer<typeof LegacyCapabilityBinding> {
+export function readBinding(path: string): z.infer<typeof LegacyCapabilityBinding> {
   const value = readJson(path);
   if (value && typeof value === "object" && "binding" in value) {
     const binding = (value as { binding?: unknown }).binding;
@@ -227,7 +230,7 @@ function readBinding(path: string): z.infer<typeof LegacyCapabilityBinding> {
   return LegacyCapabilityBinding.parse(value);
 }
 
-function readJson(path: string): unknown {
+export function readJson(path: string): unknown {
   const target = resolve(path);
   const stat = lstatSync(target);
   if (stat.isSymbolicLink() || !stat.isFile()) {
@@ -265,7 +268,7 @@ function writeReport(path: string, content: string): void {
   writeFileSync(target, content, { encoding: "utf8", flag: "wx" });
 }
 
-function errorCode(error: unknown): string {
+export function errorCode(error: unknown): string {
   if (error instanceof LegacyBridgeCommandError) return error.code;
   const nodeCode =
     error !== null && typeof error === "object" && "code" in error

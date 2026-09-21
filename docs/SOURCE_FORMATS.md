@@ -90,6 +90,21 @@ not carry fails the compile rather than silently dropping the definition.
 Review conversion diagnostics, especially around body/form parameters, security
 definitions, and response schemas.
 
+A request body's content type is carried verbatim into AIR. Where a source
+declares several, JSON is preferred, then any other type the runtime encodes
+(`application/x-www-form-urlencoded`, `multipart/form-data`), then the first
+declared. A body in any other content type compiles with the
+`body_content_type_unsupported` diagnostic and is held for review, because the
+runtime refuses to send it — see [request bodies](./wire-protocols.md#request-bodies)
+for what each encoding puts on the wire, including how a multipart file field
+(`type: string, format: binary`) is supplied as base64 and sent as bytes.
+
+A parameter's `style` and `explode` are carried into AIR only when the source
+declares them; an undeclared one is left absent and serialized by OpenAPI's
+per-location default at call time. The
+[serialization table](./wire-protocols.md#parameter-serialization) names what
+each style puts on the wire and which value shapes are refused.
+
 ### GraphQL SDL
 
 Anvil maps each root field to one operation:
@@ -120,6 +135,27 @@ Arguments become the request schema and return types become response schemas.
 Custom scalars degrade to documented string values unless the source provides a
 stronger mapping. SDL does not carry endpoint URL, resolver-side authorization,
 or mutation idempotency; supply those operational facts separately.
+
+The response schema and the compiled query document are two projections of
+one selection tree, so the schema never promises a field the document does not
+ask for:
+
+- A **union** is selected through an inline fragment per member
+  (`... on Product { … }`), and its schema is a `oneOf` of the members. An
+  **interface** is selected as its own fields plus a fragment per
+  implementation, and its schema is a `oneOf` of the implementations. Every
+  such object carries `__typename`.
+- A field that takes a **required argument** is left out of both the document
+  and the schema, because selecting it would mean inventing argument values.
+  `graphql_field_omitted_required_args` names each such field, once per
+  operation. Expose it through a root field of its own, or give the argument a
+  default in the SDL.
+- The selection is **bounded**: four levels deep, and never re-entering a type
+  already on the path. Where it stops, the document selects only `__typename`,
+  and `graphql_selection_truncated` names each position. The response schema
+  renders such a position as the `TypenameOnly` component wherever it is
+  rendered inline; past the inline bound it falls back to the type's component
+  and the diagnostic says so.
 
 A schema split across files compiles as one schema. SDL has no import
 statement, so composition *is* concatenation: every SDL document in the snapshot
@@ -159,16 +195,29 @@ are refused and why.
 
 ### SOAP and WSDL
 
-Each WSDL `portType` operation becomes a POST-shaped operation. The adapter
-understands the common document/literal XSD subset:
+Each WSDL 1.1 `portType` operation becomes a POST-shaped operation. The
+adapter understands the common document/literal XSD subset:
 
 - global elements;
-- `complexType` with `sequence` or `all`;
+- `complexType` with `sequence`, `all`, or `choice`;
 - `simpleType` enumeration restrictions;
 - `complexContent` extension;
 - element references;
 - `minOccurs` and `maxOccurs`; and
 - common XSD scalar types.
+
+An `xsd:choice` lowers to optional members under a `oneOf` that admits exactly
+one branch, so an agent cannot satisfy the request schema by sending every
+branch at once. A `sequence` branch requires its non-optional elements, a
+nested `choice` flattens into the outer one, and a choice with `minOccurs="0"`
+admits the empty case. `wsdl_choice_lowered` names each type this happened
+to, once. The SOAP envelope carries only the branch that was sent.
+
+WSDL 2.0 is not lowered. A `<description>` document in the WSDL 2.0 namespace
+is detected and labelled `2.0`, then refused with the error-level
+`wsdl_version_unsupported` diagnostic and zero operations, rather than
+silently compiled into an empty service. Supply a WSDL 1.1 description of the
+same service.
 
 Operation names provide conservative effect hints; they do not prove
 idempotency. See [Add the safety facts a WSDL leaves

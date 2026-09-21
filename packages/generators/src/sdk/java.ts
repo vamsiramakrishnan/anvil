@@ -1,13 +1,16 @@
+import { javaDryRunFile } from "./dry-run.js";
 import {
-  callOptionsFile,
-  exceptionFile,
-  javaPackage,
-  mtlsFile,
-  oauthFile,
-  specFile,
-} from "./java-core.js";
-import { invokerFile, safetyFile } from "./java-invoke.js";
+  javaGrantBuilderFields,
+  javaGrantBuilderMethods,
+  javaGrantConstants,
+  javaGrantWiring,
+} from "./java-auth.js";
+import { callOptionsFile, exceptionFile, javaPackage, mtlsFile, specFile } from "./java-core.js";
+import { invokerFile } from "./java-invoke.js";
 import { jsonFile } from "./java-json.js";
+import { safetyFile } from "./java-safety.js";
+import { needsOauth, oauthGrantsOf } from "./oauth-grants.js";
+import { oauthFile } from "./oauth-grants-java.js";
 import type { SdkField, SdkOperation, SdkPager, SdkPlan } from "./plan.js";
 import { safetyNotes, wrap } from "./shared.js";
 import { JAVA_SOAP } from "./soap.js";
@@ -36,11 +39,12 @@ export function generateJavaSdk(plan: SdkPlan): Record<string, string> {
     // service. Java permits unused static methods, so the cost is dead code
     // rather than a compile error.
     [`${dir}/Invoker.java`]: invokerFile(pkg).replace(/\n\}\n?$/, `\n${JAVA_SOAP}\n}\n`),
-    // mTLS and the OAuth refresh helper are emitted only for the service
-    // that declared the scheme — a bearer/api-key service never carries the
-    // PEM-parsing plumbing or dead refresh-token code.
+    [`${dir}/DryRun.java`]: javaDryRunFile(pkg),
+    // mTLS and the OAuth grants are emitted only for the service that
+    // declared the scheme — a bearer/api-key service never carries the
+    // PEM-parsing plumbing or dead token-endpoint code.
     ...(plan.auth.tls ? { [`${dir}/Mtls.java`]: mtlsFile(pkg) } : {}),
-    ...(plan.auth.tokenRefresh ? { [`${dir}/Oauth.java`]: oauthFile(pkg) } : {}),
+    ...(needsOauth(plan) ? { [`${dir}/Oauth.java`]: oauthFile(pkg, oauthGrantsOf(plan)) } : {}),
     [`${dir}/${clientName(plan)}.java`]: clientFile(pkg, plan),
   };
   for (const op of plan.operations) {
@@ -144,6 +148,11 @@ Safety is not advisory: an operation that requires confirmation throws
 reaches the network — and its convenience overload does not exist, so the gate
 is visible at compile time.
 
+Every call can be previewed: pass \`CallOptions.none().dryRun(true)\` and the
+same gates run, then a redacted request plan (a \`Map<String, Object>\`) comes
+back instead of a response — nothing is sent and no credential is resolved. It
+is the plan \`anvil run --dry-run\` prints.
+
 See \`../README.md\` for the full cross-language contract.
 `;
 }
@@ -185,7 +194,7 @@ function operationsFile(pkg: string, plan: SdkPlan): string {
     const params = op.params
       .map(
         (param) =>
-          `            new OperationSpec.Param(${q(param.wireName)}, ${q(param.key)}, ${q(param.in)}, ${param.required})`,
+          `            new OperationSpec.Param(${q(param.wireName)}, ${q(param.key)}, ${q(param.in)}, ${param.required}${param.style || param.explode !== undefined ? `, ${param.style ? q(param.style) : "null"}, ${param.explode === undefined ? "null" : param.explode ? "Boolean.TRUE" : "Boolean.FALSE"}` : ""})`,
       )
       .join(",\n");
     const body = op.body
@@ -474,7 +483,7 @@ ${
   public static final String TOKEN_CLIENT_AUTH = ${q(refresh.clientAuth)};
 `
     : ""
-}
+}${javaGrantConstants(plan)}
   private static final String USER_AGENT = ${q(`anvil-sdk-${plan.service.id}/${plan.service.version} (java)`)};
 
   private final Invoker.Config config;
@@ -497,7 +506,7 @@ ${
     private String baseUrl = DEFAULT_BASE_URL;
     private String protocolFacade = System.getenv("ANVIL_PROTOCOL_FACADE");
     private String token = System.getenv(TOKEN_ENV_VAR);
-    private Supplier<String> tokenSupplier;
+    private Supplier<String> tokenSupplier;${javaGrantBuilderFields(plan)}
     private Duration timeout = Duration.ofSeconds(30);
     private HttpClient httpClient;
     private DoubleSupplier random = Math::random;
@@ -532,6 +541,7 @@ ${
       return this;
     }
 
+${javaGrantBuilderMethods(plan)}
     public Builder timeout(Duration value) {
       this.timeout = value;
       return this;
@@ -596,7 +606,7 @@ ${
       }
 `
     : ""
-}      HttpClient client =
+}${javaGrantWiring(plan)}      HttpClient client =
           httpClient != null
               ? httpClient
               : HttpClient.newBuilder().connectTimeout(timeout).build();

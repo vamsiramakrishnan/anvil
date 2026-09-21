@@ -19,9 +19,11 @@ import {
   allowedHostsFor,
   bootRuntime,
   type CredentialResolver,
+  describeBinaryResult,
   type ErrorEnvelope,
   type ExecuteContext,
   execute,
+  isBinaryResult,
   loadRuntimeConfig,
   parseUpstreamTimeoutMs,
   type Transport,
@@ -572,6 +574,7 @@ async function invoke(
     env: config.env,
     retries: flags["no-retries"] === true ? false : undefined,
     timeoutMs,
+    principal: boot.principalFor(),
     sleep: deps.sleep,
     now: deps.now,
   };
@@ -1232,6 +1235,9 @@ function policyView(op: Operation) {
 
 function humanSuccess(data: unknown): string {
   if (data === null || data === undefined) return "OK";
+  // Bytes are described, not printed: `--json` carries the base64 for a caller
+  // that wants to decode it, a terminal does not.
+  if (isBinaryResult(data)) return `${describeBinaryResult(data)} Pass --json for the bytes.`;
   if (typeof data === "object") return JSON.stringify(data, null, 2);
   return String(data);
 }

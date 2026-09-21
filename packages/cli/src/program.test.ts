@@ -65,6 +65,7 @@ describe("root help", () => {
       "enrich",
       "enrich-sources",
       "approve",
+      "rollback",
       "console",
       "lint",
       "build",
@@ -98,7 +99,8 @@ describe("root help", () => {
     // 54 -> 55 when `anvil evals` landed (one command, one line).
     // 55 -> 56 when `anvil fuzz` landed (one command, one line).
     // 56 -> 57 when `anvil schema` landed (one command, one line).
-    expect(text.split("\n").length).toBeLessThan(57);
+    // 57 -> 58 when `anvil rollback` landed (one command, one line).
+    expect(text.split("\n").length).toBeLessThan(58);
     expect(text).not.toContain("--manifest");
   });
 

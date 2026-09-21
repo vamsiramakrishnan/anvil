@@ -139,9 +139,9 @@ export type LedgerReserveResult = (
   LedgerReservationMetadata;
 
 /**
- * The idempotency ledger contract (spec: "Idempotency on Cloud Run"). Prod
- * implementations back this with Firestore/Postgres/libSQL; the in-memory
- * implementation below is for dev, tests, and single-instance use.
+ * The idempotency ledger contract (spec: "Idempotency on Cloud Run"). Firestore
+ * is the durable backend that ships; Postgres/libSQL/Redis register through
+ * `registerLedgerBackend` (a runtime extension). In-memory is dev/tests only.
  *
  *   reserve(key, fingerprint):
  *     - unseen               -> reserves, returns { outcome: "reserved" }

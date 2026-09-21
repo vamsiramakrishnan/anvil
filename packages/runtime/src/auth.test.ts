@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type AuthRequirement, AuthRequirement as AuthSchema } from "@anvil/air";
@@ -272,6 +272,77 @@ describe("EnvCredentialResolver — oauth2_authorization_code", () => {
       { fetchImpl: fetchImpl as unknown as typeof fetch },
     );
     expect(await r.resolve("prod", withProvider())).toBeNull();
+  });
+
+  it("keeps a rotated refresh token: the next refresh uses the new one, and the file is rewritten", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "anvil-rotate-"));
+    try {
+      writeFileSync(
+        join(dir, "prod.json"),
+        JSON.stringify({ refresh_token: "rt-1", obtained_at: "2026-01-01T00:00:00Z" }),
+        "utf8",
+      );
+      const seen: string[] = [];
+      let now = 0;
+      const fetchImpl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+        const body = new URLSearchParams(String(init?.body ?? ""));
+        seen.push(body.get("refresh_token") ?? "");
+        // A rotating provider: every refresh invalidates the presented token.
+        return new Response(
+          JSON.stringify({
+            access_token: `at-${seen.length}`,
+            expires_in: 3600,
+            refresh_token: `rt-${seen.length + 1}`,
+          }),
+          { status: 200 },
+        );
+      });
+      const r = new EnvCredentialResolver(
+        { ANVIL_PROD_CLIENT_ID: "client-1" },
+        { fetchImpl: fetchImpl as unknown as typeof fetch, refreshTokenDir: dir, now: () => now },
+      );
+      expect(await r.resolve("prod", withProvider())).toEqual({
+        headers: { Authorization: "Bearer at-1" },
+      });
+      now += 3700_000;
+      expect(await r.resolve("prod", withProvider())).toEqual({
+        headers: { Authorization: "Bearer at-2" },
+      });
+      expect(seen).toEqual(["rt-1", "rt-2"]);
+      const stored = JSON.parse(readFileSync(join(dir, "prod.json"), "utf8")) as {
+        refresh_token: string;
+        obtained_at: string;
+        rotated_at?: string;
+      };
+      expect(stored.refresh_token).toBe("rt-3");
+      expect(stored.obtained_at).toBe("2026-01-01T00:00:00Z");
+      expect(stored.rotated_at).toBeDefined();
+      expect((statSync(join(dir, "prod.json")).mode & 0o777).toString(8)).toBe("600");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a rotated refresh token in memory when it was configured by env, and never rewrites the env", async () => {
+    let now = 0;
+    const seen: string[] = [];
+    const fetchImpl = vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      seen.push(new URLSearchParams(String(init?.body ?? "")).get("refresh_token") ?? "");
+      return new Response(
+        JSON.stringify({ access_token: "at", expires_in: 3600, refresh_token: "rotated" }),
+        { status: 200 },
+      );
+    });
+    const env = { ANVIL_PROD_REFRESH_TOKEN: "configured", ANVIL_PROD_CLIENT_ID: "client-1" };
+    const r = new EnvCredentialResolver(env, {
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      now: () => now,
+    });
+    await r.resolve("prod", withProvider());
+    now += 3700_000;
+    await r.resolve("prod", withProvider());
+    expect(seen).toEqual(["configured", "rotated"]);
+    expect(env.ANVIL_PROD_REFRESH_TOKEN).toBe("configured");
   });
 
   it("falls back to the stored refresh token file when the env var is unset", async () => {

@@ -664,8 +664,8 @@
     {
       "id": "stream/facade-does-not-change-the-framing",
       "file": "packages/runtime/src/codec.ts",
-      "control": "A protocol facade declares coordinates, not framing. If it re-routed a subscription through the JSON codec, the call would lose `accept: text/event-stream` and its stream bound, and answer with one object where every other configuration answers with an array \u2014 one operation, two meanings, selected by an environment variable.",
-      "find": "  const protocol = wireProtocolFor(op.sourceRef);\n  if (protocol === \"graphql_sse\") return graphqlSseCodec;\n  if (facadeDeclared) return httpJsonCodec;\n  return CODECS.get(protocol);",
+      "control": "A protocol facade declares coordinates, not framing. If it re-routed a subscription through the JSON codec, the call would lose `accept: text/event-stream` and its stream bound, and answer with one object where every other configuration answers with an array \u2014 one operation, two meanings, selected by an environment variable. `protocolFacadeApplies` extends the same refusal to every framing case (a streaming RPC, an rpc/encoded SOAP binding), so dropping it re-opens the hole for all of them.",
+      "find": "  const protocol = wireProtocolFor(op.sourceRef);\n  if (protocol === \"graphql_sse\") return graphqlSseCodec;\n  if (facadeDeclared && protocolFacadeApplies(op)) return httpJsonCodec;\n  return CODECS.get(protocol);",
       "replace": "  if (facadeDeclared) return httpJsonCodec;\n  return CODECS.get(wireProtocolFor(op.sourceRef));",
       "tests": [
         "packages/runtime/src/wire-gate.test.ts"
@@ -1294,7 +1294,7 @@
     },
     {
       "id": "sdk/python-refresh-keeps-positional-order",
-      "file": "packages/generators/src/sdk/python-core.ts",
+      "file": "packages/generators/src/sdk/oauth-grants-python.ts",
       "control": "client_auth is LAST in the Python refresh helper's signature so a caller written against an earlier generation keeps its meaning -- inserting it before expiry_skew_seconds silently rebinds a positional 60.0 into the client-auth slot, selecting the post branch and sending client_id where Basic was intended.",
       "find": "    client_secret: Optional[str] = None,\n    expiry_skew_seconds: float = 30.0,\n    opener: Any = None,\n    client_auth: str = \"client_secret_basic\",",
       "replace": "    client_secret: Optional[str] = None,\n    client_auth: str = \"client_secret_basic\",\n    expiry_skew_seconds: float = 30.0,\n    opener: Any = None,",

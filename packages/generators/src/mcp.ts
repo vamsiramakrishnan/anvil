@@ -69,6 +69,9 @@ const server = buildMcpServer(air, {
     protocolFacade,
     env: config.env,
     timeoutMs: config.upstreamTimeoutMs,
+    // One session, one principal: ANVIL_PRINCIPAL names this stdio caller in
+    // the ANVIL_PRINCIPALS directory; rate and spend limits ride contextDeps.
+    principal: boot.principalFor(),
   }),
 });
 
@@ -132,20 +135,25 @@ const boot = await bootRuntimeFromEnv({
 const config = boot.config;
 const deps = boot.contextDeps;
 const { baseUrl, allowedHosts, protocolFacade } = boot.baseUrlFor(air.service.servers[0]?.url);
-const mcpContext = () => ({
-  ...boot.contextDeps,
-  serviceId: air.service.id,
-  remoteIdempotency: air.business !== undefined,
-  baseUrl,
-  authProfile: config.authProfile,
-  allowedHosts,
-  protocolFacade,
-  env: config.env,
-  timeoutMs: config.upstreamTimeoutMs,
-  // The per-request caller identity (set by withInboundIdentity around dispatch);
-  // the credential resolver uses it as the subject_token for OBO exchange.
-  inbound: currentInboundIdentity(),
-});
+const mcpContext = () => {
+  // The per-request caller identity (set by withInboundIdentity around
+  // dispatch): the OBO subject token, and the key the principal directory
+  // (ANVIL_PRINCIPALS) resolves this caller's scopes and limits by.
+  const inbound = currentInboundIdentity();
+  return {
+    ...boot.contextDeps,
+    serviceId: air.service.id,
+    remoteIdempotency: air.business !== undefined,
+    baseUrl,
+    authProfile: config.authProfile,
+    allowedHosts,
+    protocolFacade,
+    env: config.env,
+    timeoutMs: config.upstreamTimeoutMs,
+    inbound,
+    principal: boot.principalFor(inbound),
+  };
+};
 
 // Inbound authentication: this server is an OAuth 2 resource server, exactly
 // like runtime/server.js. Mode "none" (the default) admits everything, for

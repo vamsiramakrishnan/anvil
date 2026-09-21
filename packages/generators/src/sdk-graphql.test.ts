@@ -39,6 +39,20 @@ const TOOLCHAIN = {
   java: has("javac", ["-version"]),
 };
 
+/**
+ * The SDK CI lane installs every toolchain and sets ANVIL_FUZZ_REQUIRE_SDKS,
+ * so a missing one there is a failure rather than a silent "not run" — the
+ * same guard `packages/harness/src/fuzz/sdk-driver.test.ts` carries.
+ */
+it("requires the declared SDK toolchains in the SDK CI lane", () => {
+  if (process.env.ANVIL_FUZZ_REQUIRE_SDKS === "true") {
+    const missing = Object.entries(TOOLCHAIN)
+      .filter(([, present]) => !present)
+      .map(([language]) => language);
+    expect(missing, "ANVIL_FUZZ_REQUIRE_SDKS is set but a toolchain is missing").toEqual([]);
+  }
+});
+
 interface CapturedRequest {
   method: string;
   url: string;
@@ -159,7 +173,7 @@ describe("the compiler built a real query document", () => {
     const subscription = streaming.operations.find((op) => op.id.includes("order_updated"));
     expect(subscription?.sourceRef.binding?.protocol).toBe("graphql_sse");
     expect(subscription?.stream).toMatchObject({ transport: "graphql_sse" });
-    expect(streaming.diagnostics.map((d) => d.code)).not.toContain("graphql_binding_unencodable");
+    expect(subscription?.sourceRef.binding).toMatchObject({ document: expect.any(String) });
 
     // The SDK gate speaks http_json, soap, and graphql — and nothing else.
     const speakable = ["http_json", "soap", "graphql"];

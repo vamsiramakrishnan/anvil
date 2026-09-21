@@ -11,13 +11,28 @@ import {
 } from "@anvil/compiler";
 import { loadAir, resolveAirPath } from "@anvil/refinement";
 import {
+  type ApprovalRecord,
+  type ApprovalRecordInput,
+  type ApprovalRecordSubject,
+  buildApprovalRecord,
+  normalizeReviewer,
+  stageApprovalRecord,
+} from "./approval-record.js";
+import {
   GENERATION_METADATA_FILE,
+  type GeneratedBundle,
   generateBundle,
   resourceOptionsFromGenerationMetadata,
   writeBundle,
 } from "./bundle.js";
+import {
+  archiveReplacedGeneration,
+  excludeHistory,
+  type HistoryEntry,
+  resolveHistoryLimit,
+} from "./bundle-history.js";
 import { resolveBundleDir } from "./bundle-io.js";
-import { certifyBundle, readBundleDir } from "./certify.js";
+import { bundleHash, certifyBundle, readBundleDir } from "./certify.js";
 import { locateGatewayWorkspace } from "./gateway-workspace.js";
 import type { ResourceOptions } from "./resources.js";
 
@@ -36,6 +51,14 @@ import type { ResourceOptions } from "./resources.js";
  * the functions here; a console or any other reviewer surface calls the same
  * functions and therefore honours the same gates and refusals, including the
  * receipt-bound gateway lineage refusal below.
+ *
+ * Every successful swap also does two bookkeeping things, in this order:
+ * the replaced generation is retained under `<bundle>/.anvil/history/`
+ * (bounded; `anvil rollback` restores one), and one line is appended to the
+ * approval record (`<bundle>/.anvil/approvals.jsonl`) naming who decided
+ * what, the states that moved, and the bundle hash before and after. The
+ * `prepare*` functions run every gate without writing, so a dry run and the
+ * real decision cannot diverge in what they refuse.
  */
 
 const REQUIRED_BUNDLE_FILES = [
@@ -51,9 +74,23 @@ const REQUIRED_BUNDLE_FILES = [
   "skill/SKILL.md",
 ] as const;
 
-/** Filesystem seam for proving rollback after the live bundle has been moved aside. */
+/**
+ * Seams and knobs of a reprojection. `installStagedBundle` proves rollback
+ * after the live bundle has been moved aside; `historyLimit` bounds the
+ * retained generations (default 5, or `ANVIL_BUNDLE_HISTORY_LIMIT`); `now`
+ * fixes the record's timestamp in tests.
+ */
 export interface ReprojectionDeps {
   installStagedBundle?: (stageDir: string, bundleDir: string) => void;
+  historyLimit?: number;
+  now?: () => Date;
+}
+
+/** Who is deciding, and what they wrote — recorded, never inferred. */
+export interface ReviewIdentity {
+  /** Absent records `"unrecorded"`; present must be non-empty. */
+  reviewer?: string;
+  note?: string;
 }
 
 export interface BundleReprojectionResult {
@@ -62,6 +99,10 @@ export interface BundleReprojectionResult {
   existingFiles: Record<string, string>;
   projectionsChanged: boolean;
   retainedBackup?: string;
+  /** The line appended to `<bundle>/.anvil/approvals.jsonl` for this swap. */
+  record: ApprovalRecord;
+  /** The replaced generation, when the history limit retained it. */
+  history?: HistoryEntry;
 }
 
 export interface OperationApprovalResult {
@@ -72,18 +113,28 @@ export interface OperationApprovalResult {
   reprojection: BundleReprojectionResult;
 }
 
+/** An operation approval after every gate, before any write. */
+export interface PreparedOperationApproval {
+  bundleDir: string;
+  existingFiles: Record<string, string>;
+  /** The AIR with the approvals applied in memory. */
+  air: AirDocument;
+  requested: string[];
+  newlyApproved: string[];
+  /** State transitions of the operations that moved. */
+  subjects: ApprovalRecordSubject[];
+}
+
 /**
- * Approve operations only inside a complete compiled bundle, then re-project
- * every generated artifact atomically. Refuses unknown or blocked ids, refuses
- * in-place approval on a receipt-bound gateway import, and refuses — before
- * anything is written — when `approveOperations` leaves a requested operation
- * blocked instead of approved.
+ * Run every gate of an operation approval without writing: unknown or
+ * blocked ids, in-place approval on a receipt-bound gateway import, and an
+ * operation `approveOperations` leaves blocked instead of approved. The real
+ * approval and its dry run both start here, so they refuse identically.
  */
-export function approveOperationsInBundle(
+export function prepareOperationApproval(
   path: string,
   ids: readonly string[],
-  deps: ReprojectionDeps = {},
-): OperationApprovalResult {
+): PreparedOperationApproval {
   const bundleDir = resolve(resolveBundleDir(path));
   const airPath = resolve(resolveAirPath(path));
   assertSafeBundleRoot(bundleDir, airPath);
@@ -93,9 +144,8 @@ export function approveOperationsInBundle(
   const air = loadAir(path);
   const requested = [...new Set(ids)];
   validateApprovals(air.operations, requested);
-  const pendingApproval = requested.filter(
-    (id) => air.operations.find((op) => op.id === id)?.state !== "approved",
-  );
+  const priorState = new Map(air.operations.map((op) => [op.id, op.state]));
+  const pendingApproval = requested.filter((id) => priorState.get(id) !== "approved");
   if (pendingApproval.length > 0) {
     assertImmutableGatewayLineage(existingFiles, bundleDir, "Operation approval", pendingApproval);
   }
@@ -117,14 +167,72 @@ export function approveOperationsInBundle(
       `Approval refused: ${stillBlocked.length} of ${requested.length} requested operation(s) remain blocked and were not approved: ${stillBlocked.join(", ")}. Resolve their blocking diagnostics (see reviewNotes) and recompile before approving again.`,
     );
   }
+  const subjects = pendingApproval.map((id) => ({
+    kind: "operation" as const,
+    id,
+    from: priorState.get(id) ?? "unknown",
+    to: air.operations.find((op) => op.id === id)?.state ?? "unknown",
+  }));
+  return { bundleDir, existingFiles, air, requested, newlyApproved: pendingApproval, subjects };
+}
 
-  const reprojection = reprojectBundleAtomically(path, air, deps);
-  return { requested, newlyApproved: pendingApproval, reprojection };
+/**
+ * Approve operations only inside a complete compiled bundle, then re-project
+ * every generated artifact atomically. Every refusal of `prepareOperationApproval`
+ * applies, before anything is written.
+ */
+export function approveOperationsInBundle(
+  path: string,
+  ids: readonly string[],
+  deps: ReprojectionDeps = {},
+  review: ReviewIdentity = {},
+): OperationApprovalResult {
+  normalizeReviewer(review.reviewer);
+  const prepared = prepareOperationApproval(path, ids);
+  const reprojection = reprojectBundleAtomically(path, prepared.air, deps, {
+    action: "approve_operations",
+    subjects: prepared.subjects,
+    ...review,
+  });
+  return { requested: prepared.requested, newlyApproved: prepared.newlyApproved, reprojection };
 }
 
 export interface CapabilityApprovalResult {
   budget: CapabilityBudgetCheck;
   reprojection: BundleReprojectionResult;
+}
+
+/** A capability decision after the compiler's review gate, before any write. */
+export interface PreparedCapabilityDecision {
+  air: AirDocument;
+  subjects: ApprovalRecordSubject[];
+  /** Present for an approval: the budget verdict that admitted it. */
+  budget?: CapabilityBudgetCheck;
+}
+
+/**
+ * Apply a capability decision in memory: the compiler's typed tool-budget
+ * gate decides an approval (a `CapabilityReviewError` propagates untouched),
+ * a rejection records why. Nothing is written; the decision and its dry run
+ * both start here.
+ */
+export function prepareCapabilityDecision(
+  path: string,
+  capabilityId: string,
+  decision: "approve" | "reject",
+  opts: ApproveCapabilityOptions & { reason?: string } = {},
+): PreparedCapabilityDecision {
+  const air = loadAir(path);
+  const from = air.capabilities.find((cap) => cap.id === capabilityId)?.lifecycle ?? "unknown";
+  let budget: CapabilityBudgetCheck | undefined;
+  if (decision === "approve") budget = approveCapability(air, capabilityId, opts);
+  else rejectCapability(air, capabilityId, opts.reason);
+  const to = air.capabilities.find((cap) => cap.id === capabilityId)?.lifecycle ?? "unknown";
+  return {
+    air,
+    subjects: [{ kind: "capability", id: capabilityId, from, to }],
+    ...(budget ? { budget } : {}),
+  };
 }
 
 /**
@@ -136,11 +244,18 @@ export function approveCapabilityInBundle(
   path: string,
   capabilityId: string,
   opts: ApproveCapabilityOptions = {},
+  review: ReviewIdentity = {},
+  deps: ReprojectionDeps = {},
 ): CapabilityApprovalResult {
-  const air = loadAir(path);
-  const budget = approveCapability(air, capabilityId, opts);
-  const reprojection = reprojectBundleAtomically(path, air);
-  return { budget, reprojection };
+  normalizeReviewer(review.reviewer);
+  const prepared = prepareCapabilityDecision(path, capabilityId, "approve", opts);
+  const reprojection = reprojectBundleAtomically(path, prepared.air, deps, {
+    action: "approve_capability",
+    subjects: prepared.subjects,
+    reviewer: review.reviewer,
+    note: review.note ?? opts.note,
+  });
+  return { budget: prepared.budget as CapabilityBudgetCheck, reprojection };
 }
 
 /** Reject a capability, recording why, and re-project the bundle atomically. */
@@ -148,10 +263,17 @@ export function rejectCapabilityInBundle(
   path: string,
   capabilityId: string,
   reason?: string,
+  review: ReviewIdentity = {},
+  deps: ReprojectionDeps = {},
 ): BundleReprojectionResult {
-  const air = loadAir(path);
-  rejectCapability(air, capabilityId, reason);
-  return reprojectBundleAtomically(path, air);
+  normalizeReviewer(review.reviewer);
+  const prepared = prepareCapabilityDecision(path, capabilityId, "reject", { reason });
+  return reprojectBundleAtomically(path, prepared.air, deps, {
+    action: "reject_capability",
+    subjects: prepared.subjects,
+    reviewer: review.reviewer,
+    note: review.note ?? reason,
+  });
 }
 
 /**
@@ -233,17 +355,22 @@ function assertImmutableGatewayLineage(
   );
 }
 
+/** A reprojection computed in memory: what the live bundle holds and what it would become. */
+export interface StagedReprojection {
+  bundleDir: string;
+  existingFiles: Record<string, string>;
+  generated: GeneratedBundle;
+  projectionsChanged: boolean;
+}
+
 /**
- * Persist any AIR mutation through the one safe reprojection path. The caller
- * mutates an in-memory AIR document; this function regenerates every
- * compiler-owned projection, verifies exact bytes and surface agreement, then
- * swaps the complete staged directory into place with rollback.
+ * Everything a reprojection decides before it touches the disk: the bundle
+ * root is safe and complete, the generator inputs are recoverable, the
+ * projections are regenerated from the mutated AIR, and a receipt-bound
+ * gateway import refuses any change. A dry run stops here; the real thing
+ * continues into the stage.
  */
-export function reprojectBundleAtomically(
-  path: string,
-  air: AirDocument,
-  deps: ReprojectionDeps = {},
-): BundleReprojectionResult {
+export function stageReprojection(path: string, air: AirDocument): StagedReprojection {
   const bundleDir = resolve(resolveBundleDir(path));
   const airPath = resolve(resolveAirPath(path));
   assertSafeBundleRoot(bundleDir, airPath);
@@ -258,13 +385,34 @@ export function reprojectBundleAtomically(
   if (projectionsChanged) {
     assertImmutableGatewayLineage(existingFiles, bundleDir, "Bundle reprojection");
   }
+  return { bundleDir, existingFiles, generated, projectionsChanged };
+}
+
+/**
+ * Persist any AIR mutation through the one safe reprojection path. The caller
+ * mutates an in-memory AIR document; this function regenerates every
+ * compiler-owned projection, verifies exact bytes and surface agreement, then
+ * swaps the complete staged directory into place with rollback, retains the
+ * replaced generation, and appends the approval record. `record` names the
+ * decision; without one the line says `reproject` with no subjects.
+ */
+export function reprojectBundleAtomically(
+  path: string,
+  air: AirDocument,
+  deps: ReprojectionDeps = {},
+  record: ApprovalRecordInput = { action: "reproject", subjects: [] },
+): BundleReprojectionResult {
+  normalizeReviewer(record.reviewer);
+  const { bundleDir, existingFiles, generated, projectionsChanged } = stageReprojection(path, air);
+  const before = bundleHash(existingFiles);
 
   const stageDir = makeHiddenSibling(bundleDir, "reproject-stage");
-  let retainedBackup: string | undefined;
+  let committed: CommittedStage;
   try {
     cpSync(bundleDir, stageDir, {
       recursive: true,
       verbatimSymlinks: true,
+      filter: excludeHistory(bundleDir),
     });
     resetGeneratedRoots(stageDir, generated.files);
     writeBundle(stageDir, generated);
@@ -273,8 +421,12 @@ export function reprojectBundleAtomically(
     // that case first. Reprojection here is therefore never gateway-lineage
     // stale by intent — verifyStagedBundle enforces the gateway-lineage-current
     // contract check like every other contract check.
-    verifyStagedBundle(stageDir, generated.files, air, false);
-    retainedBackup = replaceBundle(bundleDir, stageDir, deps);
+    const stagedFiles = verifyStagedBundle(stageDir, generated.files, air, false);
+    committed = commitStagedBundle(bundleDir, stageDir, deps, {
+      before,
+      after: bundleHash(stagedFiles),
+      record,
+    });
   } finally {
     // After a successful install the rename consumed stageDir. After any
     // pre-commit or rolled-back failure, this removes only the candidate copy.
@@ -286,11 +438,81 @@ export function reprojectBundleAtomically(
     generatedFileCount: Object.keys(generated.files).length,
     existingFiles,
     projectionsChanged,
+    ...committed,
+  };
+}
+
+/** What committing a stage adds to a result: the record, the retained generation, a stuck backup. */
+export interface CommittedStage {
+  record: ApprovalRecord;
+  history?: HistoryEntry;
+  retainedBackup?: string;
+}
+
+export interface CommitOptions {
+  before: string;
+  after: string;
+  record: ApprovalRecordInput;
+}
+
+/**
+ * The commit: write the approval record into the stage, swap the verified
+ * stage into place, then retire the replaced generation into history.
+ *
+ * The record goes in BEFORE the swap on purpose. Appending it afterwards has
+ * two failure modes that both break the guarantee it exists to make: an
+ * append that throws leaves the new surface live with no line accounting for
+ * it, and — because the swap moves the old directory aside — a log written
+ * only to the old directory is retired with it, which quietly turned an
+ * append-only log into a record of whichever decision came last. Staging it
+ * means the rename that installs the new bytes installs the decision that
+ * produced them, in the same instant, or neither.
+ *
+ * History archival is the one genuinely best-effort step, and it runs last:
+ * the live bundle is already coherent and audited by then, so a failure there
+ * is reported and the replaced generation is RETAINED. Deleting it would turn
+ * a bookkeeping problem into the loss of the only copy a rollback could use.
+ */
+export function commitStagedBundle(
+  bundleDir: string,
+  stageDir: string,
+  deps: ReprojectionDeps,
+  options: CommitOptions,
+): CommittedStage {
+  const now = (deps.now ?? (() => new Date()))();
+  const historyLimit = resolveHistoryLimit(deps.historyLimit);
+  const record = buildApprovalRecord(options.record, {
+    bundleHash: { before: options.before, after: options.after },
+    now: () => now,
+  });
+  // Carries the existing log forward and adds this decision, so the swap
+  // installs both together. A throw here happens while the live bundle is
+  // still the old one, which is the safe moment to fail.
+  stageApprovalRecord(bundleDir, stageDir, record);
+  const backupDir = replaceBundle(bundleDir, stageDir, deps);
+  let history: HistoryEntry | undefined;
+  let retainedBackup: string | undefined;
+  try {
+    history = archiveReplacedGeneration(bundleDir, backupDir, {
+      hash: options.before,
+      recordedAt: now,
+      historyLimit,
+    });
+  } catch {
+    // The live bundle is coherent, installed and audited. The replaced
+    // generation stays exactly where it is: it is the only intact copy, and
+    // a caller is told where to find it rather than losing it to a failure
+    // in the bookkeeping that was meant to preserve it.
+    retainedBackup = backupDir;
+  }
+  return {
+    record,
+    ...(history ? { history } : {}),
     ...(retainedBackup ? { retainedBackup } : {}),
   };
 }
 
-function assertSafeBundleRoot(bundleDir: string, airPath: string): void {
+export function assertSafeBundleRoot(bundleDir: string, airPath: string): void {
   const parent = dirname(bundleDir);
   const name = basename(bundleDir);
   if (parent === bundleDir || name === "" || name === "." || name === "..") {
@@ -313,7 +535,7 @@ function assertSafeBundleRoot(bundleDir: string, airPath: string): void {
   }
 }
 
-function assertCompleteBundle(files: Record<string, string>, bundleDir: string): void {
+export function assertCompleteBundle(files: Record<string, string>, bundleDir: string): void {
   const missing = REQUIRED_BUNDLE_FILES.filter((rel) => files[rel] === undefined);
   if (missing.length > 0) {
     throw new Error(
@@ -342,7 +564,10 @@ function validateApprovals(
 }
 
 /** Preserve the resource-generation inputs encoded in the existing bundle. */
-function readResourceOptions(files: Record<string, string>, serviceId: string): ResourceOptions {
+export function readResourceOptions(
+  files: Record<string, string>,
+  serviceId: string,
+): ResourceOptions {
   const options = resourceOptionsFromGenerationMetadata(files[GENERATION_METADATA_FILE]);
   if (!options) {
     throw new Error(
@@ -352,7 +577,7 @@ function readResourceOptions(files: Record<string, string>, serviceId: string): 
   return options;
 }
 
-function makeHiddenSibling(bundleDir: string, purpose: string): string {
+export function makeHiddenSibling(bundleDir: string, purpose: string): string {
   const parent = dirname(bundleDir);
   const prefix = `.${basename(bundleDir)}.${purpose}-`;
   const candidate = mkdtempSync(join(parent, prefix));
@@ -390,12 +615,13 @@ function resetGeneratedRoots(stageDir: string, expected: Record<string, string>)
   }
 }
 
-function verifyStagedBundle(
+/** Byte and surface verification of a stage; returns the staged files for hashing. */
+export function verifyStagedBundle(
   stageDir: string,
   expected: Record<string, string>,
   air: AirDocument,
   gatewayLineageIntentionallyStale: boolean,
-): void {
+): Record<string, string> {
   const stagedFiles = readBundleDir(stageDir);
   const byteDrift = Object.entries(expected)
     .filter(([rel, contents]) => stagedFiles[rel] !== contents)
@@ -417,18 +643,16 @@ function verifyStagedBundle(
       `Staged approval failed surface agreement: ${contractFailures.map((check) => `${check.id}: ${check.detail}`).join("; ")}`,
     );
   }
+  return stagedFiles;
 }
 
 /**
  * Two same-filesystem renames form the commit. If installing the stage fails,
  * restore the original immediately; never expose a directory containing a mix
- * of old and new projection files.
+ * of old and new projection files. Returns the moved-aside original, which
+ * the caller retires into history (or removes).
  */
-function replaceBundle(
-  bundleDir: string,
-  stageDir: string,
-  deps: ReprojectionDeps,
-): string | undefined {
+function replaceBundle(bundleDir: string, stageDir: string, deps: ReprojectionDeps): string {
   const backupDir = makeHiddenSibling(bundleDir, "reproject-backup");
   rmSync(backupDir, { recursive: true, force: true });
   renameSync(bundleDir, backupDir);
@@ -444,13 +668,5 @@ function replaceBundle(
     }
     throw installError;
   }
-
-  try {
-    rmSync(backupDir, { recursive: true, force: true });
-    return undefined;
-  } catch {
-    // The live bundle is already coherent and installed. Retaining the old
-    // sibling is safer than turning a cleanup problem into a false rollback.
-    return backupDir;
-  }
+  return backupDir;
 }

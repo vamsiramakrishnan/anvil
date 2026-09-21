@@ -1,5 +1,6 @@
 import { type Operation, Operation as OperationSchema } from "@anvil/air";
 import { describe, expect, it } from "vitest";
+import { codecFor } from "./codec.js";
 import { execute, type HttpResponse, InMemoryLedger, MockTransport } from "./index.js";
 
 /**
@@ -97,25 +98,96 @@ describe("transport gate", () => {
   });
 
   describe("the facade declaration", () => {
-    it("lets a declared facade through and records the reason", async () => {
+    /** A gRPC method whose transcoder the compiler could only assume: Anvil
+     *  knows exactly what the call is and lacks only an address for it. */
+    const transcoded = {
+      kind: "protobuf",
+      path: "/acme.orders.v1.OrderService/GetOrder",
+      method: "post",
+      binding: {
+        protocol: "grpc",
+        service: "acme.orders.v1.OrderService",
+        method: "GetOrder",
+        transport: "json_transcoded",
+      },
+    } as const;
+
+    it("lets a declared facade through a coordinates refusal and records the reason", async () => {
       const transport = new MockTransport(() => ok({ balance: 1 }));
       const res = await execute(
-        op(),
+        op({ sourceRef: transcoded }),
         { input: {} },
         {
           ...baseCtx,
           transport,
           ledger: new InMemoryLedger(),
-          protocolFacade: "a REST-to-SOAP gateway at this base URL",
+          protocolFacade: "a gRPC-JSON transcoder at this base URL",
         },
       );
       expect(res.outcome).toBe("success");
       expect(transport.requests).toHaveLength(1);
+      expect(transport.requests[0]?.headers["content-type"]).toBeUndefined();
       // A silent escape hatch would be worse than no gate: it would move the
       // same untrue assumption somewhere nobody can see it afterwards.
       expect(res.record.policyDecisions).toContain(
-        "protocol_facade_declared:soap:a REST-to-SOAP gateway at this base URL",
+        "protocol_facade_declared:grpc:a gRPC-JSON transcoder at this base URL",
       );
+    });
+
+    // A facade declares coordinates, never framing. Where the compiler declined
+    // to encode the call at all — a streaming RPC, an rpc/encoded SOAP binding
+    // — there is no request for a translator to receive, so the declaration
+    // must not let anything through. Before this was gated on the verdict's
+    // scope, every refusal but graphql_sse was waved past by a facade, and the
+    // JSON codec then posted a body no service could have meant.
+    const framing = [
+      {
+        why: "a SOAP operation whose WSDL declared a shape Anvil declines to encode",
+        sourceRef: { kind: "wsdl", path: "/BankingPort/GetAccountBalance", method: "post" },
+        protocol: "soap",
+      },
+      {
+        why: "a streaming gRPC method, which recorded no binding",
+        sourceRef: { kind: "protobuf", path: "/acme.orders.v1.OrderService/Watch", method: "post" },
+        protocol: "grpc",
+      },
+    ] as const;
+    for (const c of framing) {
+      it(`still refuses ${c.why} with a facade declared`, async () => {
+        const transport = new MockTransport(() => ok({ balance: 1 }));
+        const res = await execute(
+          op({ sourceRef: c.sourceRef }),
+          { input: {} },
+          {
+            ...baseCtx,
+            transport,
+            ledger: new InMemoryLedger(),
+            protocolFacade: "a gateway that cannot exist for this shape",
+          },
+        );
+        expect(res.outcome).toBe("error");
+        if (res.outcome !== "error") throw new Error("expected a refusal");
+        expect(res.envelope.error.code).toBe("unsupported_operation");
+        expect(res.envelope.error.message).toContain(c.protocol);
+        expect(res.envelope.error.message).toContain("No protocol facade");
+        expect((res.envelope.error.details as { refusal_scope?: string }).refusal_scope).toBe(
+          "framing",
+        );
+        expect(transport.requests).toHaveLength(0);
+        expect(res.record.policyDecisions.join(" ")).not.toContain("protocol_facade_declared");
+      });
+    }
+
+    it("resolves the codec by the same verdict the gate reads", () => {
+      // The gate and the codec resolution must agree, or the gate could let an
+      // operation through that the codec then encodes as JSON on a guess.
+      expect(codecFor(op({ sourceRef: transcoded }), true)?.protocol).toBe("http_json");
+      expect(codecFor(op({ sourceRef: transcoded }), false)).toBeUndefined();
+      // A SOAP operation with a binding keeps its own codec without a facade and
+      // takes the JSON codec with one, because the facade is a JSON translator.
+      expect(codecFor(op(), false)?.protocol).toBe("soap");
+      expect(codecFor(op(), true)?.protocol).toBe("soap");
+      expect(codecFor(op({ sourceRef: framing[1].sourceRef }), true)).toBeUndefined();
     });
 
     it("does not decorate an HTTP/JSON call that never needed one", async () => {

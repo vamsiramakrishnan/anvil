@@ -14,7 +14,7 @@ Compilation does not turn an unsupported transport into HTTP.
 
 | Protocol | Runtime status | Request shape | Refused modes |
 | --- | --- | --- | --- |
-| HTTP with JSON | Supported | Method, URL, headers, query, and JSON body from AIR | Unsupported content types remain unavailable |
+| HTTP with JSON | Supported | Method, URL, headers, query, and a JSON, form-urlencoded, or multipart body from AIR | Any other request body content type, refused before a credential is read (see [Request bodies](#request-bodies)) |
 | GraphQL | Queries and mutations supported | Compiled document plus variables sent to one GraphQL endpoint | — |
 | GraphQL subscriptions | Supported through a bounded observation window | The same compiled document, requested as `text/event-stream` | WebSocket (`graphql-ws`); the generated SDKs refuse this wire by design |
 | SOAP 1.1 | Document/literal support is test-backed | XML envelope sent to the declared `soap:address` with `SOAPAction` | RPC/encoded and type-only messages |
@@ -42,6 +42,90 @@ Adapters preserve protocol facts on the operation's source binding.
 The generated CLI, MCP server, runtime, and four client SDKs read those facts.
 They do not reconstruct them independently.
 
+## Request bodies
+
+An operation's body is encoded by the content type AIR carries for it
+(`input.body.contentType`), which the compiler takes from the source: JSON
+when the source declares it, otherwise the first content type Anvil can
+encode, otherwise the source's first declaration verbatim.
+
+| Content type | On the wire |
+| --- | --- |
+| `application/json`, any `*+json` | `JSON.stringify` of the bound body, byte-for-byte as before |
+| `application/x-www-form-urlencoded` | `URLSearchParams` semantics: scalars as `name=value`, an array as a repeated key. A nested object has no form representation and is refused |
+| `multipart/form-data` | RFC 7578 multipart with a random boundary per request. A string, number, or boolean field is a text part; an object is a JSON part; a field whose schema is `type: string, format: binary` (or `format: byte`, or `contentEncoding: base64`) is a file part — the agent supplies base64, the wire gets the decoded bytes with `filename="<field>"` and the schema's `contentMediaType` (default `application/octet-stream`) |
+| Anything else (`application/octet-stream`, `text/plain`, `application/xml` on a non-SOAP operation, …) | Refused |
+
+A refusal is made twice, on the same fact. The compiler reports
+`body_content_type_unsupported` and holds the operation `review_required`
+unless a manifest already decided its state, and certification's transport
+check fails for an approved operation that carries one. The runtime refuses
+with `unsupported_operation` while the request is being built, which is
+before any credential is resolved — an unencodable body never costs a secret
+read. There is no facade for this: unlike a protocol, a body's content type is
+not a coordinate an operator can point elsewhere.
+
+A dry run shows a JSON body decoded, a form body as its encoded text, and a
+multipart body as its size and content type — the boundary is random, so the
+bytes themselves are not a plan.
+
+The four generated SDKs encode JSON bodies only. A form or multipart body is
+refused by their encoding gate with the same `unsupported_operation`, before a
+delegated token is resolved, and the refusal points at the generated CLI and
+MCP server, whose shared runtime does encode them. The SDK manifest carries
+each operation's `bodyContentType`, and certification refuses a client whose
+manifest disagrees with AIR about it.
+
+## Parameter serialization
+
+A path, query, header, or cookie parameter is serialized by the OpenAPI
+`style` and `explode` the source declared, with OpenAPI's defaults filled in
+when it did not: `form` (exploded) for query and cookie, `simple` for path and
+header. AIR carries `style` and `explode` on a parameter only when the source
+declared them, so a document from before the fields hashes exactly as before.
+
+| Location, style | Array `["a","b"]` | Object `{x: 1, y: 2}` |
+| --- | --- | --- |
+| query `form`, explode (default) | `tag=a&tag=b` | `x=1&y=2` |
+| query `form`, no explode | `tag=a,b` | `tag=x,1,y,2` |
+| query `spaceDelimited` / `pipeDelimited` | `tag=a b` / `tag=a\|b` | refused |
+| query `deepObject` | refused | `tag[x]=1&tag[y]=2` |
+| path / header `simple` | `a,b` | `x,1,y,2`; exploded `x=1,y=2` |
+
+A path item is percent-encoded and the commas between items are kept literal.
+An object inside an object, an array of objects, and anything else no style
+gives a meaning to is refused with `unsupported_operation` before the request
+is built — never sent as `[object Object]`.
+
+The one table lives in `@anvil/air` (`param-style.ts`). The runtime binds
+through it, the hermetic harness derives its wire expectation from it (so the
+oracle asks for what the contract promises rather than agreeing with whatever
+was sent), and the four SDK cores restate it verbatim and are driven through
+their real toolchains to prove the same query leaves every client.
+
+## Binary responses
+
+The transport decodes a response body as text only when its content type is
+textual — `text/*`, JSON and `+json`, XML and `+xml`, JavaScript, forms, or
+any type that declares a `charset`. Anything else (`application/pdf`,
+`image/png`, `application/octet-stream`, …) is carried as base64, and the
+HTTP/JSON codec returns a structured value instead of mangled text:
+
+```json
+{
+  "contentType": "application/pdf",
+  "encoding": "base64",
+  "data": "JVBERi0xLjcK…",
+  "bytes": 48213
+}
+```
+
+The 8 MiB upstream byte cap applies to the bytes before encoding. The MCP
+server puts a one-line description in the text content (`Binary response:
+application/pdf (48213 bytes), …`) and the full value, bytes included, in
+`structuredContent`. The generated CLI prints the same description on a
+terminal and the full value under `--json`.
+
 ## GraphQL
 
 Each GraphQL root field becomes one operation. Anvil compiles the request
@@ -59,6 +143,17 @@ Caller values remain variables. They never enter the query text.
 The agent-facing response schema is intentionally bounded. That limit does not
 truncate the stored GraphQL document: the compiler derives the selection set
 from the full SDL before it creates the bounded projection.
+
+The selection set and the response schema come from one tree, so the schema
+cannot promise what the document does not ask for. A union or interface is
+selected through inline fragments — `{ __typename ... on Product { … } }` —
+and its schema is a `oneOf` of the members. A field that takes a required
+argument is selected nowhere and listed nowhere (`graphql_field_omitted_required_args`).
+Where the selection stops — four levels deep, or on re-entering a type — the
+document selects only `__typename`, the schema shows the `TypenameOnly`
+component at that position, and `graphql_selection_truncated` names it. A
+compiled operation always carries its binding; a GraphQL operation without
+one was not produced by this compiler, and the transport gate says so.
 
 GraphQL can return an `errors` array with HTTP 200. Anvil treats that response
 as a failure, including responses that contain both `data` and `errors`.
@@ -153,13 +248,22 @@ mutation is not recorded as complete in the idempotency ledger.
 Anvil rejects DTD and entity declarations while reading XML. This blocks
 external-entity expansion and entity-amplification payloads.
 
+An `xsd:choice` in the request type reaches the wire as whichever branch the
+caller sent, and only that one. The compiler lowers the choice to optional
+members under a `oneOf` admitting exactly one branch (`wsdl_choice_lowered`),
+and the envelope builder emits nothing for an absent member — never an empty
+tag, never a second branch.
+
 The current boundary is explicit:
 
 - SOAP 1.1 document/literal behavior is covered by the runtime and SDK tests.
 - SOAP 1.2 bindings are implemented but are not yet covered by the acceptance
   suite.
 - RPC/encoded bindings and messages described only by `type` remain
-  unavailable.
+  unavailable, with or without a protocol facade: the compiler declined to
+  encode the call at all, so there is no request for a facade to receive.
+- WSDL 2.0 is refused at compile time (`wsdl_version_unsupported`) and never
+  reaches this codec.
 
 ## gRPC
 
@@ -224,7 +328,8 @@ the reason on the execution result.
 
 Streaming RPCs remain unavailable under either route. A stream cannot be
 represented as one bounded request and response, and no gateway makes it one —
-so an annotation on a streaming RPC is not read.
+so an annotation on a streaming RPC is not read, and a declared facade does not
+apply to it either.
 
 `examples/grpc-gateway/` is an annotated service; `examples/grpc/` is a bare
 one.
@@ -286,27 +391,45 @@ HTTP-shaped request generated by Anvil.
 The declaration records a deployment fact. It does not change AIR's source
 provenance or claim that the upstream speaks another protocol.
 
-A facade declares coordinates, not framing, so it never touches a
-subscription: a `graphql_sse` operation keeps its `text/event-stream` request,
-its stream bound, and its array answer with or without a facade declared. If a
-facade could re-route a subscription through the JSON codec, the same
-operation would answer with one object under `ANVIL_PROTOCOL_FACADE` and an
-array without it — two meanings for one operation, selected by an environment
-variable. And a facade is not a way past the bound: a subscription with no
-stream contract refuses even with one declared, because no facade can make an
-unbounded window terminate.
+A facade declares coordinates, not framing, and every refusal says which of
+the two it is about. A **coordinates** refusal is one where Anvil knows exactly
+what the call is and lacks only an address that serves it over HTTP+JSON — a
+gRPC method whose transcoder is only assumed, a queue request/reply exchange
+behind a bridge. A facade may answer it, and the call is recorded as
+`protocol_facade_declared`. A **framing** refusal is one where the compiler
+declined to encode the call at all: a streaming RPC, an rpc/encoded SOAP
+binding or a message described only by type, a subscription with no bound, an
+adopted MCP tool with no path or method. There is no request for a translator
+to receive, so a facade does not apply and the call stays refused — the
+runtime's gate and its codec resolution read the same verdict, so the gate can
+never let through what the codec would then encode as JSON on a guess. The
+refusal names its scope (`details.refusal_scope`) and its remedy, which for
+framing is to fix the source the compile diagnostics name and recompile.
+
+The subscription case is the clearest instance: a `graphql_sse` operation keeps
+its `text/event-stream` request, its stream bound, and its array answer with or
+without a facade declared. If a facade could re-route a subscription through
+the JSON codec, the same operation would answer with one object under
+`ANVIL_PROTOCOL_FACADE` and an array without it — two meanings for one
+operation, selected by an environment variable. And a facade is not a way past
+the bound: a subscription with no stream contract refuses even with one
+declared, because no facade can make an unbounded window terminate.
 
 ## What refusal guarantees
 
 When an operation has no executable binding:
 
-1. The compiler reports `unexecutable_transport`.
-2. The runtime refuses before it builds a request.
-3. Generated SDKs apply the same gate locally.
+1. The compiler reports `unexecutable_transport` (or, for a request body the
+   runtime cannot encode, `body_content_type_unsupported`).
+2. The runtime refuses before it builds a request, and in every case before it
+   reads a credential.
+3. Generated SDKs apply the same gates locally: the transport gate and the
+   encoding gate for bodies and parameter values.
 4. Certification fails if a callable surface claims a transport AIR cannot
-   execute.
+   execute, or a body content type the runtime does not encode.
 
-No generated surface can silently post JSON to an invented URL.
+No generated surface can silently post JSON to an invented URL, JSON labelled
+as another content type, or a parameter value serialized as `[object Object]`.
 
 ## What local assurance proves
 

@@ -1,9 +1,13 @@
 import { existsSync, readFileSync } from "node:fs";
+import { capabilityDisclosureBudget } from "@anvil/compiler";
 import {
+  type ApprovalPreview,
   approveCapabilityInBundle,
   approveOperationsInBundle,
   type BundleReprojectionResult,
   loadBundleAir,
+  previewCapabilityDecision,
+  previewOperationApproval,
   readBundleDir,
   rejectCapabilityInBundle,
 } from "@anvil/generators";
@@ -15,7 +19,12 @@ import {
   selectTaskDeficiency,
 } from "@anvil/refinement";
 import type { z } from "zod";
-import type { CONSOLE_ROUTES, ConsoleResponse, zReprojection } from "../contract.js";
+import type {
+  CONSOLE_ROUTES,
+  ConsoleResponse,
+  zApprovalPreview,
+  zReprojection,
+} from "../contract.js";
 import { invalidRequest } from "./errors.js";
 import {
   consoleScratchPath,
@@ -50,20 +59,40 @@ const DERIVED_RECORD_FILES = new Set([
   "simulation.report.json",
 ]);
 
+function staleArtifacts(existingFiles: Record<string, string>) {
+  const files = Object.keys(existingFiles);
+  return {
+    targetFiles: files.filter((rel) => rel.startsWith("targets/")),
+    records: files.filter((rel) => DERIVED_RECORD_FILES.has(rel) || rel.endsWith(".report.json")),
+    gatewayReceipt: existingFiles["import.receipt.json"] !== undefined,
+  };
+}
+
 export function summarizeReprojection(
   result: BundleReprojectionResult,
 ): z.infer<typeof zReprojection> {
-  const files = Object.keys(result.existingFiles);
   return {
     bundleDir: result.bundleDir,
     generatedFileCount: result.generatedFileCount,
     projectionsChanged: result.projectionsChanged,
     ...(result.retainedBackup ? { retainedBackup: result.retainedBackup } : {}),
-    stale: {
-      targetFiles: files.filter((rel) => rel.startsWith("targets/")),
-      records: files.filter((rel) => DERIVED_RECORD_FILES.has(rel) || rel.endsWith(".report.json")),
-      gatewayReceipt: result.existingFiles["import.receipt.json"] !== undefined,
-    },
+    record: result.record,
+    ...(result.history ? { history: result.history } : {}),
+    stale: staleArtifacts(result.existingFiles),
+  };
+}
+
+/** The library's preview, minus the file pre-image (summarised as `stale`). */
+function summarizePreview(preview: ApprovalPreview): z.infer<typeof zApprovalPreview> {
+  const { existingFiles, ...rest } = preview;
+  return { ...rest, stale: staleArtifacts(existingFiles) };
+}
+
+/** `reviewer`/`note` as the library takes them: absent stays absent, so it records "unrecorded". */
+function identity(body: { reviewer?: string; note?: string }) {
+  return {
+    ...(body.reviewer !== undefined ? { reviewer: body.reviewer } : {}),
+    ...(body.note !== undefined ? { note: body.note } : {}),
   };
 }
 
@@ -73,11 +102,24 @@ export function approveOperations(
   body: Request<"approveOperations">,
 ): ConsoleResponse<"approveOperations"> {
   const bundle = findBundle(root, id);
-  const result = approveOperationsInBundle(bundle.dir, body.ids);
+  if (body.dryRun === true) {
+    const preview = previewOperationApproval(bundle.dir, body.ids);
+    const moving = preview.subjects.map((subject) => subject.id);
+    return {
+      approved: moving,
+      alreadyApproved: body.ids.filter((opId) => !moving.includes(opId)),
+      regeneratedFiles: preview.regeneratedFiles.length,
+      written: false,
+      preview: summarizePreview(preview),
+      refusals: [],
+    };
+  }
+  const result = approveOperationsInBundle(bundle.dir, body.ids, {}, identity(body));
   return {
     approved: result.newlyApproved,
     alreadyApproved: result.requested.filter((op) => !result.newlyApproved.includes(op)),
     regeneratedFiles: result.reprojection.generatedFileCount,
+    written: true,
     reprojection: summarizeReprojection(result.reprojection),
     refusals: [],
   };
@@ -90,11 +132,37 @@ export function approveCapability(
   body: Request<"approveCapability">,
 ): ConsoleResponse<"approveCapability"> {
   const bundle = findBundle(root, id);
-  const { budget, reprojection } = approveCapabilityInBundle(bundle.dir, capabilityId, {
+  const opts = {
     allowLarge: body.allowLarge === true,
     ...(body.note !== undefined ? { note: body.note } : {}),
-  });
-  return { capabilityId, budget, reprojection: summarizeReprojection(reprojection) };
+  };
+  if (body.dryRun === true) {
+    const preview = previewCapabilityDecision(bundle.dir, capabilityId, "approve", opts);
+    // The budget the admission path prepared, not a fresh reading of the
+    // unchanged AIR: an explicit `allowLarge` waiver accepts a budget that
+    // recomputing would still report blocked, and a preview that disagreed
+    // with its own approval on exactly the decision a reviewer is weighing
+    // would be worse than no preview.
+    const budget =
+      preview.budget ??
+      capabilityDisclosureBudget(
+        loadBundleAir(bundle.dir, readBundleDir(bundle.dir)),
+        capabilityId,
+      );
+    return { capabilityId, budget, written: false, preview: summarizePreview(preview) };
+  }
+  const { budget, reprojection } = approveCapabilityInBundle(
+    bundle.dir,
+    capabilityId,
+    opts,
+    identity(body),
+  );
+  return {
+    capabilityId,
+    budget,
+    written: true,
+    reprojection: summarizeReprojection(reprojection),
+  };
 }
 
 export function rejectCapability(
@@ -104,8 +172,19 @@ export function rejectCapability(
   body: Request<"rejectCapability">,
 ): ConsoleResponse<"rejectCapability"> {
   const bundle = findBundle(root, id);
-  const reprojection = rejectCapabilityInBundle(bundle.dir, capabilityId, body.reason);
-  return { capabilityId, reprojection: summarizeReprojection(reprojection) };
+  if (body.dryRun === true) {
+    const preview = previewCapabilityDecision(bundle.dir, capabilityId, "reject", {
+      reason: body.reason,
+    });
+    return { capabilityId, written: false, preview: summarizePreview(preview) };
+  }
+  const reprojection = rejectCapabilityInBundle(
+    bundle.dir,
+    capabilityId,
+    body.reason,
+    identity(body),
+  );
+  return { capabilityId, written: true, reprojection: summarizeReprojection(reprojection) };
 }
 
 export function packDecision(

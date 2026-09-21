@@ -292,6 +292,8 @@ async function handleWebhookRoute(
 }
 
 function mcpContext() {
+  // Per-request caller (withInboundIdentity): OBO subject token and principal key.
+  const inbound = currentInboundIdentity();
   return {
     ...deps,
     serviceId: air.service.id,
@@ -301,10 +303,9 @@ function mcpContext() {
     protocolFacade,
     env: config.env,
     timeoutMs: config.upstreamTimeoutMs,
-    // The per-request caller identity (set by withInboundIdentity around dispatch);
-    // the credential resolver uses it as the subject_token for OBO exchange.
-    inbound: currentInboundIdentity(),
-    ...businessServing?.mcpContext(currentInboundIdentity()),
+    inbound,
+    principal: boot.principalFor(inbound),
+    ...businessServing?.mcpContext(inbound),
   };
 }
 

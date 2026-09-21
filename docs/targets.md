@@ -146,6 +146,46 @@ tampering it also invalidates that hash independently of the drift check.
 `status` reports the same regeneration as each target's `fresh` / `stale` /
 `corrupt` state and its `integrity.findings`.
 
+## Deploy targets are a separate axis
+
+An agent-platform target says *who may call* the server; a deploy target says
+*where the server runs*. Both are plans, never applies. `anvil compile` emits
+two deploy targets from one deployable: the same distroless runtime image,
+the same env contract (`deploy/env.schema.json`), and the same fail-closed
+ledger rule. `anvil publish` gates either one identically:
+
+| Target | Artifacts | Plan | Gated plan |
+| --- | --- | --- | --- |
+| Cloud Run | `deploy/cloudbuild.yaml`, `deploy/terraform/` | `anvil deploy cloud-run <dir>` | `anvil publish <dir>` (the default target) |
+| Kubernetes | `deploy/kubernetes/` (kustomize: Deployment, Service, ServiceAccount, two ConfigMaps, `secrets.required.yaml`, README) | `anvil deploy kubernetes <dir>` | `anvil publish <dir> --target kubernetes` |
+
+```bash
+anvil deploy kubernetes generated/payments                 # the kubectl plan
+anvil deploy kubernetes generated/payments \
+  --image ghcr.io/acme/payments-tools:sha-abc --namespace billing \
+  --ci github-actions --out plan/payments                  # re-projected with your image
+kubectl kustomize plan/payments > rendered.yaml            # review; then apply -k
+```
+
+The compiled `deploy/kubernetes/` set is compiler-owned (`anvil certify`
+re-derives it byte for byte), so per-deployment values (the image, the
+namespace) are applied by re-projecting the same generator with `--out`,
+never by editing the bundle. The compiler-owned ConfigMap is listed last in
+the container's `envFrom`, so an operator ConfigMap can never shadow
+`ANVIL_ENV`, the egress allowlist, or the timeouts: the kustomize form of
+the Terraform precondition. A surface with a required-idempotency mutation
+must be given a durable `ANVIL_LEDGER` outside `dev`; until it is reachable,
+`/readyz` answers 503, the startup probe never admits the pod, and the
+rollout fails closed exactly as Cloud Run's does. Secrets are referenced by
+name from `deploy/kubernetes/secrets.required.yaml`; no value ever appears.
+
+`deploy/ci/github-actions.yml` (also written by `--ci github-actions`) is the
+pipeline half: it builds the image, runs `anvil certify`, `anvil selftest`,
+and `anvil conformance`, renders the plan with the operator's image, refuses
+an unfilled scaffold, and uploads the plan as a workflow artifact. It never
+pushes, never applies, and holds no credential; promotion is a separate,
+gated job of your own.
+
 ## Adding a platform
 
 A new platform is a new profile module in `packages/targets/src/` (its own

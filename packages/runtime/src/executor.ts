@@ -19,6 +19,8 @@ import {
   type CredentialResolver,
   credentialProfileName,
 } from "./auth.js";
+import { describeRequestBody, requestByteLength } from "./body-encoding.js";
+import { throwIfCancelled, transportFailureError } from "./cancellation.js";
 import { codecFor, isFaultAware } from "./codec.js";
 import {
   hostIsAllowed,
@@ -36,8 +38,10 @@ import {
   resolveIdempotencyKey,
 } from "./idempotency.js";
 import type { InboundIdentity } from "./inbound-identity.js";
+import { jobSecondaryKey } from "./job-index.js";
 import { checkLimits, type LimitsGate } from "./limits.js";
 import { type ExecutionRecord, noopObserver, type Observer } from "./observability.js";
+import { bindParam } from "./param-serialization.js";
 import {
   missingScopes,
   type PolicyContext,
@@ -130,6 +134,8 @@ export interface ExecuteContext {
   timeoutMs?: number;
   /** Set false to force single-attempt execution regardless of policy. */
   retries?: boolean;
+  /** The caller's abort signal: aborts the upstream request, refuses further attempts (cancellation.ts). */
+  signal?: AbortSignal;
   /**
    * An operator's stated reason that `baseUrl` is a protocol facade serving
    * the synthesized coordinates of a non-HTTP/JSON source over HTTP+JSON.
@@ -450,26 +456,16 @@ function buildRequest(
           ? idempotencyKey
           : input[agentPropKey(p)];
       if (value === undefined || value === null) continue;
-      switch (p.in) {
-        case "path":
-          path = path.replace(`{${p.name}}`, encodeURIComponent(String(value)));
-          break;
-        case "query":
-          query.set(p.name, String(value));
-          break;
-        case "header":
-          headers[p.name] = String(value);
-          break;
-        case "cookie":
-          headers.cookie = `${headers.cookie ? `${headers.cookie}; ` : ""}${p.name}=${String(value)}`;
-          break;
-        case "body":
-          // Legacy AIR (bundles compiled before the body-model change) still carry
-          // body fields as in:"body" params. Honor them so an old bundle does not
-          // silently execute with an empty body; new AIR uses `input.body` below.
-          body[p.name] = value;
-          hasBody = true;
-          break;
+      if (p.in === "body") {
+        // Legacy AIR (bundles compiled before the body-model change) still carry
+        // body fields as in:"body" params. Honor them so an old bundle does not
+        // silently execute with an empty body; new AIR uses `input.body` below.
+        body[p.name] = value;
+        hasBody = true;
+      } else {
+        // Serialized per the parameter's declared (or OpenAPI-default) style;
+        // a shape no style encodes is refused here, never sent as its toString.
+        path = bindParam(path, { query, headers }, p, value, op.id, randomUUID());
       }
     }
   }
@@ -1112,6 +1108,7 @@ export async function execute(
       ctx.protocolFacade !== undefined,
     );
     if (ctx.timeoutMs) baseRequest.timeoutMs = ctx.timeoutMs;
+    if (ctx.signal) baseRequest.signal = ctx.signal;
 
     // 5. Dry-run short-circuits before any auth or side effect.
     if (args.dryRun) {
@@ -1130,7 +1127,7 @@ export async function execute(
           method: baseRequest.method,
           url: baseRequest.url,
           headers: redactHeaders(baseRequest.headers),
-          body: baseRequest.body ? JSON.parse(baseRequest.body) : undefined,
+          body: describeRequestBody(baseRequest),
           idempotencyKeyPresent: Boolean(key),
           retryPlan: {
             enabled: dryRunRetriesEnabled,
@@ -1202,7 +1199,7 @@ export async function execute(
     }
 
     record.upstreamEndpoint = `${request.method} ${new URL(request.url).pathname}`;
-    record.requestBytes = request.body ? byteLen(request.body) : 0;
+    record.requestBytes = requestByteLength(request.body);
 
     await runHook(ctx.policy?.preExecute, request);
 
@@ -1310,6 +1307,7 @@ export async function execute(
       attempt += 1;
       record.retryCount = attempt - 1;
       try {
+        throwIfCancelled(ctx.signal);
         const res = await ctx.transport.send(request);
         lastResponse = res;
         record.responseBytes = byteLen(res.body);
@@ -1353,14 +1351,13 @@ export async function execute(
           const data = applyAgentProjection(decoded, op.output.agentProjection);
           if (reservationOwned && ledgerKey && ctx.ledger) {
             try {
-              await ctx.ledger.complete(ledgerKey, data, res.status);
+              await ctx.ledger.complete(ledgerKey, data, res.status, jobSecondaryKey(op, data));
             } catch {
-              // The upstream acknowledged the write. Never release this
-              // reservation when persistence of the replay result is unknown:
-              // doing so could turn a ledger outage into a duplicate mutation.
-              // The reservation is now ambiguous/unconfirmed rather than
-              // merely reserved, matching the sawPostResponseFailure branch
-              // below.
+              // The upstream acknowledged the write. Never release this reservation
+              // when persistence of the replay result is unknown: that could turn
+              // a ledger outage into a duplicate mutation. The reservation is now
+              // ambiguous/unconfirmed rather than merely reserved, matching the
+              // sawPostResponseFailure branch below.
               record.ledger = "in_progress";
               await runHook(ctx.policy?.postResponse, request, res);
               await runHook(ctx.policy?.postExecute, request, res);
@@ -1416,6 +1413,7 @@ export async function execute(
         if (!(err instanceof TransportError)) throw err;
         if (err.phase === "after_response") sawPostResponseFailure = true;
         const canRetry =
+          ctx.signal?.aborted !== true &&
           retriesEnabled &&
           attempt < maxAttempts &&
           conditionIsRetryable(err.condition, op.retries);
@@ -1423,17 +1421,7 @@ export async function execute(
           await sleep(computeBackoffMs(attempt, op.retries, ctx.rng));
           continue;
         }
-        const code = err.condition === "timeout" ? "upstream_timeout" : "upstream_unavailable";
-        finalError = new AnvilError({
-          code,
-          message: retrySafe
-            ? `Upstream transport failed for ${op.id}.`
-            : `Upstream transport failed for ${op.id} and this operation is not safe to auto-retry.`,
-          operation: op.id,
-          traceId,
-          retryable: true,
-          safeToRetry: retrySafe,
-        });
+        finalError = transportFailureError({ op, traceId, err, retrySafe, signal: ctx.signal });
         break;
       }
     }

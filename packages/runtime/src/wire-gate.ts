@@ -30,26 +30,27 @@ export function wireGateError(
   const verdict = wireExecutability(op);
   if (verdict.ok) return undefined;
   // A facade declares that the base URL serves the synthesized *coordinates*
-  // over HTTP+JSON. A subscription refuses for a different reason — no wire
-  // binding, or no bound to make the window terminate — and neither is a fact
-  // about coordinates, so no facade can supply it. Letting one through would
-  // hand the SSE codec an operation with nothing to post.
-  const facadeApplies = verdict.protocol !== "graphql_sse";
+  // over HTTP+JSON. A framing refusal — a subscription with no bound, a
+  // streaming RPC, an rpc/encoded SOAP binding — is not a fact about
+  // coordinates, so no facade can supply it; the verdict itself says which
+  // kind it is, and the codec resolution reads the same answer.
+  const facadeApplies = verdict.scope === "coordinates";
   if (facade !== undefined && facadeApplies) return undefined;
   return new AnvilError({
     code: "unsupported_operation",
     message:
       `Operation '${op.id}' speaks ${verdict.protocol}, which this runtime cannot put on the wire: ` +
-      `${verdict.reason}. ${facadeApplies ? verdict.nextAction : ""}`.trimEnd(),
+      `${verdict.reason}. ${verdict.nextAction}`,
     operation: op.id,
     traceId,
     retryable: false,
     details: {
       wire_protocol: verdict.protocol,
       runtime_wire_protocol: "http_json",
+      refusal_scope: verdict.scope,
       required_action: facadeApplies
         ? "declare a protocol facade, or deploy against a service this runtime can speak to"
-        : "recompile the subscription so it carries a wire binding and a stream contract; a facade cannot bound a stream",
+        : "fix the source document the compile diagnostics name and recompile; a facade cannot change how a call is framed",
     },
   });
 }

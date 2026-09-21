@@ -13,12 +13,7 @@ import {
   Service,
   Workflow,
 } from "@anvil/air";
-import {
-  type CapabilityBudgetCheck,
-  type CapabilityBudgetVerdict,
-  DriftItem,
-} from "@anvil/compiler";
-import type { BundleReprojectionResult } from "@anvil/generators";
+import { DriftItem } from "@anvil/compiler";
 import {
   type GroupRoutingDelta,
   type SemanticChange,
@@ -29,6 +24,7 @@ import {
 } from "@anvil/refinement";
 import { z } from "zod";
 import { BUSINESS_ROUTES } from "./business-contract.js";
+import { REVIEW_ROUTES, zCapabilityBudget, zReprojection } from "./review-contract.js";
 import {
   WORKBENCH_ROUTES,
   zArtifactQuery,
@@ -41,6 +37,26 @@ import {
   zRegenerateRequest,
 } from "./workbench-contract.js";
 
+export {
+  type BundleHistory,
+  zApprovalPreview,
+  zApprovalRecord,
+  zApproveCapabilityRequest,
+  zApproveCapabilityResponse,
+  zApproveOperationsRequest,
+  zApproveOperationsResponse,
+  zBundleHistory,
+  zCapabilityBudget,
+  zHistoryEntry,
+  zManifestIssue,
+  zManifestTextRequest,
+  zManifestValidation,
+  zManifestView,
+  zManifestWriteResponse,
+  zRejectCapabilityRequest,
+  zRejectCapabilityResponse,
+  zReprojection,
+} from "./review-contract.js";
 export {
   zArtifactQuery,
   zArtifactsView,
@@ -63,7 +79,10 @@ export {
  * `@anvil/*` functions return, and the mutations are the same functions the
  * CLI calls (`approveOperationsInBundle`, `approveCapabilityInBundle`,
  * `rejectCapabilityInBundle`, `recordPackDecision`, `applyPackToBundle`,
- * `exportRefinementTask`, `importRefinementSubmission`).
+ * `exportRefinementTask`, `importRefinementSubmission`, `writeBundleManifest`).
+ * A decision route with `dryRun: true` calls the library's preview
+ * (`previewOperationApproval`, `previewCapabilityDecision`) — the same gates,
+ * no write — and answers `written: false` with the preview attached.
  *
  * ## SECURITY — the mutation-protection contract the server MUST implement
  *
@@ -110,6 +129,15 @@ export {
  *
  * with ids made filename-safe (`[^A-Za-z0-9._-]` → `_`). The directory is
  * created by the first mutation that needs it and never by a GET.
+ *
+ * The manifest routes read and write exactly one file, the bundle's own
+ * `<bundle>/.anvil/manifest.yaml` (`writeBundleManifest`), addressed by the
+ * bundle id alone — the request names no path, so there is none to escape
+ * with. A write is refused (`console/manifest_invalid`, 422) unless the
+ * compiler's own parser accepts the text, and it never recompiles: the
+ * response carries the `anvil compile` command that would. The decision,
+ * history, and manifest schemas live in `review-contract.ts`, spread into
+ * the route table below.
  *
  * ## Client-side error codes
  *
@@ -163,42 +191,6 @@ const zRefusedSupersession = z.object({
   workflowId: z.string(),
   reason: z.string(),
 }) satisfies z.ZodType<RefusedSupersession>;
-
-const zBudgetVerdict = z.enum(["ok", "warning", "blocked"]) satisfies z.ZodType<
-  CapabilityBudgetVerdict,
-  CapabilityBudgetVerdict
->;
-
-/** The compiler's tool/token budget verdict for one capability, as it computes it. */
-export const zCapabilityBudget = z.object({
-  capabilityId: z.string(),
-  toolCount: z.number().int().nonnegative(),
-  disclosureTokens: z.number().int().nonnegative().optional(),
-  measuredOperations: z.number().int().nonnegative().optional(),
-  unmeasuredOperations: z.number().int().nonnegative().optional(),
-  supersededOperations: z.number().int().nonnegative().optional(),
-  workflowTools: z.number().int().nonnegative().optional(),
-  verdict: zBudgetVerdict,
-  diagnostic: Diagnostic.optional(),
-}) satisfies z.ZodType<CapabilityBudgetCheck>;
-
-/**
- * What an atomic reprojection reports back, minus the full pre-image of the
- * bundle's files (which the CLI only uses to name preserved stale records —
- * summarised here instead).
- */
-export const zReprojection = z.object({
-  bundleDir: z.string(),
-  generatedFileCount: z.number().int().nonnegative(),
-  projectionsChanged: z.boolean(),
-  retainedBackup: z.string().optional(),
-  /** Preserved-but-stale artifacts the reviewer must regenerate (see `anvil approve`'s notes). */
-  stale: z.object({
-    targetFiles: z.array(z.string()),
-    records: z.array(z.string()),
-    gatewayReceipt: z.boolean(),
-  }),
-}) satisfies z.ZodType<Omit<BundleReprojectionResult, "existingFiles">>;
 
 export const zGroupRoutingDelta = z.object({
   schemaVersion: z.literal(1),
@@ -522,57 +514,6 @@ export const zDriftView = z.object({
 export type DriftView = z.infer<typeof zDriftView>;
 
 /* -------------------------------------------------------------------------- */
-/* POST /api/bundles/:id/operations/approve                                    */
-/* -------------------------------------------------------------------------- */
-
-export const zApproveOperationsRequest = z.object({
-  ids: z.array(Operation.shape.id).min(1),
-});
-
-/**
- * `approveOperationsInBundle` is all-or-nothing: an unknown or blocked id, a
- * receipt-bound gateway lineage, or an operation that stays blocked after
- * re-validation refuses the whole request as an error envelope, before any
- * file changes. `refusals` is therefore empty on success today and is kept
- * for the day a partial admission is deliberately designed — never inferred.
- */
-export const zApproveOperationsResponse = z.object({
-  approved: z.array(Operation.shape.id),
-  alreadyApproved: z.array(Operation.shape.id),
-  regeneratedFiles: z.number().int().nonnegative(),
-  reprojection: zReprojection,
-  refusals: z.array(z.object({ id: Operation.shape.id, reason: z.string() })),
-});
-
-/* -------------------------------------------------------------------------- */
-/* POST /api/bundles/:id/capabilities/:capId/{approve|reject}                  */
-/* -------------------------------------------------------------------------- */
-
-/**
- * Exactly the CLI's flags: `--allow-large` and `--note` for approve, `--reason`
- * for reject. The library records no reviewer identity for a capability
- * decision, so the contract does not ask for one — a field the projection
- * would have to invent a home for is a field it does not have.
- */
-export const zApproveCapabilityRequest = z.object({
-  allowLarge: z.boolean().optional(),
-  note: z.string().optional(),
-});
-export const zRejectCapabilityRequest = z.object({
-  reason: z.string().optional(),
-});
-
-export const zApproveCapabilityResponse = z.object({
-  capabilityId: Capability.shape.id,
-  budget: zCapabilityBudget,
-  reprojection: zReprojection,
-});
-export const zRejectCapabilityResponse = z.object({
-  capabilityId: Capability.shape.id,
-  reprojection: zReprojection,
-});
-
-/* -------------------------------------------------------------------------- */
 /* POST /api/bundles/:id/packs/:hash/decisions                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -676,6 +617,7 @@ export const zImportTaskResponse = z.object({
 export const CONSOLE_ROUTES = {
   ...WORKBENCH_ROUTES,
   ...BUSINESS_ROUTES,
+  ...REVIEW_ROUTES,
   preview: {
     method: "POST",
     path: "/api/bundles/:id/operations/:operationId/preview",
@@ -741,27 +683,6 @@ export const CONSOLE_ROUTES = {
     mutates: false,
     query: zDriftQuery,
     response: zDriftView,
-  },
-  approveOperations: {
-    method: "POST",
-    path: "/api/bundles/:id/operations/approve",
-    mutates: true,
-    request: zApproveOperationsRequest,
-    response: zApproveOperationsResponse,
-  },
-  approveCapability: {
-    method: "POST",
-    path: "/api/bundles/:id/capabilities/:capId/approve",
-    mutates: true,
-    request: zApproveCapabilityRequest,
-    response: zApproveCapabilityResponse,
-  },
-  rejectCapability: {
-    method: "POST",
-    path: "/api/bundles/:id/capabilities/:capId/reject",
-    mutates: true,
-    request: zRejectCapabilityRequest,
-    response: zRejectCapabilityResponse,
   },
   packDecision: {
     method: "POST",

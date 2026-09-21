@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AirDocument } from "@anvil/air";
 import { compile } from "@anvil/compiler";
-import { type HttpResponse, MockTransport } from "@anvil/runtime";
+import { type HttpResponse, MockTransport, requestBodyText } from "@anvil/runtime";
 import { beforeAll, describe, expect, it } from "vitest";
 import { runAnvilCli } from "./anvil-cli.js";
 import { bufferIO } from "./io.js";
@@ -210,7 +210,7 @@ describe("tool CLI: invocation", () => {
     );
     expect(code).toBe(0);
     expect(transport.requests).toHaveLength(1);
-    const body = JSON.parse(transport.requests[0]?.body ?? "{}");
+    const body = JSON.parse(requestBodyText(transport.requests[0]?.body) ?? "{}");
     expect(body.amount).toBe(2500); // coerced to integer
     expect(transport.requests[0]?.headers["Idempotency-Key"]).toBe("k1");
   });
@@ -324,7 +324,9 @@ paths:
       { transport, env: { ANVIL_ENV: "dev" } as NodeJS.ProcessEnv, io },
     );
     expect(code, io.text()).toBe(0);
-    expect(JSON.parse(transport.requests[0]?.body ?? "{}")).toEqual({ items: [{ sku: "a" }] });
+    expect(JSON.parse(requestBodyText(transport.requests[0]?.body) ?? "{}")).toEqual({
+      items: [{ sku: "a" }],
+    });
   });
 });
 

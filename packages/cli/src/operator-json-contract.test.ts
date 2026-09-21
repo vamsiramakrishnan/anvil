@@ -540,6 +540,20 @@ describe("legacy product commands keep the operator JSON contract", () => {
         "--json",
       ],
     ],
+    [
+      "legacy bridge serve",
+      [
+        "legacy",
+        "bridge",
+        "serve",
+        "missing-binding.json",
+        "--conformance",
+        "missing-conformance.json",
+        "--broker",
+        "stomp://127.0.0.1:1",
+        "--json",
+      ],
+    ],
     ["legacy plan", ["legacy", "plan", "missing-plan.json", "--json"]],
     ["legacy graph", ["legacy", "graph", "missing-inventory.json", "--json"]],
     ["legacy gaps", ["legacy", "gaps", "missing-inventory.json", "--json"]],
@@ -891,6 +905,7 @@ const UNEXERCISED: Record<string, string> = {
   "capability show": "needs a compiled bundle fixture",
   "capability compose": "needs two verified bundle fixtures",
   "deploy credentials": "needs a compiled bundle fixture",
+  "sdk publish-plan": "needs a compiled bundle fixture; driven in cmd-deploy-kubernetes.test.ts",
   "deploy ledger": "needs a compiled bundle fixture",
   "job answer": "needs a compiled bundle fixture with an approved human-decision operation",
   // Need a source/spec corpus.
@@ -910,6 +925,7 @@ const UNEXERCISED: Record<string, string> = {
   "refine plan": "needs an AIR fixture with detectable deficiencies",
   "refine run": "needs an AIR fixture with detectable deficiencies",
   "refine skills": "needs an AIR fixture with detectable deficiencies",
+  "evals run": "needs a scripted agent process; its --json report is driven in cmd-evals.test.ts",
   // Need drift records.
   "drift accept": "needs a stored drift record",
   "drift list": "needs a stored drift record",

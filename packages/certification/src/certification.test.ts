@@ -84,13 +84,18 @@ describe("static vs executable certification", () => {
 });
 
 describe("the gate kills safety mutants", () => {
-  it("every applicable standard mutant is killed", () => {
-    const results = runMutationBattery(air);
+  it("every applicable standard mutant is killed, each by a named check", () => {
+    const results = runMutationBattery(air, { executable: true });
     const survivors = results.filter((r) => r.applicable && !r.killed);
     expect(survivors).toEqual([]);
-    // The safety mutants are detected specifically as safety-sensitive.
+    // The safety mutants are detected specifically as safety-sensitive, AND a
+    // check failed against the weakened contract — a kill names its check.
     const removeConfirm = results.find((r) => r.name === "remove_confirmation");
     expect(removeConfirm?.classification).toBe("safety-sensitive");
+    expect(removeConfirm?.killedBy).toContain("exec/confirmation_refusal");
+    for (const r of results.filter((r) => r.applicable)) {
+      expect(r.killedBy?.length, r.name).toBeGreaterThan(0);
+    }
   });
 
   it("a certification does not survive a removed confirmation", () => {

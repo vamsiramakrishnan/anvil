@@ -239,7 +239,10 @@ describe("anvil console", () => {
     const root = await anvil("--help");
     const lines = root.io.text().split("\n");
     const at = (name: string) => lines.findIndex((line) => line.startsWith(`  ${name} `));
-    expect(at("console")).toBe(at("approve") + 1);
+    // The review step, in the order a reviewer works it: approve, then the
+    // undo for an approval, then the console that drives both.
+    expect(at("rollback")).toBe(at("approve") + 1);
+    expect(at("console")).toBe(at("rollback") + 1);
     expect(at("console")).toBeLessThan(at("lint"));
   });
 

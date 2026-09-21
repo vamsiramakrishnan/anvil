@@ -4,13 +4,12 @@ import {
   type AsyncContract,
   type AsyncContractResolution,
   asyncContractSentence,
+  DEFAULT_OUTPUT_SCHEMA_BUDGET_TOKENS,
   DEFAULT_RESPONSE_BUDGET_TOKENS,
   estimateTokens,
-  extractFieldName,
   mcpToolAnnotations,
   mcpToolDescription,
   type Operation,
-  operationInputSchema,
   operationSafetyInputKeys,
   planWorkflowSurface,
   resolveAsyncContract,
@@ -26,20 +25,44 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ledgerWithJobIndexing, peekWebhookStatus } from "./async-completion.js";
 import {
+  type ConfirmingTool,
+  elicitOperationConfirmation,
+  elicitWorkflowConfirmation,
+  recordingElicitation,
+  relaxConfirmationForElicitingClients,
+  type ToolCallExtra,
+} from "./elicitation.js";
+import {
   createLaneSurface,
   type DisclosableTool,
   type DisclosureMode,
   decideLadder,
   type LadderMeasuredAccuracy,
 } from "./lane.js";
+import {
+  dryRunResult,
+  projectedResult,
+  responseResult,
+  toolOutputSchema,
+  workflowOutputSchema,
+  workflowResponseResult,
+} from "./output-schema.js";
 import { derivePageSize, detectSilentCap, silentCapNotice } from "./page-budget.js";
+import { progressReporter, reportPollProgress } from "./progress.js";
 import {
   applyProjection,
   projectionShape,
   takeProjectionArg,
   validateProjection,
 } from "./projection.js";
-import { type ResultBudget, truncateResultText } from "./truncation.js";
+import { type ResultBudget, resultText, truncateResultText } from "./truncation.js";
+import {
+  bindStepInput,
+  buildWorkflowInputShape,
+  optionalStepFailure,
+  type StepResult,
+  stepTrace,
+} from "./workflow-tool.js";
 import { MCP_RESERVED, operationZodShape, reservedSafetyShape } from "./zodshape.js";
 
 /**
@@ -138,76 +161,13 @@ export interface McpBuildOptions {
    * gates.
    */
   measuredAccuracy?: LadderMeasuredAccuracy;
-}
-
-/**
- * Get a value from a potentially nested result, handling both objects and arrays.
- * If the result is an array, reads from the first element.
- */
-function getFieldFromResult(result: unknown, fieldName: string): unknown {
-  let obj: unknown = result;
-  if (Array.isArray(obj) && obj.length > 0) {
-    obj = obj[0];
-  }
-  if (isRecord(obj)) {
-    return obj[fieldName];
-  }
-  return undefined;
-}
-
-/**
- * Build the input schema for a workflow tool. Uses the first step's input
- * schema, and — when a later step requires confirmation — exposes ONE confirm
- * key whose value the handler forwards to every confirming step under that
- * step's own safety key. The key name follows the same allocation rule as
- * single operations: the first step's own confirm key when it confirms itself,
- * else the stable "confirm" name unless a business field occupies it.
- */
-function buildWorkflowInputShape(
-  firstStepOp: Operation,
-  anyStepRequiresConfirmation: boolean,
-): { shape: z.ZodRawShape; confirmKey: string | undefined } {
-  const schema = operationInputSchema(firstStepOp);
-  const properties = (schema.properties as Record<string, unknown>) ?? {};
-  const required = new Set((schema.required as string[]) ?? []);
-  const shape: Record<string, z.ZodType> = {};
-
-  for (const [key, prop] of Object.entries(properties)) {
-    if (typeof prop !== "object" || prop === null) continue;
-    const propObj = prop as Record<string, unknown>;
-    let t = z.fromJSONSchema(propObj as Parameters<typeof z.fromJSONSchema>[0]);
-    if (typeof propObj.description === "string") t = t.describe(propObj.description as string);
-    shape[key] = required.has(key) ? t : t.optional();
-  }
-
-  // Add the dry-run reserved control
-  shape[MCP_RESERVED.dryRun] = z
-    .boolean()
-    .optional()
-    .describe("Preview the wire request without executing it (no upstream call).");
-
-  // …and the projection view control. A composite's final payload is the last
-  // step's response and is exactly as expensive; the caller needs the same knob
-  // here that it has on a single operation. It applies only to that final
-  // payload — intermediate step outputs are bindings, not disclosure.
-  Object.assign(shape, projectionShape());
-
-  if (!anyStepRequiresConfirmation) return { shape, confirmKey: undefined };
-
-  if (firstStepOp.confirmation.required) {
-    // The first step's schema already carries its collision-allocated confirm
-    // key; the composite reuses it rather than exposing a second one.
-    return { shape, confirmKey: operationSafetyInputKeys(firstStepOp).confirm };
-  }
-
-  const confirmKey = "confirm" in shape ? "anvil_confirm" : "confirm";
-  shape[confirmKey] = z
-    .boolean()
-    .optional()
-    .describe(
-      "Explicit confirmation. This workflow contains steps with side effects and requires confirm=true.",
-    );
-  return { shape, confirmKey };
+  /**
+   * Ceiling, in at-rest surface tokens, for one tool's published `outputSchema`
+   * (default `DEFAULT_OUTPUT_SCHEMA_BUDGET_TOKENS`; 0 publishes none). The
+   * schema is decided by `publishedOutputSchema` in `@anvil/air` — shared with
+   * the compiler's disclosure measurement — and this is the only knob on it.
+   */
+  outputSchemaBudgetTokens?: number;
 }
 
 /**
@@ -215,12 +175,19 @@ function buildWorkflowInputShape(
  * metadata makes risk visible to the model (spec §8): standard hints plus Anvil
  * effect/idempotency semantics in `_meta`. Resource serving is data-driven —
  * pass `options.resources`; this runtime never generates them.
+ *
+ * Capabilities are declared, not inferred: `tools` (with `listChanged`, which
+ * the disclosure ladder relies on) and `resources`. Elicitation is a CLIENT
+ * capability this server reads (elicitation.ts); progress and cancellation are
+ * per-request protocol features (progress.ts, `ExecuteContext.signal`).
  */
 export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpServer {
-  const server = new McpServer({
-    name: `${air.service.id}-tools`,
-    version: air.service.version,
-  });
+  const server = new McpServer(
+    { name: `${air.service.id}-tools`, version: air.service.version },
+    { capabilities: { tools: { listChanged: true }, resources: {} } },
+  );
+  const outputSchemaBudget =
+    options.outputSchemaBudgetTokens ?? DEFAULT_OUTPUT_SCHEMA_BUDGET_TOKENS;
 
   // webhook_receiver operations are compiled and validated like any other
   // operation, but are never a directly-callable tool — receiver-only, per
@@ -237,6 +204,9 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
   // below for why disclosure is a state on a registered tool rather than a
   // decision about whether to register one.
   const opTools = new Map<string, DisclosableTool>();
+  // Tools whose listed schema requires a confirm key an eliciting client may
+  // instead be asked for — relaxed for that client alone, once it initializes.
+  const confirmingTools: ConfirmingTool[] = [];
   const registeredToolNames = new Set<string>();
 
   // Async contracts resolve against the WHOLE document, never against `ops`.
@@ -316,6 +286,14 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
     // this is meant to save.
     const asyncContract = resolveAsyncContract(op, allOpsById);
     const asyncSentence = asyncContractSentence(asyncContract);
+    const declaredOutput = hybridStatusOperationContracts.has(op.id)
+      ? undefined
+      : toolOutputSchema(op, outputSchemaBudget);
+    const inputShape = {
+      ...operationZodShape(op),
+      ...reservedSafetyShape(op),
+      ...projectionShape(),
+    };
     const registered = server.registerTool(
       op.mcp.toolName,
       {
@@ -342,7 +320,12 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         // Plus the reserved view control (anvil_projection): the caller's only
         // way to lower what a response costs it, as opposed to discovering after
         // the fact that it cost too much.
-        inputSchema: { ...operationZodShape(op), ...reservedSafetyShape(op), ...projectionShape() },
+        inputSchema: inputShape,
+        // The response shape, when `@anvil/air` decides one is publishable. A
+        // status operation another operation's contract names may answer from
+        // a cached webhook payload shaped like the RECEIVER's response, so it
+        // declares none rather than one it cannot keep.
+        ...(declaredOutput ? { outputSchema: declaredOutput } : {}),
         // Shared with the Agent Registry toolspec (@anvil/air) — no drift.
         annotations: mcpToolAnnotations(op),
         _meta: {
@@ -357,7 +340,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           ...asyncContractMeta(asyncContract),
         },
       },
-      async (args: Record<string, unknown>) => {
+      async (args: Record<string, unknown>, extra: ToolCallExtra) => {
         // Peel the reserved dry-run control off the arguments; the rest is the
         // operation input. `confirm` and `idempotency_key` are ordinary input
         // fields (synthesized by operationInputSchema) that the executor reads
@@ -365,11 +348,12 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         // same safety contract holds whether an op is invoked directly, over the
         // CLI, or over the CLI routed through this server (local stdio / remote SSE).
         const dryRun = args[MCP_RESERVED.dryRun] === true;
-        const input = { ...args };
+        let input = { ...args };
         delete input[MCP_RESERVED.dryRun];
         // Peel the view control too. Reserved controls never travel upstream.
         const projection = takeProjectionArg(input);
         const { budget, tokens: budgetTokens } = resolveResultBudget(options, op);
+        const report = progressReporter(extra);
 
         // Parse-check the projection BEFORE the upstream call. A malformed
         // expression is the caller's mistake, and there is no reason to make an
@@ -387,7 +371,17 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         const page = derivePageSize(op, input, budgetTokens);
         if (page) input[page.key] = page.size;
 
-        const execContext = options.contextFor(op);
+        // A confirmation the caller did not supply — or, for a humanApproval
+        // operation, one only a model supplied — may be asked of the human over
+        // elicitation when the client can answer one. Nothing is loosened: an
+        // unanswered ask leaves the executor's own refusal in place (elicitation.ts).
+        const elicited = await elicitOperationConfirmation({ server, op, input, extra });
+        input = elicited.input;
+        const execContext = recordingElicitation(
+          // The client's cancellation of THIS request aborts the upstream call.
+          { ...options.contextFor(op), signal: extra.signal },
+          elicited.decision,
+        );
         // Any operation with a resolved AsyncContract indexes its job handle
         // on completion — the write side of the job-handle index
         // (packages/runtime/src/idempotency.ts's `secondaryKey`) that nothing
@@ -414,19 +408,17 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         // all. Not found (or no ledger, or a dry run) -> fall through to the
         // unchanged call below, exactly as before this phase.
         const hybridContract = hybridStatusOperationContracts.get(op.id);
+        const jobId = hybridContract ? input[hybridContract.statusJobIdParam as string] : undefined;
         if (hybridContract && !dryRun && execContext.ledger?.findBySecondaryKey) {
-          const jobId = input[hybridContract.statusJobIdParam as string];
           if (typeof jobId === "string" && jobId.length > 0) {
             const idempotencyKey = await execContext.ledger.findBySecondaryKey(jobId);
             if (idempotencyKey !== undefined) {
               const peek = await peekWebhookStatus(execContext.ledger, idempotencyKey);
               if (peek.found) {
+                await report(1, 1, `${jobId}: completed (answered by webhook)`);
                 let text = JSON.stringify(peek.result, null, 2);
                 text = truncateResultText(text, op, budget);
-                return {
-                  content: [{ type: "text" as const, text }],
-                  structuredContent: isRecord(peek.result) ? peek.result : { result: peek.result },
-                };
+                return responseResult(text, peek.result, undefined);
               }
             }
           }
@@ -435,6 +427,9 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         const result = await execute(op, { input, dryRun }, callContext);
         if (result.outcome === "success") {
           const raw = result.data ?? null;
+          // One poll, one progress mark: done when the contract's own state
+          // field says the job is terminal, pending otherwise.
+          if (hybridContract) await reportPollProgress(report, hybridContract, raw, jobId);
 
           // ORDERING IS LOAD-BEARING: the projection is applied here, before the
           // payload is serialized and measured against the budget. Applying it
@@ -449,7 +444,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
             data = projected.data ?? null;
           }
 
-          let text = JSON.stringify(data, null, 2);
+          let text = resultText(data);
           text = truncateResultText(text, op, budget);
 
           // Measured on the raw response: a projection can drop the very fields
@@ -459,10 +454,12 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           const cap = detectSilentCap(op, raw);
           if (cap) text = `${text}\n\n${silentCapNotice(cap)}`;
 
-          return {
-            content: [{ type: "text" as const, text }],
-            structuredContent: isRecord(data) ? data : { result: data },
-          };
+          // The structured channel follows the published output schema: a
+          // projected view under its reserved key, a response validated against
+          // the declared shape (output-schema.ts).
+          return projection !== undefined
+            ? projectedResult(text, data)
+            : responseResult(text, data, declaredOutput);
         }
         if (result.outcome === "dry_run") {
           // The plan is a preview of the wire request, not response data, so a
@@ -471,15 +468,17 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           // budget decided before spending anything.
           let text = JSON.stringify(result.plan, null, 2);
           text = truncateResultText(text, op, budget);
-          return {
-            content: [{ type: "text" as const, text }],
-          };
+          return dryRunResult(text, result.plan);
         }
         return errorResult(result.envelope, op, budget);
       },
     );
     opTools.set(op.id, registered);
     registeredToolNames.add(op.mcp.toolName);
+    if (op.confirmation.required) {
+      const confirmKey = operationSafetyInputKeys(op).confirm;
+      confirmingTools.push({ tool: registered, shape: inputShape, confirmKey });
+    }
   }
 
   // A name derived from a real operation's own tool name, disambiguated
@@ -533,14 +532,22 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
             : {}),
         },
       },
-      async (args: Record<string, unknown>) => {
+      async (args: Record<string, unknown>, extra: ToolCallExtra) => {
         const jobId = args.job_id;
-        const pending = () => ({
-          content: [
-            { type: "text" as const, text: JSON.stringify({ status: "pending", jobId }, null, 2) },
-          ],
-          structuredContent: { status: "pending" as const, jobId: jobId ?? null },
-        });
+        const report = progressReporter(extra);
+        // One poll, one progress mark, exactly like the hybrid status handler.
+        const pending = async () => {
+          await report(0, 1, `${typeof jobId === "string" ? jobId : "job"}: pending`);
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify({ status: "pending", jobId }, null, 2),
+              },
+            ],
+            structuredContent: { status: "pending" as const, jobId: jobId ?? null },
+          };
+        };
         if (typeof jobId !== "string" || jobId.length === 0) return pending();
         const execContext = options.contextFor(submitOp);
         if (!execContext.ledger?.findBySecondaryKey) return pending();
@@ -548,10 +555,8 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         if (idempotencyKey === undefined) return pending();
         const peek = await peekWebhookStatus(execContext.ledger, idempotencyKey);
         if (!peek.found) return pending();
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(peek.result, null, 2) }],
-          structuredContent: isRecord(peek.result) ? peek.result : { result: peek.result },
-        };
+        await report(1, 1, `${jobId}: completed (answered by webhook)`);
+        return responseResult(JSON.stringify(peek.result, null, 2), peek.result, undefined);
       },
     );
   }
@@ -604,9 +609,9 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
             "anvil/risk": decisionOp.effect.risk,
           },
         },
-        async (args: Record<string, unknown>) => {
+        async (args: Record<string, unknown>, extra: ToolCallExtra) => {
           const { job_id: jobId, decision, note, ...rest } = args;
-          const execContext = options.contextFor(decisionOp);
+          const execContext = { ...options.contextFor(decisionOp), signal: extra.signal };
           const { budget } = resolveResultBudget(options, decisionOp);
           const outcome = await handleJobAnswer({
             operation: decisionOp,
@@ -630,19 +635,14 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           }
           const result = outcome.result;
           if (result.outcome === "success") {
-            let text = JSON.stringify(result.data ?? null, null, 2);
+            let text = resultText(result.data ?? null);
             text = truncateResultText(text, decisionOp, budget);
-            return {
-              content: [{ type: "text" as const, text }],
-              structuredContent: isRecord(result.data)
-                ? result.data
-                : { result: result.data ?? null },
-            };
+            return responseResult(text, result.data ?? null, undefined);
           }
           if (result.outcome === "dry_run") {
             let text = JSON.stringify(result.plan, null, 2);
             text = truncateResultText(text, decisionOp, budget);
-            return { content: [{ type: "text" as const, text }] };
+            return dryRunResult(text, result.plan);
           }
           return errorResult(result.envelope, decisionOp, budget);
         },
@@ -674,7 +674,9 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
     // Tool names follow the same convention as single operations (snake_case,
     // MCP-safe charset); the dotted workflow id stays in _meta.
     const workflowToolName = workflow.id.replace(/[^A-Za-z0-9_-]/g, "_");
-    server.registerTool(
+    const lastStepOp = stepOps[stepOps.length - 1] ?? firstStepOp;
+    const declaredWorkflowOutput = workflowOutputSchema(lastStepOp, outputSchemaBudget);
+    const registeredWorkflow = server.registerTool(
       workflowToolName,
       {
         title: workflow.displayName,
@@ -682,6 +684,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           workflow.description ||
           `Composite workflow: ${workflow.steps.map((s) => s.operationId).join(" → ")}`,
         inputSchema: workflowInputShape,
+        ...(declaredWorkflowOutput ? { outputSchema: declaredWorkflowOutput } : {}),
         _meta: {
           "anvil/workflow": true,
           "anvil/step_count": workflow.steps.length,
@@ -691,7 +694,19 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           ...(replacedOperationIds.length > 0 ? { "anvil/supersedes": replacedOperationIds } : {}),
         },
       },
-      async (args: Record<string, unknown>) => {
+      async (rawArgs: Record<string, unknown>, extra: ToolCallExtra) => {
+        // One ask for the whole composite, BEFORE step 1: the confirming steps
+        // are named together, and the answer lands on the one composite confirm
+        // key the loop below forwards to each of them (elicitation.ts).
+        const elicited = await elicitWorkflowConfirmation({
+          server,
+          workflow,
+          stepOps,
+          args: rawArgs,
+          confirmKey: compositeConfirmKey,
+          extra,
+        });
+        const args = elicited.input;
         const dryRun = args[MCP_RESERVED.dryRun] === true;
         const input = { ...args };
         delete input[MCP_RESERVED.dryRun];
@@ -700,17 +715,14 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         // malformed expression after the writes have landed would be a much
         // worse deal than refusing it before any of them do. Attributed to the
         // last step, whose response is the one the expression will address.
-        const projectionOp = stepOps[stepOps.length - 1] ?? firstStepOp;
         if (projection !== undefined) {
-          const invalid = validateProjectionArg(projection, projectionOp);
+          const invalid = validateProjectionArg(projection, lastStepOp);
           if (invalid) return invalid;
         }
+        const report = progressReporter(extra);
+        const total = workflow.steps.length;
 
-        const stepResults: Array<{
-          operationId: string;
-          success: boolean;
-          data?: unknown;
-        }> = [];
+        const stepResults: StepResult[] = [];
         let currentInput = input;
 
         // Execute each step in sequence
@@ -736,12 +748,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           // key — the runtime still enforces per step, the composite never
           // self-confirms on the caller's behalf.
           if (i > 0) {
-            const prevStepData = stepResults[i - 1]?.data;
-            for (const [paramName, bindingValue] of Object.entries(step.bindings)) {
-              const fieldName = extractFieldName(bindingValue);
-              const boundValue = getFieldFromResult(prevStepData, fieldName);
-              currentInput[paramName] = boundValue;
-            }
+            bindStepInput(step, stepResults[i - 1], currentInput);
             if (stepOp.confirmation.required && compositeConfirmKey !== undefined) {
               const confirmValue = args[compositeConfirmKey];
               if (confirmValue !== undefined) {
@@ -750,27 +757,35 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
             }
           }
 
-          // Execute this step
+          await report(i, total, `step ${i + 1}/${total}: ${step.operationId}`);
+          // Execute this step. The client's cancellation of the composite call
+          // aborts whichever step is in flight; no later step starts.
           const result = await execute(
             stepOp,
             { input: currentInput, dryRun },
-            options.contextFor(stepOp),
+            recordingElicitation(
+              { ...options.contextFor(stepOp), signal: extra.signal },
+              elicited.decision,
+            ),
           );
 
           if (result.outcome === "success") {
             stepResults.push({
               operationId: step.operationId,
               success: true,
+              optional: step.optional,
               data: result.data,
             });
             // For the next step, use the success data
             currentInput = {};
+          } else if (result.outcome === "error" && step.optional) {
+            // An optional step's failure is recorded where its output would
+            // have been, and the run goes on (workflow-tool.ts).
+            stepResults.push(optionalStepFailure(step, result.envelope));
+            currentInput = {};
           } else if (result.outcome === "error") {
             // Step failed: return error with step trace
-            stepResults.push({
-              operationId: step.operationId,
-              success: false,
-            });
+            stepResults.push({ operationId: step.operationId, success: false, optional: false });
             const { budget } = resolveResultBudget(options, stepOp);
             let text = JSON.stringify(
               {
@@ -795,25 +810,23 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           } else if (result.outcome === "dry_run") {
             // For dry-run, return the plan
             const { budget } = resolveResultBudget(options, stepOp);
-            let text = JSON.stringify(
-              {
-                dryRun: true,
-                workflow: workflow.id,
-                stepIndex: i,
-                step: step.operationId,
-                plan: result.plan,
-              },
-              null,
-              2,
-            );
-            text = truncateResultText(text, stepOp, budget);
-            return {
-              content: [{ type: "text" as const, text }],
+            const plan = {
+              dryRun: true,
+              workflow: workflow.id,
+              stepIndex: i,
+              step: step.operationId,
+              plan: result.plan,
             };
+            let text = JSON.stringify(plan, null, 2);
+            text = truncateResultText(text, stepOp, budget);
+            return dryRunResult(text, plan);
           }
         }
+        await report(total, total, "workflow complete");
 
-        // All steps succeeded: return final result with trace
+        // All steps ran: return the final result with the trace. The last
+        // step's output slot holds its failure marker when it was optional and
+        // failed, so the caller sees exactly what the run left behind.
         const lastStepResult = stepResults[stepResults.length - 1];
         if (!lastStepResult) {
           return {
@@ -821,18 +834,6 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
               {
                 type: "text" as const,
                 text: JSON.stringify({ error: "Internal error: no step results" }),
-              },
-            ],
-            isError: true,
-          };
-        }
-        const lastStepOp = stepOps[stepOps.length - 1];
-        if (!lastStepOp) {
-          return {
-            content: [
-              {
-                type: "text" as const,
-                text: JSON.stringify({ error: "Internal error: no step operations" }),
               },
             ],
             isError: true,
@@ -858,20 +859,23 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         text = truncateResultText(text, lastStepOp, budget);
 
         // Append trace as structured content
-        const trace = stepResults
-          .map((sr) => `${sr.operationId}:${sr.success ? "ok" : "failed"}`)
-          .join(", ");
+        const trace = stepTrace(stepResults);
+        text = `${text}\n\n[workflow trace: ${trace}]`;
 
-        return {
-          content: [{ type: "text" as const, text: `${text}\n\n[workflow trace: ${trace}]` }],
-          structuredContent: isRecord(finalData)
-            ? { result: finalData, trace }
-            : { result: finalData, trace },
-        };
+        return projection !== undefined
+          ? projectedResult(text, finalData, { trace })
+          : workflowResponseResult(text, finalData, trace, declaredWorkflowOutput);
       },
     );
     registeredToolNames.add(workflowToolName);
+    // Only the first step's OWN confirm key is listed as required; the
+    // composite's synthesized one is optional already.
+    if (firstStepOp.confirmation.required && compositeConfirmKey !== undefined) {
+      const shape = workflowInputShape;
+      confirmingTools.push({ tool: registeredWorkflow, shape, confirmKey: compositeConfirmKey });
+    }
   }
+  relaxConfirmationForElicitingClients(server, confirmingTools);
 
   // The disclosure ladder, applied strictly on top of a fully registered
   // surface. Everything above ran exactly as it always has, which is the whole
@@ -937,10 +941,6 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
   }
 
   return server;
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 /** The operation ids one workflow actually removed from this server's surface. */

@@ -3,11 +3,15 @@
 **Make your legacy APIs agent-ready.**
 
 Bring the API contract you already have (REST/OpenAPI, SOAP/WSDL, gRPC, GraphQL,
-OData, or a gateway export). Anvil compiles it into agent-ready SDKs and tools: a
-skill, a CLI, an MCP server, and TypeScript, Python, Go, and Java clients, all
-generated from one reviewed model, so every surface agrees on what each
-operation does and whether it is safe to retry. A target command adds a Gemini
-Enterprise connector kit.
+or OData). A gateway export can come alongside it, at the support tier its
+gateway has: native WSO2 and Kong declarative state, or normalized interchange
+for Apigee, MuleSoft, and IBM API Connect (see [Gateway estates](docs/gateways.md)
+and `anvil estate support` for the exact contract). Anvil compiles the contract
+into agent-ready SDKs and tools: a skill, a CLI, an MCP server, and TypeScript,
+Python, Go, and Java clients, all generated from one reviewed model, so every
+surface agrees on what each operation does and whether it is safe to retry. A
+target command adds a Gemini Enterprise connector kit; a deploy command emits
+the Cloud Run and Kubernetes plans.
 
 Review the operations an agent may call before anything is exposed. When a task
 spans several calls or systems, define a business action with its own inputs,

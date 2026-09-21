@@ -35,6 +35,13 @@ export interface QueueReply {
 /** What any broker transport must do: publish one request, return one reply. */
 export interface QueueBrokerClient {
   requestReply(options: QueueRequestReplyOptions): Promise<QueueReply>;
+  /**
+   * Stop waiting for `idempotencyKey`. A client that correlates replies keeps
+   * a waiter per in-flight key, and the caller that gives up is the only one
+   * that knows the wait is over: without this, every timed-out exchange
+   * leaves its waiter behind for the life of the connection.
+   */
+  cancel?(idempotencyKey: string): void;
 }
 
 /** A queue transport failure — connection refused, channel closed, malformed
@@ -96,5 +103,9 @@ export async function requestReplyWithTimeout(
     return await Promise.race([client.requestReply(options), timeout]);
   } finally {
     if (timer) clearTimeout(timer);
+    // Settled either way, so nothing is waiting on this key any more. On the
+    // timeout path the client is still holding a waiter that no reply will
+    // ever satisfy; this is what releases it.
+    client.cancel?.(options.idempotencyKey);
   }
 }

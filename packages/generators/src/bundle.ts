@@ -17,7 +17,9 @@ import {
   operationCatalog,
 } from "./catalog.js";
 import { generateConformanceTest } from "./conformance.js";
-import { generateDeploy } from "./deploy.js";
+import { deploymentArtifactHash, generateDeploy } from "./deploy.js";
+import { generateGithubActionsWorkflow } from "./deploy-github-actions.js";
+import { generateKubernetesDeploy } from "./deploy-kubernetes.js";
 import { generateDocs } from "./docs.js";
 import { generateCliSource, runtimeServerBundle, webhookRoutesJson } from "./entrypoints.js";
 import { generateEvals } from "./evals.js";
@@ -226,6 +228,15 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
   // Docs, deploy, mocks, conformance.
   Object.assign(files, generateDocs(air));
   Object.assign(files, generateDeploy(air, options));
+  // The Kubernetes target and its CI pipeline: the same runtime image and env
+  // contract as Cloud Run, projected onto kustomize and GitHub Actions. The
+  // pod template is stamped with the same runtime-artifact hash Terraform
+  // binds, so both targets name one deployable.
+  Object.assign(
+    files,
+    generateKubernetesDeploy(air, options, { runtimeArtifactHash: deploymentArtifactHash(files) }),
+  );
+  Object.assign(files, generateGithubActionsWorkflow(air, options));
   if (options.businessPlan) {
     const privatePlan = `${JSON.stringify(options.businessPlan, null, 2)}\n`;
     files["runtime/business.plan.json"] = privatePlan;

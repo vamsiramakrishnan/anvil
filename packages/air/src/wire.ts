@@ -1,3 +1,4 @@
+import { bodyEncodingFor, SUPPORTED_BODY_CONTENT_TYPES } from "./body-encoding.js";
 import type { SourceKind } from "./enums.js";
 import type { Operation, SourceRef } from "./schema.js";
 
@@ -37,7 +38,8 @@ export type WireProtocol = (typeof WIRE_PROTOCOLS)[number];
  * The one protocol Anvil's runtime — and therefore the CLI, the MCP server, and
  * all four generated SDKs, which share its decision core — can construct a
  * request for. `packages/runtime/src/executor.ts` builds `method`/`url` from
- * `sourceRef` and serializes the body with `JSON.stringify`, unconditionally.
+ * `sourceRef`; the body is encoded per its declared content type (see
+ * `body-encoding.ts`), and a content type with no encoding is refused.
  */
 export const RUNTIME_WIRE_PROTOCOL = "http_json" as const satisfies WireProtocol;
 
@@ -91,9 +93,31 @@ export function wireProtocolFor(source: SourceRef): WireProtocol {
   return PROTOCOL_BY_SOURCE_KIND[source.kind];
 }
 
+/**
+ * What a refusal is *about*, which decides whether a declared protocol facade
+ * can answer it.
+ *
+ * `coordinates`: Anvil knows exactly what the call is and only lacks an address
+ * that serves it over HTTP+JSON — a gRPC method with an assumed transcoder, a
+ * queue request/reply exchange behind a bridge. An operator can point the base
+ * URL at such a translator and say so.
+ *
+ * `framing`: the compiler declined to encode the call at all — a streaming
+ * RPC, an rpc/encoded SOAP binding, a subscription with no bound, a tool with
+ * no path or method. There is no request for a translator to receive, so a
+ * facade has nothing to declare and must not be allowed to.
+ */
+export type WireRefusalScope = "coordinates" | "framing";
+
 export type WireExecutability =
   | { ok: true }
-  | { ok: false; protocol: WireProtocol; reason: string; nextAction: string };
+  | {
+      ok: false;
+      protocol: WireProtocol;
+      scope: WireRefusalScope;
+      reason: string;
+      nextAction: string;
+    };
 
 const WHY_NOT: Record<Exclude<WireProtocol, "http_json">, string> = {
   soap:
@@ -103,9 +127,12 @@ const WHY_NOT: Record<Exclude<WireProtocol, "http_json">, string> = {
     "encode wrongly — check the compile diagnostics for which",
   graphql:
     "Anvil speaks GraphQL for a query or a mutation over one JSON response, " +
-    "and for a subscription over a bounded Server-Sent Events window. This " +
-    "operation carries no wire binding at all, so the compiler declined to " +
-    "encode it — check the compile diagnostics for which shape and why",
+    "and for a subscription over a bounded Server-Sent Events window. The " +
+    "compiler records a wire binding for every root field it lowers — there " +
+    "is no GraphQL shape it declines — so an operation without one was not " +
+    "compiled from its SDL by this compiler: it was hand-written, or produced " +
+    "before wire bindings existed. Recompile from the SDL rather than editing " +
+    "a binding in by hand",
   grpc:
     "unlike the other protocols, this path is real — it is gRPC's own :path — " +
     "but a native call is length-prefixed protobuf over HTTP/2 with the status " +
@@ -146,6 +173,28 @@ const NEXT_ACTION =
   "<reason>` on the generated CLI, ANVIL_PROTOCOL_FACADE on the generated " +
   "servers — so the assumption is recorded rather than assumed.";
 
+const FRAMING_NEXT_ACTION =
+  "No protocol facade can supply this: the refusal is about how the call is " +
+  "framed, not where it is sent, so declaring one is refused too. Fix the " +
+  "source document the compile diagnostics name and recompile.";
+
+/**
+ * The scope of a refusal for a protocol that has no executable binding. A
+ * binding the compiler *recorded* but the runtime cannot speak natively is a
+ * coordinates problem; a binding the compiler *declined to record* is framing.
+ */
+function refusalScope(op: Operation, protocol: WireProtocol): WireRefusalScope {
+  const binding = op.sourceRef.binding;
+  if (protocol === "grpc") {
+    // A recorded `json_transcoded` binding is the compiler's own statement that
+    // a translator is assumed. No binding at all means the proto declared a
+    // stream, or an HTTP rule Anvil would have had to guess at.
+    return binding?.protocol === "grpc" ? "coordinates" : "framing";
+  }
+  if (protocol === "queue_request_reply") return "coordinates";
+  return "framing";
+}
+
 /**
  * Whether the HTTP/JSON runtime can put a faithful request for this operation
  * on the wire. The refusal carries its own next action, because a refusal an
@@ -173,12 +222,50 @@ export function wireExecutability(op: Operation): WireExecutability {
   ) {
     return { ok: true };
   }
+  const scope = refusalScope(op, protocol);
   return {
     ok: false,
     protocol,
+    scope,
     reason: WHY_NOT[protocol],
-    nextAction: NEXT_ACTION,
+    nextAction: scope === "coordinates" ? NEXT_ACTION : FRAMING_NEXT_ACTION,
   };
+}
+
+/**
+ * Whether a declared protocol facade may carry this operation over HTTP+JSON.
+ * True for an operation the runtime speaks anyway (the facade is then merely
+ * recorded) and for a coordinates refusal; false for a framing refusal, which
+ * no address can answer. Read by the runtime's gate and its codec resolution
+ * together, so the gate can never let through what the codec then encodes as
+ * JSON on a guess.
+ */
+export function protocolFacadeApplies(op: Operation): boolean {
+  const verdict = wireExecutability(op);
+  return verdict.ok || verdict.scope === "coordinates";
+}
+
+/**
+ * Why the HTTP/JSON runtime cannot encode this operation's request body, or
+ * undefined when it can (or when another codec owns the framing). A body is
+ * refused on its declared content type alone: the codec that would have
+ * labelled JSON as a form is the one this check exists to keep off the wire.
+ */
+export function bodyContentTypeIssue(op: Operation): string | undefined {
+  const body = op.input.body;
+  if (!body || wireProtocolFor(op.sourceRef) !== RUNTIME_WIRE_PROTOCOL) return undefined;
+  if (bodyEncodingFor(body.contentType)) return undefined;
+  return (
+    `its request body is declared as '${body.contentType}', which Anvil's HTTP/JSON runtime ` +
+    `does not encode — only ${SUPPORTED_BODY_CONTENT_TYPES} bodies are put on the wire`
+  );
+}
+
+/** The approved operations whose request body the runtime cannot encode. */
+export function unencodableBodyOperations(operations: readonly Operation[]): Operation[] {
+  return operations.filter(
+    (op) => op.state === "approved" && bodyContentTypeIssue(op) !== undefined,
+  );
 }
 
 /** The approved operations whose wire protocol the runtime cannot speak. The
@@ -196,19 +283,38 @@ export function unexecutableWireOperations(operations: readonly Operation[]): Op
  * protocol means is a check that can disagree with the runtime about it.
  */
 export function unexecutableWireFailures(operations: readonly Operation[]): string[] {
-  const byProtocol = new Map<WireProtocol, string[]>();
+  const byProtocol = new Map<WireProtocol, { ids: string[]; nextAction: string }>();
   for (const op of unexecutableWireOperations(operations)) {
     const verdict = wireExecutability(op);
     if (verdict.ok) continue;
-    const ids = byProtocol.get(verdict.protocol) ?? [];
-    ids.push(op.id);
-    byProtocol.set(verdict.protocol, ids);
+    const group = byProtocol.get(verdict.protocol) ?? { ids: [], nextAction: verdict.nextAction };
+    group.ids.push(op.id);
+    byProtocol.set(verdict.protocol, group);
   }
-  return [...byProtocol].map(([protocol, ids]) => {
+  const lines = [...byProtocol].map(([protocol, { ids, nextAction }]) => {
     const reason = WHY_NOT[protocol as Exclude<WireProtocol, "http_json">];
     return (
       `${ids.length} approved operation(s) speak ${protocol}, which this runtime cannot ` +
-      `put on the wire — ${reason}. Affected: ${ids.join(", ")}. ${NEXT_ACTION}`
+      `put on the wire — ${reason}. Affected: ${ids.join(", ")}. ${nextAction}`
     );
   });
+  // A body the runtime cannot encode is the same class of fact as a protocol
+  // it cannot speak: the call would be refused before a credential is read.
+  // Reported through the same seam so both certification engines see it.
+  const byContentType = new Map<string, string[]>();
+  for (const op of unencodableBodyOperations(operations)) {
+    const contentType = op.input.body?.contentType ?? "";
+    const ids = byContentType.get(contentType) ?? [];
+    ids.push(op.id);
+    byContentType.set(contentType, ids);
+  }
+  for (const [contentType, ids] of byContentType) {
+    lines.push(
+      `${ids.length} approved operation(s) declare a '${contentType}' request body, which this ` +
+        `runtime does not encode — only ${SUPPORTED_BODY_CONTENT_TYPES} bodies are put on the ` +
+        `wire. Affected: ${ids.join(", ")}. Re-declare the body in an encodable content type, ` +
+        "or leave the operation unapproved.",
+    );
+  }
+  return lines;
 }

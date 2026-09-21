@@ -27,6 +27,7 @@ import { ConfusionView } from "./views/confusion.js";
 import { CreateView } from "./views/create.js";
 import { EvidenceView } from "./views/evidence.js";
 import { InspectView } from "./views/inspect.js";
+import { ManifestView } from "./views/manifest.js";
 import { OverviewView } from "./views/overview.js";
 import { QueueView } from "./views/queue.js";
 import { WorkbenchView } from "./views/workbench.js";
@@ -183,7 +184,10 @@ function BundleFrame({
       );
       break;
     case "overview":
-      view = <OverviewView inspector={inspector} />;
+      view = <OverviewView api={api} bundleId={route.bundleId} inspector={inspector} />;
+      break;
+    case "manifest":
+      view = <ManifestView api={api} bundleId={route.bundleId} />;
       break;
     case "queue":
       view = (

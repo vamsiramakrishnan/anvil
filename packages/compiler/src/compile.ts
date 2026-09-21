@@ -1,4 +1,5 @@
 import {
+  AIR_VERSION,
   type AirDocument,
   type AuthRequirement,
   type Diagnostic,
@@ -457,7 +458,7 @@ async function buildAir(
   // the figure describes the tool surface this compile actually produced.
   const air = measureAirDisclosure(
     loadAirDocument({
-      anvilVersion: "0.1.0",
+      anvilVersion: AIR_VERSION,
       service: {
         id: serviceId,
         version: manifest.service?.environment

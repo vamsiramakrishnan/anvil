@@ -93,7 +93,10 @@ describe("handleJobAnswer", () => {
     const request = transport.requests[0];
     expect(request?.method).toBe("POST");
     expect(request?.url).toContain("/applications/app-1/decision");
-    expect(JSON.parse(request?.body ?? "{}")).toEqual({ decision: "approved", note: "looks good" });
+    expect(JSON.parse(String(request?.body ?? "{}"))).toEqual({
+      decision: "approved",
+      note: "looks good",
+    });
   });
 
   it("unauthorized caller is rejected before any upstream call", async () => {

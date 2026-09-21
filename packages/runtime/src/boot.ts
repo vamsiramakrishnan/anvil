@@ -9,6 +9,8 @@ import {
   runtimeExtensionApi,
 } from "./extensions.js";
 import { type IdempotencyLedger, resolveLedger } from "./idempotency.js";
+import type { InboundIdentity } from "./inbound-identity.js";
+import { buildLimitsGate, type LimitsGate } from "./limits.js";
 import {
   composeObservers,
   MetricsObserver,
@@ -16,7 +18,12 @@ import {
   type OtelExporter,
   resolveObserver,
 } from "./observability.js";
-import type { PolicyHooks } from "./policy.js";
+import {
+  type PolicyHooks,
+  type Principal,
+  resolvePrincipalForBearer,
+  resolvePrincipalForEnv,
+} from "./policy.js";
 import { FetchTransport, type Transport } from "./transport.js";
 
 /**
@@ -33,6 +40,16 @@ import { FetchTransport, type Transport } from "./transport.js";
  * FIRST (they may register the ledger and credential backends the next two
  * steps select), then the exporter, then the transport (wrapped by any
  * extension), then credentials and the ledger.
+ *
+ * The root also owns the two caller-facing gates that used to stop one step
+ * short of it: the rate/spend limiters (`ANVIL_RATE_LIMIT_*`, `ANVIL_SPEND_*`)
+ * and the principal directory (`ANVIL_PRINCIPALS`). Both were parsed into
+ * config on every surface and consumed only by `anvil serve mcp --fleet`, so a
+ * deployed server silently ran with no limits and every caller as the
+ * anonymous, every-scope principal. `contextDeps` now carries the limiters and
+ * whether a directory is configured; `principalFor` resolves the caller per
+ * request, and each surface must pass its result as `principal` (the drift
+ * test in @anvil/generators checks that every surface does).
  */
 export interface RuntimeBootOptions extends LoadExtensionsOptions {
   /** The process environment. Defaults to `process.env`. */
@@ -70,6 +87,23 @@ export interface RuntimeBoot {
   policy?: PolicyHooks;
   /** Drain batching exporters. Awaited by a surface's shutdown. */
   flush: () => Promise<void>;
+  /** The per-process rate and spend limiters (`ANVIL_RATE_LIMIT_*`, `ANVIL_SPEND_*`). */
+  limits: LimitsGate;
+  /** Whether `ANVIL_PRINCIPALS` names any entry, so an unresolved caller is refused. */
+  principalDirectoryConfigured: boolean;
+  /**
+   * Resolve the calling principal for one request. With a verified inbound
+   * identity the directory is keyed by the caller's own facts, in order: the
+   * exact bearer, `issuer:subject`, `subject`, then `email`; an inbound caller
+   * the directory does not name resolves to `undefined`, which `execute()`
+   * refuses fail-closed when a directory is configured. Without an inbound
+   * identity (stdio, the CLI, an HTTP server whose inbound auth is `none`) the
+   * session principal comes from `ANVIL_PRINCIPAL`, exactly as the fleet
+   * always resolved it. No directory configured resolves to `undefined`, which
+   * `execute()` turns into the anonymous, every-scope principal — byte-identical
+   * to a surface that never opted in.
+   */
+  principalFor: (inbound?: InboundIdentity) => Principal | undefined;
   /**
    * The context fields that come from boot, ready to spread into an
    * `ExecuteContext` beside the per-service and per-request ones.
@@ -80,7 +114,19 @@ export interface RuntimeBoot {
     ledger: IdempotencyLedger;
     observer: Observer;
     policy?: PolicyHooks;
+    limits: LimitsGate;
+    principalDirectoryConfigured: boolean;
   };
+}
+
+/** Directory keys a verified inbound caller may be listed under, most specific first. */
+function inboundDirectoryKeys(inbound: InboundIdentity): string[] {
+  const issuer = inbound.claims?.iss;
+  const keys = [inbound.subjectToken];
+  if (inbound.sub && typeof issuer === "string") keys.push(`${issuer}:${inbound.sub}`);
+  if (inbound.sub) keys.push(inbound.sub);
+  if (inbound.email) keys.push(inbound.email);
+  return keys;
 }
 
 export async function bootRuntime(
@@ -126,6 +172,17 @@ export async function bootRuntime(
     options.ledger ??
     resolveLedger(config.ledger, { resultTtlMs: config.ledgerResultTtlSeconds * 1000 });
   const policy = extensions.policy;
+  const limits = buildLimitsGate(config.limits);
+  const principalDirectoryConfigured = Object.keys(config.principals).length > 0;
+  const principalFor = (inbound?: InboundIdentity): Principal | undefined => {
+    if (!principalDirectoryConfigured) return undefined;
+    if (!inbound) return resolvePrincipalForEnv(config.principals, env);
+    for (const key of inboundDirectoryKeys(inbound)) {
+      const principal = resolvePrincipalForBearer(config.principals, key);
+      if (principal) return principal;
+    }
+    return undefined;
+  };
 
   return {
     config,
@@ -138,12 +195,17 @@ export async function bootRuntime(
     metrics,
     policy,
     flush: resolved?.flush ?? (() => Promise.resolve()),
+    limits,
+    principalDirectoryConfigured,
+    principalFor,
     contextDeps: {
       transport,
       credentials,
       ledger,
       observer,
       ...(policy ? { policy } : {}),
+      limits,
+      principalDirectoryConfigured,
     },
   };
 }

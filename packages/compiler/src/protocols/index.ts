@@ -19,7 +19,7 @@ import { adaptHar, harVersion, isHarCapture } from "./har.js";
 import { adaptOData } from "./odata.js";
 import { adaptPostman, isPostmanCollection, postmanSchemaVersion } from "./postman.js";
 import { callbackWebhookLink, webhookPathItems } from "./webhooks.js";
-import { adaptWsdl, type WsdlImportResolver } from "./wsdl.js";
+import { adaptWsdl, type WsdlImportResolver, wsdlVersionOf } from "./wsdl.js";
 
 /** The non-REST source formats Anvil can lower. Aligns with AIR's SourceKind. */
 export type ProtocolFormat =
@@ -81,7 +81,7 @@ export function detectProtocolFormat(path: string, text: string): DetectedProtoc
 
 function versionFor(format: ProtocolFormat, text: string): string {
   if (format === "protobuf") return /proto3/.test(text) ? "proto3" : "proto2";
-  if (format === "wsdl") return /wsdl\/2/.test(text) ? "2.0" : "1.1";
+  if (format === "wsdl") return wsdlVersionOf(text);
   if (format === "odata") return odataVersion(text);
   if (format === "har") return harVersion(text);
   return "1.0";
@@ -118,9 +118,11 @@ function sniffContent(text: string): DetectedProtocol | undefined {
   if (/<(\w+:)?Edmx[\s>]/.test(head)) {
     return { format: "odata", version: odataVersion(head) };
   }
-  // WSDL: an XML <definitions> root, optionally namespaced.
-  if (/<(\w+:)?definitions[\s>]/.test(head) && /wsdl/.test(head)) {
-    return { format: "wsdl", version: /wsdl\/2/.test(head) ? "2.0" : "1.1" };
+  // WSDL: an XML <definitions> root (1.1) or a <description> root (2.0),
+  // optionally namespaced. A 2.0 document is routed to the adapter so it is
+  // refused there by name (`wsdl_version_unsupported`), not left undetected.
+  if (/<(\w+:)?(definitions|description)[\s>]/.test(head) && /wsdl/.test(head)) {
+    return { format: "wsdl", version: wsdlVersionOf(head) };
   }
   // GraphQL SDL: a root schema block, or a named type/input/interface opening a
   // field block. Kept strict (requires the `{` or `implements`) so an OpenAPI

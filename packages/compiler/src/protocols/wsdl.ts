@@ -12,17 +12,23 @@
  * dereferencer).
  *
  * The XSD subset understood here is the document/literal shape used by the vast
- * majority of real WSDLs: global elements, `complexType` with `sequence`/`all`,
- * `simpleType` with enumeration restrictions, `complexContent` extension,
- * `element ref=`, `minOccurs`/`maxOccurs`, and the built-in scalar types.
- * Multi-file trees (`wsdl:import`, `xsd:include`/`xsd:import`) resolve through
- * an injected `WsdlImportResolver` — the adapter itself never touches the
- * filesystem.
+ * majority of real WSDLs: global elements, `complexType` with `sequence`/`all`
+ * and `choice` (lowered as optional members under a `oneOf`, see
+ * `wsdl-choice.ts`), `simpleType` with enumeration restrictions,
+ * `complexContent` extension, `element ref=`, `minOccurs`/`maxOccurs`, and the
+ * built-in scalar types. Multi-file trees (`wsdl:import`,
+ * `xsd:include`/`xsd:import`) resolve through an injected `WsdlImportResolver`
+ * — the adapter itself never touches the filesystem.
+ *
+ * WSDL 1.1 only. A WSDL 2.0 document (`<description>` root, `interface` in
+ * place of `portType`) shares none of this vocabulary, so it is refused by
+ * name (`wsdl_version_unsupported`) rather than lowered to an empty service.
  */
 import { posix } from "node:path";
 import type { Diagnostic } from "@anvil/air";
 import type { OpenApiDocument } from "../parse.js";
 import { collectSoapBindings, namespacesOf, soapWireBinding } from "./soap-binding.js";
+import { applyChoiceConstraints, lowerChoices } from "./wsdl-choice.js";
 import { childrenNamed, findAll, localName, parseXml, type XmlElement } from "./xml.js";
 
 type JsonSchemaLike = Record<string, unknown>;
@@ -62,6 +68,8 @@ interface XsdModel {
   elements: Map<string, JsonSchemaLike>;
   /** Named complex/simple type local-name → its schema (registered as components). */
   namedTypes: Map<string, JsonSchemaLike>;
+  /** Every complexType that carried an `xsd:choice`, with each choice's members. */
+  choices: { label: string; choices: string[][] }[];
 }
 
 /**
@@ -73,13 +81,14 @@ interface XsdModel {
  * reduce to "merge element/complexType/simpleType definitions".
  */
 function buildXsdModel(schemas: XmlElement[]): XsdModel {
-  const model: XsdModel = { elements: new Map(), namedTypes: new Map() };
+  const model: XsdModel = { elements: new Map(), namedTypes: new Map(), choices: [] };
 
   // First pass: register named complex/simple types so refs resolve.
   for (const schema of schemas) {
     for (const ct of childrenNamed(schema, "complexType")) {
       const name = ct.attrs.name;
-      if (name) model.namedTypes.set(localName(name), complexTypeSchema(ct, model));
+      if (name)
+        model.namedTypes.set(localName(name), complexTypeSchema(ct, model, localName(name)));
     }
     for (const st of childrenNamed(schema, "simpleType")) {
       const name = st.attrs.name;
@@ -174,21 +183,31 @@ function typeRefSchema(qname: string, model: XsdModel): JsonSchemaLike {
 function elementSchema(el: XmlElement, model: XsdModel): JsonSchemaLike {
   if (el.attrs.type) return typeRefSchema(el.attrs.type, model);
   const complex = childrenNamed(el, "complexType")[0];
-  if (complex) return complexTypeSchema(complex, model);
+  if (complex) return complexTypeSchema(complex, model, el.attrs.name);
   const simple = childrenNamed(el, "simpleType")[0];
   if (simple) return simpleTypeSchema(simple);
   return { type: "object" };
 }
 
-/** Schema for a `<complexType>` — a sequence/all/choice of child elements. */
-function complexTypeSchema(ct: XmlElement, model: XsdModel): JsonSchemaLike {
+/**
+ * Schema for a `<complexType>` — a sequence/all/choice of child elements.
+ * `label` names the type for the choice diagnostic: the type's own name, or
+ * the element an anonymous type is declared under.
+ */
+function complexTypeSchema(ct: XmlElement, model: XsdModel, label?: string): JsonSchemaLike {
   const properties: Record<string, JsonSchemaLike> = {};
   const required: string[] = [];
+  // A choice's members are optional, never co-required: exactly one branch is
+  // present, and the `oneOf` attached below is what says so.
+  const choice = lowerChoices(ct);
+  if (choice.choices.length > 0) {
+    model.choices.push({ label: label ?? ct.attrs.name ?? "(anonymous)", choices: choice.choices });
+  }
   // complexContent/extension is flattened best-effort by scanning descendants.
   const particles = [
     ...findAll(ct, "sequence").flatMap((s) => childrenNamed(s, "element")),
     ...findAll(ct, "all").flatMap((s) => childrenNamed(s, "element")),
-    ...findAll(ct, "choice").flatMap((s) => childrenNamed(s, "element")),
+    ...choice.members,
   ];
   // Also capture elements that are direct children (rare, but valid).
   for (const el of childrenNamed(ct, "element")) if (!particles.includes(el)) particles.push(el);
@@ -206,7 +225,7 @@ function complexTypeSchema(ct: XmlElement, model: XsdModel): JsonSchemaLike {
       schema = { type: "array", items: schema };
     }
     properties[name] = schema;
-    if (el.attrs.minOccurs !== "0") required.push(name);
+    if (el.attrs.minOccurs !== "0" && !choice.members.has(el)) required.push(name);
   }
 
   // Attributes become optional scalar properties. An extension declares its
@@ -227,6 +246,7 @@ function complexTypeSchema(ct: XmlElement, model: XsdModel): JsonSchemaLike {
 
   const out: JsonSchemaLike = { type: "object", properties };
   if (required.length > 0) out.required = required;
+  applyChoiceConstraints(out, choice.constraints);
   // The inherited base members resolve after all passes (resolveDeferred);
   // the base type routinely appears later in the file or in another document.
   if (extension?.attrs.base) out[EXTENSION_BASE_KEY] = extension.attrs.base;
@@ -365,6 +385,33 @@ function messageBodySchema(
   return { type: "object", properties, required };
 }
 
+/**
+ * The namespaces WSDL 2.0 was published under: the Recommendation's, and the
+ * two working-draft ones that shipped in real tooling before it.
+ */
+const WSDL_20_NAMESPACES = [
+  "http://www.w3.org/ns/wsdl",
+  "http://www.w3.org/2006/01/wsdl",
+  "http://www.w3.org/2005/08/wsdl",
+];
+
+/**
+ * Which WSDL the text is, by its vocabulary rather than by any version
+ * attribute — WSDL carries none. A 2.0 document has a `<description>` root
+ * in one of the 2.0 namespaces; everything else is read as 1.1. Cheap and
+ * text-based so Layer 0 detection and the adapter answer alike.
+ */
+export function wsdlVersionOf(text: string): "1.1" | "2.0" {
+  const head = text.slice(0, 4000);
+  const namespaced = WSDL_20_NAMESPACES.some((ns) => head.includes(ns));
+  return namespaced && /<(\w+:)?description[\s>]/.test(head) ? "2.0" : "1.1";
+}
+
+function isWsdl20(root: XmlElement): boolean {
+  if (localName(root.tag) !== "description") return false;
+  return Object.values(namespacesOf(root)).some((uri) => WSDL_20_NAMESPACES.includes(uri));
+}
+
 /** The operation identity a portType name carries: "FlightDetailsPortType" → "FlightDetails". */
 function portTypeOperationName(portName: string): string {
   const stripped = portName.replace(/PortType$|Port$/, "");
@@ -388,8 +435,46 @@ export function adaptWsdl(
   diagnostics?: Diagnostic[],
 ): OpenApiDocument {
   const root = parseXml(source);
+  // A WSDL 2.0 document uses none of the 1.1 vocabulary read below — no
+  // portType, no message — and would lower to a service with zero operations
+  // and no explanation. Refuse it by name and produce those zero operations
+  // deliberately, so the empty result is a stated fact rather than a silence.
+  if (isWsdl20(root)) {
+    diagnostics?.push({
+      level: "error",
+      code: "wsdl_version_unsupported",
+      ...(sourcePath ? { path: sourcePath } : {}),
+      message:
+        "This document is WSDL 2.0 (a <description> root in the WSDL 2.0 namespace). Anvil " +
+        "lowers WSDL 1.1 only: 2.0's interface/binding/endpoint vocabulary is not read, so no " +
+        "operations were produced. Supply a WSDL 1.1 description of the service — most SOAP " +
+        "toolchains can emit one alongside 2.0 — or an OpenAPI document for a facade in front of it.",
+    });
+    return {
+      openapi: "3.0.3",
+      info: { title: root.attrs.name ?? "SoapService", version: "1.0.0" },
+      paths: {},
+      components: { schemas: {} },
+    };
+  }
   const docs = collectDocuments(root, sourcePath, resolveImport);
   const xsd = buildXsdModel(docs.schemas);
+  // A choice's exactly-one rule survives the lowering as a `oneOf`, but the
+  // shape an agent sees is still a JSON object with optional members, so the
+  // rule is stated once per type where a reviewer can find it.
+  for (const entry of xsd.choices) {
+    const described = entry.choices.map((members) => `(${members.join(" | ")})`).join(", ");
+    diagnostics?.push({
+      level: "warning",
+      code: "wsdl_choice_lowered",
+      path: entry.label,
+      message:
+        `xsd:choice in '${entry.label}' lowered as optional members with a oneOf admitting ` +
+        `exactly one branch: ${described}. A request carrying several branches, or none of a ` +
+        `required choice, is refused by the request schema; the SOAP envelope carries only the ` +
+        `branch that was sent.`,
+    });
+  }
 
   // Messages: name → parts, merged across the entry and every imported WSDL.
   const messages = new Map<string, WsdlMessage>();

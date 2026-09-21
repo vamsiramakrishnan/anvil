@@ -3,6 +3,8 @@ import { SourceKind } from "./enums.js";
 import { contractHash } from "./hash.js";
 import { AirDocument, Operation as OperationSchema } from "./schema.js";
 import {
+  bodyContentTypeIssue,
+  protocolFacadeApplies,
   RUNTIME_WIRE_PROTOCOL,
   unexecutableWireFailures,
   wireExecutability,
@@ -63,9 +65,96 @@ describe("wire protocol", () => {
       // A refusal an operator cannot act on is only a different way of being
       // unhelpful, so the reason and the remedy are both part of the contract.
       expect(verdict.reason.length).toBeGreaterThan(0);
-      expect(verdict.nextAction).toContain("ANVIL_BASE_URL");
+      // With no binding recorded, the compiler declined to encode the call at
+      // all; the honest next action is to fix the source, not to name a facade.
+      expect(verdict.scope).toBe("framing");
+      expect(verdict.nextAction).toContain("No protocol facade");
     }
     expect(wireExecutability(op("openapi")).ok).toBe(true);
+  });
+
+  it("separates a coordinates refusal, which a facade may answer, from a framing one", () => {
+    // A recorded json_transcoded binding is the compiler's own statement that a
+    // translator is assumed: Anvil knows exactly what the call is and lacks only
+    // an address, so an operator can supply one and say so.
+    const transcoded = opWith({
+      kind: "protobuf",
+      path: "/a.b.S/GetOrder",
+      method: "post",
+      binding: {
+        protocol: "grpc",
+        service: "a.b.S",
+        method: "GetOrder",
+        transport: "json_transcoded",
+      },
+    });
+    const verdict = wireExecutability(transcoded);
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("expected a refusal");
+    expect(verdict.scope).toBe("coordinates");
+    expect(verdict.nextAction).toContain("ANVIL_BASE_URL");
+    expect(protocolFacadeApplies(transcoded)).toBe(true);
+
+    // A streaming RPC records no binding: a stream is not a request and a
+    // response, and no address turns it into one. The facade must not apply.
+    const streaming = op("protobuf");
+    expect(protocolFacadeApplies(streaming)).toBe(false);
+    // An rpc/encoded SOAP binding records nothing either: the WSDL declared a
+    // shape Anvil declines to encode, and a facade cannot encode it instead.
+    expect(protocolFacadeApplies(op("wsdl"))).toBe(false);
+    // An operation the runtime speaks natively is one a facade may be declared
+    // against harmlessly — the declaration is recorded, nothing changes.
+    expect(protocolFacadeApplies(op("openapi"))).toBe(true);
+    // The failure line carries the scope's own remedy, so certification does
+    // not tell an operator to declare a facade that would then be refused.
+    const line = unexecutableWireFailures([streaming]).join(" ");
+    expect(line).toContain("No protocol facade");
+    expect(line).not.toContain("ANVIL_BASE_URL");
+  });
+
+  it("refuses a request body the HTTP/JSON runtime cannot encode, through the same seam", () => {
+    const body = (contentType: string, id = "svc.thing.create", state = "approved") =>
+      OperationSchema.parse({
+        ...op("openapi", id, state),
+        sourceRef: { kind: "openapi", path: "/thing", method: "post" },
+        input: {
+          params: [],
+          body: { contentType, required: true, schema: { type: "object" }, projection: "whole" },
+        },
+      });
+    expect(bodyContentTypeIssue(body("application/json"))).toBeUndefined();
+    expect(bodyContentTypeIssue(body("application/vnd.api+json; charset=utf-8"))).toBeUndefined();
+    expect(bodyContentTypeIssue(body("application/x-www-form-urlencoded"))).toBeUndefined();
+    expect(bodyContentTypeIssue(body("multipart/form-data"))).toBeUndefined();
+    for (const contentType of ["application/octet-stream", "text/plain", "application/xml"]) {
+      expect(bodyContentTypeIssue(body(contentType))).toContain(contentType);
+    }
+    expect(bodyContentTypeIssue(op("openapi"))).toBeUndefined();
+    // Another codec owns its own framing: a SOAP envelope is not labelled by
+    // this field, so the field is not this check's business there.
+    const soap = OperationSchema.parse({
+      ...body("application/xml"),
+      sourceRef: { kind: "wsdl", path: "/Port/Op", method: "post" },
+    });
+    expect(bodyContentTypeIssue(soap)).toBeUndefined();
+
+    // Certification reads the same lines the protocol refusals travel through,
+    // grouped by content type, and only for the surface actually exposed.
+    const failures = unexecutableWireFailures([
+      body("application/octet-stream", "svc.one.create"),
+      body("application/octet-stream", "svc.two.create"),
+      body("text/plain", "svc.three.create"),
+      body("text/plain", "svc.four.create", "review_required"),
+      body("application/json", "svc.five.create"),
+    ]);
+    expect(failures).toHaveLength(2);
+    const octet = failures.find((f) => f.includes("application/octet-stream")) ?? "";
+    expect(octet).toContain("2 approved operation(s)");
+    expect(octet).toContain("svc.one.create");
+    expect(octet).toContain("svc.two.create");
+    const text = failures.find((f) => f.includes("text/plain")) ?? "";
+    expect(text).toContain("svc.three.create");
+    expect(text).not.toContain("svc.four.create");
   });
 
   it("answers http_json for a gRPC method that declared its own HTTP rule", () => {
@@ -159,6 +248,21 @@ describe("wire protocol", () => {
     expect(verdict.protocol).toBe("queue_request_reply");
     expect(verdict.reason).toContain("legacy-bridge");
     expect(verdict.nextAction).toContain("ANVIL_BASE_URL");
+  });
+
+  it("refuses a GraphQL operation without a binding as not compiled, never as declined", () => {
+    // The compiler records a binding for every GraphQL root field; the only
+    // way to reach this refusal is an AIR document the compiler did not write
+    // (hand-edited, or older than wire bindings). The reason must say that,
+    // not send the operator hunting for a compile diagnostic that cannot exist.
+    const verdict = wireExecutability(
+      opWith({ kind: "graphql", path: "/graphql/Query/thing", method: "post" }),
+    );
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("expected a refusal");
+    expect(verdict.protocol).toBe("graphql");
+    expect(verdict.reason).toContain("Recompile from the SDL");
+    expect(verdict.reason).not.toContain("compile diagnostics");
   });
 
   it("asks only about the surface that is actually exposed", () => {

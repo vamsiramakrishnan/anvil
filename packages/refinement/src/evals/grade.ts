@@ -45,8 +45,12 @@ export interface ExpectationResult {
   outcome: ExpectationOutcome;
   /** Why it landed that way, in one line a reader can act on. */
   reason: string;
-  /** How the decision was reached, so a report never overstates its own rigour. */
-  method: "literal" | "signal" | "judge_required";
+  /**
+   * How the decision was reached, so a report never overstates its own rigour.
+   * `unanswered` is a case no answer was supplied for at all — nothing was
+   * decided, not even by a judge.
+   */
+  method: "literal" | "signal" | "judge_required" | "unanswered";
 }
 
 export interface CaseResult {
@@ -216,17 +220,46 @@ export function gradeCase(testCase: EvalCase, answer: string, judge?: EvalJudge)
   };
 }
 
+/** Every graded expectation of a case, UNGRADED because no answer exists to grade. */
+function ungradedCase(testCase: EvalCase): CaseResult {
+  const expectations: ExpectationResult[] = [];
+  for (const kind of GRADED_KINDS) {
+    for (const entry of testCase.expected[kind] ?? []) {
+      expectations.push({
+        kind,
+        entry,
+        method: "unanswered",
+        outcome: "ungraded",
+        reason: "no answer was supplied for this case",
+      });
+    }
+  }
+  return {
+    case: testCase.case,
+    expectations,
+    passed: 0,
+    failed: 0,
+    ungraded: expectations.length,
+  };
+}
+
 /**
  * Grade a whole suite. `answers` maps a case name to the harness's answer; a case
  * with no answer is reported with every expectation ungraded rather than skipped,
- * so a run that never reached a case cannot quietly shrink the denominator.
+ * so a run that never reached a case cannot quietly shrink the denominator — and
+ * never graded as the empty string, which would pass every `must_not` (nothing
+ * forbidden appeared in nothing) and so score a harness that never ran green on
+ * exactly the checks that matter most.
  */
 export function gradeSuite(
   suite: EvalSuite,
   answers: Readonly<Record<string, string>>,
   judge?: EvalJudge,
 ): SuiteReport {
-  const cases = suite.cases.map((c) => gradeCase(c, answers[c.case] ?? "", judge));
+  const cases = suite.cases.map((c) => {
+    const answer = answers[c.case];
+    return answer === undefined ? ungradedCase(c) : gradeCase(c, answer, judge);
+  });
   const totals = cases.reduce(
     (acc, c) => ({
       passed: acc.passed + c.passed,

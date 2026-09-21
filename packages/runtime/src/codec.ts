@@ -1,7 +1,15 @@
-import { type Operation, type WireProtocol, wireProtocolFor } from "@anvil/air";
+import { randomUUID } from "node:crypto";
+import {
+  type Operation,
+  protocolFacadeApplies,
+  type WireProtocol,
+  wireProtocolFor,
+} from "@anvil/air";
+import { encodeRequestBody } from "./body-encoding.js";
 import { graphqlCodec } from "./codec-graphql.js";
 import { graphqlSseCodec } from "./codec-graphql-sse.js";
 import { soapCodec } from "./codec-soap.js";
+import { binaryResult } from "./response-bytes.js";
 import type { HttpRequest, HttpResponse } from "./transport.js";
 
 /**
@@ -75,8 +83,10 @@ function safeJson(text: string): unknown {
 
 /**
  * HTTP with a JSON body — the protocol Anvil has always spoken, now stated
- * rather than assumed. Lifted verbatim from `buildRequest` so the refactor that
- * introduced this seam changed no bytes on the wire.
+ * rather than assumed. The body is encoded per the operation's declared
+ * content type (`body-encoding.ts`): JSON, a form, or real multipart, and a
+ * refusal for anything else, raised here while the request is being built and
+ * therefore before any credential is resolved.
  */
 const httpJsonCodec: WireCodec = {
   protocol: "http_json",
@@ -90,12 +100,16 @@ const httpJsonCodec: WireCodec = {
       headers: parts.headers,
     };
     if (parts.hasBody) {
-      req.headers["content-type"] = op.input.body?.contentType ?? "application/json";
-      req.body = JSON.stringify(parts.body);
+      const encoded = encodeRequestBody(op, parts.body, randomUUID());
+      req.headers["content-type"] = encoded.contentType;
+      req.body = encoded.body;
     }
     return req;
   },
   decode(_op, res) {
+    // Bytes are handed back as bytes, described: a PDF run through JSON.parse
+    // is not "the raw text", it is a string of replacement characters.
+    if (res.bodyEncoding === "base64") return binaryResult(res);
     return res.body ? safeJson(res.body) : null;
   },
 };
@@ -134,11 +148,14 @@ const CODECS = new Map<WireProtocol, WireCodec>([
  * call terminate, and hand back one object where every other configuration of
  * the same operation hands back an array — the same operation meaning two
  * different things depending on an environment variable, which is the exact
- * divergence this codebase exists to prevent.
+ * divergence this codebase exists to prevent. The same holds for every other
+ * framing refusal — a streaming RPC, an rpc/encoded SOAP binding — and the
+ * verdict says which is which (`protocolFacadeApplies`), so this resolution
+ * and the transport gate can never disagree about what a facade may carry.
  */
 export function codecFor(op: Operation, facadeDeclared = false): WireCodec | undefined {
   const protocol = wireProtocolFor(op.sourceRef);
   if (protocol === "graphql_sse") return graphqlSseCodec;
-  if (facadeDeclared) return httpJsonCodec;
+  if (facadeDeclared && protocolFacadeApplies(op)) return httpJsonCodec;
   return CODECS.get(protocol);
 }

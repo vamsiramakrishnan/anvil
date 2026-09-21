@@ -11,6 +11,7 @@ import {
   type HttpRequest,
   type HttpResponse,
   InMemoryLedger,
+  requestBodyText,
   type Transport,
   TransportError,
 } from "@anvil/runtime";
@@ -71,7 +72,7 @@ export class OwnedBusinessBackend implements Transport {
         manager_ok: !url.pathname.endsWith("unapproved"),
       });
     }
-    const body = JSON.parse(request.body ?? "{}");
+    const body = JSON.parse(requestBodyText(request.body) ?? "{}");
     const key = Object.entries(request.headers).find(
       ([name]) => name.toLowerCase() === "x-request-token",
     )?.[1];
@@ -107,7 +108,7 @@ export class OwnedBusinessBackend implements Transport {
       this.state.grants += 1;
       response = reply({ grant_key: "grant-1" });
     } else return reply({ vendor_error: "PRIVATE_UNKNOWN_ENDPOINT" }, 404);
-    this.receipts.set(key, { body: request.body ?? "", response });
+    this.receipts.set(key, { body: requestBodyText(request.body) ?? "", response });
     if (this.fault === "lost-refund-response" && url.pathname === "/internal/refunds")
       throw new TransportError("timeout", "Owned response lost after commit", "after_response");
     return response;

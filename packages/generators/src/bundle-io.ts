@@ -1,6 +1,6 @@
 import { existsSync, statSync } from "node:fs";
 import { dirname } from "node:path";
-import { type AirDocument, airFromJson, airFromYaml } from "@anvil/air";
+import { type AirDocument, type AirLoadOptions, airFromJson, airFromYaml } from "@anvil/air";
 
 /**
  * Locating a bundle and its canonical AIR from the files already read. These
@@ -16,11 +16,20 @@ export function resolveBundleDir(path: string): string {
   return statSync(path).isDirectory() ? path : dirname(path);
 }
 
-/** Load the canonical AIR from the already-read bundle files. */
-export function loadBundleAir(dir: string, files: Record<string, string>): AirDocument {
+/**
+ * Load the canonical AIR from the already-read bundle files. The format
+ * version gate runs inside the parse: a newer-major document is refused
+ * (`air/incompatible_version`), an older one is read and reported through
+ * `options.onWarning`.
+ */
+export function loadBundleAir(
+  dir: string,
+  files: Record<string, string>,
+  options: AirLoadOptions = {},
+): AirDocument {
   const yaml = files["air.yaml"];
-  if (yaml !== undefined) return airFromYaml(yaml);
+  if (yaml !== undefined) return airFromYaml(yaml, options);
   const json = files["air.json"];
-  if (json !== undefined) return airFromJson(json);
+  if (json !== undefined) return airFromJson(json, options);
   throw new Error(`No air.yaml or air.json in ${dir}. Run \`anvil compile\` first.`);
 }

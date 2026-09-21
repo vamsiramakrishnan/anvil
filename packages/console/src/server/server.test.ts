@@ -3,13 +3,19 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readBundleDir } from "@anvil/generators";
+import {
+  bundleHash,
+  listBundleHistory,
+  readApprovalRecords,
+  readBundleDir,
+} from "@anvil/generators";
 import {
   packFiles,
   readBenchmarkReport,
@@ -133,7 +139,16 @@ describe("GET routes are pure projections", () => {
   it("parse against their schemas and write nothing anywhere in the workspace", async () => {
     const before = snapshot(ws.root);
     const params = { id: ws.bundleId };
-    for (const key of ["workspace", "bundle", "queue", "packs", "benchmark", "drift"] as const) {
+    for (const key of [
+      "workspace",
+      "bundle",
+      "queue",
+      "packs",
+      "benchmark",
+      "drift",
+      "history",
+      "manifest",
+    ] as const) {
       const path = pathFor(key, params) + (key === "drift" ? "?against=gen%2Fpayments-next" : "");
       const reply = await client.get(path);
       expect(reply.status, `${key}: ${reply.text}`).toBe(200);
@@ -250,21 +265,96 @@ describe("GET routes are pure projections", () => {
 });
 
 describe("mutations call the lifted library functions and report their result", () => {
+  it("a dry run runs the gates, answers the preview, and writes nothing", async () => {
+    const pending = ws.air.operations.find((op) => op.state === "review_required");
+    if (!pending) throw new Error("payments fixture has no review_required operation");
+    const before = snapshot(ws.root);
+    const reply = await client.post("/api/bundles/payments/operations/approve", {
+      ids: [pending.id],
+      dryRun: true,
+    });
+    expect(reply.status, reply.text).toBe(200);
+    const view = CONSOLE_ROUTES.approveOperations.response.parse(reply.json);
+    expect(view.written).toBe(false);
+    expect(view.reprojection).toBeUndefined();
+    expect(view.approved).toEqual([pending.id]);
+    expect(view.preview?.subjects).toEqual([
+      { kind: "operation", id: pending.id, from: "review_required", to: "approved" },
+    ]);
+    expect(view.preview?.mcpTools.added).toContain(pending.mcp.toolName);
+    expect(view.preview?.cliCommands.added).toContain(pending.cli.command);
+    expect(view.preview?.skillFiles).toContain("skill/SKILL.md");
+    expect(view.preview?.regeneratedFiles).toContain("mcp/air.json");
+    expect(view.preview?.stale.records).toContain("benchmark.report.json");
+    expect(snapshot(ws.root)).toEqual(before);
+    expect(existsSync(join(ws.bundleDir, ".anvil"))).toBe(false);
+    // The same refusal as the real approval, still writing nothing.
+    const refused = await client.post("/api/bundles/payments/operations/approve", {
+      ids: ["payments.nope"],
+      dryRun: true,
+    });
+    expect(refused.status).toBe(409);
+    expect(zErrorEnvelope.parse(refused.json).error.message).toContain("Unknown operation id(s)");
+    expect(snapshot(ws.root)).toEqual(before);
+  });
+
+  it("refuses an empty reviewer at the contract, before any library call", async () => {
+    const pending = ws.air.operations.find((op) => op.state === "review_required");
+    if (!pending) throw new Error("payments fixture has no review_required operation");
+    const before = snapshot(ws.root);
+    for (const reviewer of ["", "   "]) {
+      const reply = await client.post("/api/bundles/payments/operations/approve", {
+        ids: [pending.id],
+        reviewer,
+      });
+      expect(reply.status, reviewer).toBe(400);
+      expect(zErrorEnvelope.parse(reply.json).error.code).toBe("console/invalid_request");
+    }
+    expect(snapshot(ws.root)).toEqual(before);
+  });
+
   it("approves an operation and re-projects the bundle atomically", async () => {
     const pending = ws.air.operations.find((op) => op.state === "review_required");
     if (!pending) throw new Error("payments fixture has no review_required operation");
+    const digestBefore = bundleHash(readBundleDir(ws.bundleDir));
     const reply = await client.post("/api/bundles/payments/operations/approve", {
       ids: [pending.id],
+      reviewer: "reviewer@example.test",
+      note: "a read",
     });
     expect(reply.status, reply.text).toBe(200);
     const view = CONSOLE_ROUTES.approveOperations.response.parse(reply.json);
     expect(view.approved).toEqual([pending.id]);
     expect(view.alreadyApproved).toEqual([]);
-    expect(view.reprojection.projectionsChanged).toBe(true);
-    expect(view.reprojection.stale.records).toContain("benchmark.report.json");
+    expect(view.written).toBe(true);
+    expect(view.reprojection?.projectionsChanged).toBe(true);
+    expect(view.reprojection?.stale.records).toContain("benchmark.report.json");
     expect(view.refusals).toEqual([]);
     const after = loadAir(ws.bundleDir);
     expect(after.operations.find((op) => op.id === pending.id)?.state).toBe("approved");
+    // The record on disk is the record on the wire: who, what moved, both hashes.
+    const records = readApprovalRecords(ws.bundleDir);
+    expect(records).toHaveLength(1);
+    expect(records[0]).toEqual(view.reprojection?.record);
+    expect(records[0]).toMatchObject({
+      reviewer: "reviewer@example.test",
+      action: "approve_operations",
+      note: "a read",
+      subjects: [{ kind: "operation", id: pending.id, from: "review_required", to: "approved" }],
+    });
+    expect(records[0]?.bundleHash.before).toBe(digestBefore);
+    expect(records[0]?.bundleHash.after).toBe(bundleHash(readBundleDir(ws.bundleDir)));
+    // The replaced generation is retained, and the history route projects both.
+    expect(listBundleHistory(ws.bundleDir).map((entry) => entry.bundleHash)).toEqual([
+      digestBefore,
+    ]);
+    const history = CONSOLE_ROUTES.history.response.parse(
+      (await client.get("/api/bundles/payments/history")).json,
+    );
+    expect(history.records).toEqual(records);
+    expect(history.generations[0]?.bundleHash).toBe(digestBefore);
+    expect(history.rollbackCommand).toContain(`anvil rollback ${ws.bundleDir}`);
+    expect(history.rollbackCommand).toContain(`--to ${digestBefore.slice(0, 12)}`);
     // The projections moved with the AIR: the MCP surface now serves the tool.
     expect(readBundleDir(ws.bundleDir)["mcp/air.json"]).toContain(pending.mcp.toolName);
     // Re-approving reports it as already approved, refusing nothing.
@@ -293,6 +383,7 @@ describe("mutations call the lifted library functions and report their result", 
     const [toApprove, toReject] = [proposed[0], proposed[1] ?? ws.air.capabilities[0]];
     if (!toApprove || !toReject) throw new Error("payments fixture has no capabilities");
 
+    // Without a reviewer the record says so explicitly.
     const approved = await client.post(
       `/api/bundles/payments/capabilities/${encodeURIComponent(toApprove.id)}/approve`,
       { note: "reviewed in the console" },
@@ -301,6 +392,27 @@ describe("mutations call the lifted library functions and report their result", 
     const view = CONSOLE_ROUTES.approveCapability.response.parse(approved.json);
     expect(view.capabilityId).toBe(toApprove.id);
     expect(view.budget.verdict).toBe("ok");
+    expect(view.written).toBe(true);
+    expect(view.reprojection?.record).toMatchObject({
+      reviewer: "unrecorded",
+      action: "approve_capability",
+      note: "reviewed in the console",
+      subjects: [{ kind: "capability", id: toApprove.id, from: "proposed", to: "approved" }],
+    });
+    // A capability dry run through the compiler's gate, writing nothing.
+    const dry = await client.post(
+      `/api/bundles/payments/capabilities/${encodeURIComponent(toReject.id)}/reject`,
+      { reason: "not a task boundary", dryRun: true },
+    );
+    expect(dry.status, dry.text).toBe(200);
+    const dryView = CONSOLE_ROUTES.rejectCapability.response.parse(dry.json);
+    expect(dryView.written).toBe(false);
+    expect(dryView.preview?.subjects).toEqual([
+      { kind: "capability", id: toReject.id, from: "proposed", to: "rejected" },
+    ]);
+    expect(loadAir(ws.bundleDir).capabilities.find((c) => c.id === toReject.id)?.lifecycle).toBe(
+      "proposed",
+    );
     expect(loadAir(ws.bundleDir).capabilities.find((c) => c.id === toApprove.id)?.lifecycle).toBe(
       "approved",
     );
@@ -341,6 +453,62 @@ describe("mutations call the lifted library functions and report their result", 
     );
     expect(unknownPack.status).toBe(404);
     expect(zErrorEnvelope.parse(unknownPack.json).error.code).toBe("console/not_found");
+  });
+
+  it("reads, validates, and atomically writes the bundle's manifest, refusing what the compiler refuses", async () => {
+    const path = join(ws.bundleDir, ".anvil", "manifest.yaml");
+    const absent = CONSOLE_ROUTES.manifest.response.parse(
+      (await client.get("/api/bundles/payments/manifest")).json,
+    );
+    expect(absent).toMatchObject({ path, exists: false, text: "" });
+    expect(absent.recompileCommand).toContain(`--manifest ${path}`);
+    expect(absent.recompileCommand).toContain(`--out ${ws.bundleDir}`);
+    expect(absent.recompileCommand).toContain(`--root ${ws.root}`);
+
+    const invalid = "operations:\n  createRefund:\n    idempotancy: natural\n";
+    const validation = CONSOLE_ROUTES.validateManifest.response.parse(
+      (await client.post("/api/bundles/payments/manifest/validate", { text: invalid })).json,
+    );
+    expect(validation.ok).toBe(false);
+    expect(validation.issues[0]).toMatchObject({
+      path: "operations.createRefund.idempotancy",
+      line: 3,
+      suggestion: "idempotency",
+    });
+    expect(existsSync(path)).toBe(false);
+
+    const refused = await client.post("/api/bundles/payments/manifest", { text: invalid });
+    expect(refused.status).toBe(422);
+    const envelope = zErrorEnvelope.parse(refused.json);
+    expect(envelope.error.code).toBe("console/manifest_invalid");
+    expect(envelope.error.issues?.[0]).toContain("manifest.yaml:3:");
+    expect(existsSync(path)).toBe(false);
+
+    const valid = "operations:\n  createRefund:\n    confirmation:\n      required: true\n";
+    const written = CONSOLE_ROUTES.writeManifest.response.parse(
+      (await client.post("/api/bundles/payments/manifest", { text: valid })).json,
+    );
+    expect(written).toMatchObject({ path, written: true });
+    expect(readFileSync(path, "utf8")).toBe(valid);
+    expect(readdirSync(join(ws.bundleDir, ".anvil")).filter((n) => n.endsWith(".tmp"))).toEqual([]);
+    const present = CONSOLE_ROUTES.manifest.response.parse(
+      (await client.get("/api/bundles/payments/manifest")).json,
+    );
+    expect(present).toMatchObject({ path, exists: true, text: valid });
+    // Nothing was recompiled: the bundle's bytes are what they were.
+    expect(readBundleDir(ws.bundleDir)[".anvil/manifest.yaml"]).toBeUndefined();
+  });
+
+  it("addresses the manifest by bundle id only, so a traversal is an unknown bundle", async () => {
+    const before = snapshot(ws.root);
+    for (const id of ["..", "..%2F..", "payments%2F..%2F..", "%2Fetc"]) {
+      const read = await client.get(`/api/bundles/${id}/manifest`);
+      expect(read.status, id).toBe(404);
+      const write = await client.post(`/api/bundles/${id}/manifest`, { text: "operations: {}\n" });
+      expect(write.status, id).toBe(404);
+      expect(zErrorEnvelope.parse(write.json).error.code).toBe("console/not_found");
+    }
+    expect(snapshot(ws.root)).toEqual(before);
   });
 
   it("refuses an export for a cluster the benchmark did not measure", async () => {

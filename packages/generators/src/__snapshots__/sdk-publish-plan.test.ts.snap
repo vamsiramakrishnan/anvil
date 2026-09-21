@@ -1,0 +1,250 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`sdkPublishPlan > reads every language's name and version from its own generated manifest 1`] = `
+{
+  "languages": [
+    {
+      "credentialEnv": [
+        "NPM_TOKEN",
+      ],
+      "language": "typescript",
+      "networkCallsMadeByAnvil": false,
+      "package": {
+        "directory": "sdk/typescript",
+        "manifest": "sdk/typescript/package.json",
+        "name": "@anvil-sdk/payments",
+        "version": "2026-07-09-prod",
+      },
+      "preconditions": [
+        "The npm scope of \`@anvil-sdk/payments\` is owned by the publishing account (create it, or rename the package in the Anvil manifest and recompile).",
+        "An \`.npmrc\` (or \`npm config set\`) points \`//registry.npmjs.org/:_authToken\` at \`\${NPM_TOKEN}\` — the value lives only in the CI secret store.",
+        "Node.js 20+ and npm are installed; \`npm run build\` succeeds.",
+        "Version \`2026-07-09-prod\` is not already published (npm refuses a republish; bump \`service.version\` and recompile).",
+      ],
+      "registry": {
+        "defaultUrl": "https://registry.npmjs.org/",
+        "kind": "npm",
+      },
+      "schemaVersion": 1,
+      "service": {
+        "id": "payments",
+        "version": "2026-07-09-prod",
+      },
+      "steps": [
+        {
+          "command": "cd sdk/typescript && npm install",
+          "description": "Install dev dependencies",
+          "id": "install",
+          "mutates": false,
+        },
+        {
+          "command": "cd sdk/typescript && npm run build",
+          "description": "Compile the client",
+          "id": "build",
+          "mutates": false,
+        },
+        {
+          "command": "cd sdk/typescript && npm pack --dry-run",
+          "description": "Rehearse the tarball contents",
+          "id": "pack",
+          "mutates": false,
+        },
+        {
+          "command": "cd sdk/typescript && npm publish --dry-run --access public",
+          "description": "Rehearse the publish against the registry without uploading",
+          "id": "publish-dry-run",
+          "mutates": false,
+        },
+        {
+          "command": "cd sdk/typescript && npm publish --access public",
+          "description": "Upload to npm (the only mutating step)",
+          "id": "publish",
+          "mutates": true,
+        },
+      ],
+    },
+    {
+      "credentialEnv": [
+        "TWINE_USERNAME",
+        "TWINE_PASSWORD",
+        "TWINE_REPOSITORY_URL",
+      ],
+      "language": "python",
+      "networkCallsMadeByAnvil": false,
+      "package": {
+        "directory": "sdk/python",
+        "manifest": "sdk/python/pyproject.toml",
+        "name": "anvil-sdk-payments",
+        "version": "2026-07-09-prod",
+      },
+      "preconditions": [
+        "The PyPI project \`anvil-sdk-payments\` is owned by the publishing account, or a private index is named in \`TWINE_REPOSITORY_URL\`.",
+        "\`TWINE_USERNAME=__token__\` and \`TWINE_PASSWORD\` is an API token scoped to the project — the value lives only in the CI secret store.",
+        "Python 3.9+ with \`build\` and \`twine\` installed.",
+        "Version \`2026-07-09-prod\` is not already on the index (PyPI refuses a re-upload of the same file name).",
+      ],
+      "registry": {
+        "defaultUrl": "https://upload.pypi.org/legacy/",
+        "kind": "pypi",
+      },
+      "schemaVersion": 1,
+      "service": {
+        "id": "payments",
+        "version": "2026-07-09-prod",
+      },
+      "steps": [
+        {
+          "command": "python3 -m pip install --upgrade build twine",
+          "description": "Install the build front end and the uploader",
+          "id": "tooling",
+          "mutates": false,
+        },
+        {
+          "command": "cd sdk/python && python3 -m build",
+          "description": "Build the sdist and wheel",
+          "id": "build",
+          "mutates": false,
+        },
+        {
+          "command": "cd sdk/python && python3 -m twine check dist/*",
+          "description": "Validate the distribution metadata",
+          "id": "check",
+          "mutates": false,
+        },
+        {
+          "command": "cd sdk/python && python3 -m twine upload --repository testpypi dist/*",
+          "description": "Upload to TestPyPI first (a separate index; the production index is untouched)",
+          "id": "upload-rehearsal",
+          "mutates": false,
+        },
+        {
+          "command": "cd sdk/python && python3 -m twine upload dist/*",
+          "description": "Upload to the production index (the only mutating step on it)",
+          "id": "upload",
+          "mutates": true,
+        },
+      ],
+    },
+    {
+      "credentialEnv": [
+        "GIT_SSH_COMMAND",
+        "GOPROXY",
+        "GOPRIVATE",
+        "GONOSUMDB",
+      ],
+      "language": "go",
+      "networkCallsMadeByAnvil": false,
+      "package": {
+        "directory": "sdk/go",
+        "manifest": "sdk/go/go.mod",
+        "name": "github.com/anvil-sdk/payments",
+        "version": "v2026-07-09-prod",
+      },
+      "preconditions": [
+        "The module path \`github.com/anvil-sdk/payments\` is a repository you control; the generated path is a placeholder until the Anvil manifest names your own (a Go module is published by tagging that repository, not by uploading).",
+        "\`sdk/go/\` sits at that repository's root (or the tag carries the subdirectory prefix, \`sdk/go/v1.2.3\`).",
+        "Service version \`2026-07-09-prod\` is not semantic-version shaped; Go modules require \`vMAJOR.MINOR.PATCH\`. Set a semver \`service.version\` and recompile before tagging.",
+        "Push credentials for that repository come from the CI runner's git identity (an SSH key or token), never from the bundle.",
+        "For a private module, \`GOPRIVATE\`/\`GONOSUMDB\` name it so the public proxy and checksum database are not consulted.",
+      ],
+      "registry": {
+        "defaultUrl": "https://proxy.golang.org/",
+        "kind": "go-module-proxy",
+      },
+      "schemaVersion": 1,
+      "service": {
+        "id": "payments",
+        "version": "2026-07-09-prod",
+      },
+      "steps": [
+        {
+          "command": "cd sdk/go && go mod tidy",
+          "description": "Resolve the (empty) dependency set",
+          "id": "tidy",
+          "mutates": false,
+        },
+        {
+          "command": "cd sdk/go && go build ./...",
+          "description": "Compile the client",
+          "id": "build",
+          "mutates": false,
+        },
+        {
+          "command": "cd sdk/go && go vet ./...",
+          "description": "Static checks",
+          "id": "vet",
+          "mutates": false,
+        },
+        {
+          "command": "git tag -a v2026-07-09-prod -m "github.com/anvil-sdk/payments v2026-07-09-prod" && git push origin v2026-07-09-prod",
+          "description": "Tag the release in the module's repository (the mutating step)",
+          "id": "tag",
+          "mutates": true,
+        },
+        {
+          "command": "GOPROXY=https://proxy.golang.org GO111MODULE=on go list -m github.com/anvil-sdk/payments@v2026-07-09-prod",
+          "description": "Ask the public proxy to index the tag (no-op for a private module)",
+          "id": "index",
+          "mutates": false,
+        },
+      ],
+    },
+    {
+      "credentialEnv": [
+        "MAVEN_USERNAME",
+        "MAVEN_PASSWORD",
+        "MAVEN_GPG_PASSPHRASE",
+      ],
+      "language": "java",
+      "networkCallsMadeByAnvil": false,
+      "package": {
+        "directory": "sdk/java",
+        "manifest": "sdk/java/pom.xml",
+        "name": "com.anvil.sdk:payments",
+        "version": "2026-07-09-prod",
+      },
+      "preconditions": [
+        "The groupId of \`com.anvil.sdk:payments\` is verified for the publishing account on the target repository.",
+        "\`~/.m2/settings.xml\` maps a \`<server id="anvil-sdk">\` to \`\${env.MAVEN_USERNAME}\` / \`\${env.MAVEN_PASSWORD}\`; the values live only in the CI secret store.",
+        "Java 11+ and Maven 3.8+ installed; \`mvn -B verify\` succeeds.",
+        "Maven Central additionally requires GPG-signed artifacts and sources/javadoc jars (\`MAVEN_GPG_PASSPHRASE\`); an internal repository may not.",
+        "Version \`2026-07-09-prod\` is not already deployed (a release repository refuses redeploys).",
+      ],
+      "registry": {
+        "defaultUrl": "https://central.sonatype.com/ (or an internal Maven repository)",
+        "kind": "maven",
+      },
+      "schemaVersion": 1,
+      "service": {
+        "id": "payments",
+        "version": "2026-07-09-prod",
+      },
+      "steps": [
+        {
+          "command": "cd sdk/java && mvn -B verify",
+          "description": "Compile, test, and package",
+          "id": "verify",
+          "mutates": false,
+        },
+        {
+          "command": "cd sdk/java && mvn -B deploy -DskipTests -DaltDeploymentRepository="anvil-sdk::<STAGING_REPOSITORY_URL>"",
+          "description": "Deploy to a staging/snapshot repository of your own first",
+          "id": "deploy-rehearsal",
+          "mutates": false,
+        },
+        {
+          "command": "cd sdk/java && mvn -B deploy -DskipTests -DaltDeploymentRepository="anvil-sdk::<RELEASE_REPOSITORY_URL>"",
+          "description": "Deploy to the release repository (the only mutating step on it)",
+          "id": "deploy",
+          "mutates": true,
+        },
+      ],
+    },
+  ],
+  "schemaVersion": 1,
+  "service": {
+    "id": "payments",
+    "version": "2026-07-09-prod",
+  },
+}
+`;
