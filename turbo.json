@@ -8,8 +8,24 @@
     "typecheck": {
       "dependsOn": ["^build"]
     },
+    // `^build` builds a package's DEPENDENCIES, not the package itself, so
+    // turbo is free to run `<pkg>#build` while `<pkg>#test` already runs. A
+    // test that spawns a child importing its own package's dist then dies
+    // with ERR_MODULE_NOT_FOUND against a dist tsup is mid-rewrite: empty
+    // stdout, nothing executed. `test:e2e` already declares its own `build`
+    // for exactly this reason; so does this.
     "test": {
-      "dependsOn": ["^build"],
+      "dependsOn": ["^build", "build"],
+      "env": ["ANVIL_FUZZ_REQUIRE_SDKS"]
+    },
+    // The conformance suite spawns the GENERATED CLI, which statically
+    // imports `@anvil/cli/dist`. Harness does not depend on @anvil/cli (that
+    // dependency runs the other way), so `^build` never orders that build
+    // ahead of these tests. Naming it here is what makes the ordering real;
+    // `retryTransientCliLaunch` in conformance.ts is the symptom this race
+    // left behind, not its cure.
+    "@anvil/harness#test": {
+      "dependsOn": ["^build", "build", "@anvil/cli#build"],
       "env": ["ANVIL_FUZZ_REQUIRE_SDKS"]
     },
     "clean": {
