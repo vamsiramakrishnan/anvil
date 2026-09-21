@@ -322,10 +322,27 @@ describe("tri-surface conformance (banking, WSDL)", () => {
   }, 120_000);
 });
 
+/**
+ * The enterprise fixtures are large enough to spawn a CLI child per operation,
+ * and the suite runs once per workspace package concurrently, so a call here
+ * competes for two CI cores with every other package's. The per-call budget
+ * has to match the wall-clock headroom these scenarios already give their own
+ * test timeouts: a child that never got scheduled is not a surface that
+ * disagreed, and recording it as one turns contention into a false red.
+ */
+const VENDOR_CALL_TIMEOUT_MS = 120_000;
+
 describe("tri-surface conformance (enterprise vendors)", () => {
   it("Salesforce (REST) — every surface agrees, gates and all", async () => {
     const dir = await buildBundle("salesforce/openapi.yaml", "salesforce/anvil.yaml", "salesforce");
-    const report = await runConformance(dir, { cliPackageDir: CLI_PACKAGE_DIR });
+    const report = await runConformance(dir, {
+      cliPackageDir: CLI_PACKAGE_DIR,
+      callTimeoutMs: VENDOR_CALL_TIMEOUT_MS,
+    });
+    // Name the failing check: a bare count tells a reader a surface disagreed
+    // but not where, which is the one thing they need to act on.
+    const failed = report.checks.filter((c) => c.status === "fail");
+    expect(failed, JSON.stringify(failed, null, 2)).toEqual([]);
     expect(report.summary.fail).toBe(0);
     // The destructive delete and non-idempotent creates gate on both surfaces.
     const gates = byId(report, "gate-agreement").map((c) => c.operationId);
@@ -344,7 +361,12 @@ describe("tri-surface conformance (enterprise vendors)", () => {
 
   it("SAP S/4HANA (OData) — OData $filter and composite keys reach the wire identically", async () => {
     const dir = await buildBundle("sap/metadata.edmx", "sap/anvil.yaml", "sap_bp");
-    const report = await runConformance(dir, { cliPackageDir: CLI_PACKAGE_DIR });
+    const report = await runConformance(dir, {
+      cliPackageDir: CLI_PACKAGE_DIR,
+      callTimeoutMs: VENDOR_CALL_TIMEOUT_MS,
+    });
+    const failed = report.checks.filter((c) => c.status === "fail");
+    expect(failed, JSON.stringify(failed, null, 2)).toEqual([]);
     expect(report.summary.fail).toBe(0);
     // The OData `$filter`/`$top` query options and quoted composite keys survive
     // both surfaces byte-identically.
