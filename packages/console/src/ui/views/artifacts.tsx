@@ -1,9 +1,9 @@
 import { useState } from "react";
 import type { ConsoleApi } from "../api.js";
-import { CodeBlock, DownloadButton, ErrorBox, Label } from "../components.js";
+import { CodeBlock, DownloadButton, ErrorBox } from "../components.js";
 import { useLoad } from "../hooks.js";
-import { href } from "../model.js";
-import { Command } from "../workbench-components.js";
+import { formatBytes, href } from "../model.js";
+import { Command, PageHeader } from "../workbench-components.js";
 
 const OUTPUTS = [
   {
@@ -72,19 +72,21 @@ export function ArtifactsView({
     });
   return (
     <div className="stack">
-      <div className="view-head">
-        <div>
-          <Label>Use</Label>
-          <h1>Interfaces</h1>
-          <p className="sub">
-            Choose how an agent or application calls your API. Inspect the core generated files,
-            then follow the setup steps.
-          </p>
-        </div>
-        <button className="btn" type="button" onClick={() => void loaded.reload()}>
-          Refresh file list
-        </button>
-      </div>
+      <PageHeader
+        eyebrow="Use"
+        title="Interfaces"
+        description="Choose how an agent or application calls your API. Inspect the core generated files, then follow the setup steps."
+        actions={
+          <button
+            className="btn btn-sm"
+            type="button"
+            onClick={() => void loaded.reload()}
+            disabled={loaded.refreshing}
+          >
+            {loaded.refreshing ? "Refreshing…" : "Refresh"}
+          </button>
+        }
+      />
       <section className="output-guide" aria-label="Choose an interface">
         <h2>Use your API</h2>
         <p>
@@ -158,18 +160,24 @@ export function ArtifactsView({
         <div className="file-layout">
           <section className="panel">
             <div className="file-toolbar">
-              <input
-                type="search"
-                aria-label="Find generated file"
-                placeholder={output ? `Find a ${output.title} file…` : "Find a generated file…"}
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-              />
-              {surface ? (
-                <a href={href(bundleId, "artifacts")} onClick={() => setQuery("")}>
-                  All files
-                </a>
-              ) : null}
+              <div>
+                <input
+                  type="search"
+                  aria-label="Filter files"
+                  placeholder="Filter files…"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                />
+                {surface ? (
+                  <a
+                    className="btn btn-sm"
+                    href={href(bundleId, "artifacts")}
+                    onClick={() => setQuery("")}
+                  >
+                    All files
+                  </a>
+                ) : null}
+              </div>
             </div>
             <nav className="file-list" aria-label="Artifact files">
               {visible.map((file) => (
@@ -179,7 +187,7 @@ export function ArtifactsView({
                   aria-current={file.path === path ? "page" : undefined}
                 >
                   <code>{file.path}</code>
-                  <span className="row-id">{file.bytes.toLocaleString()} B</span>
+                  <span className="row-id">{formatBytes(file.bytes)}</span>
                 </a>
               ))}
             </nav>
@@ -254,15 +262,17 @@ function Artifact({ api, bundleId, path }: { api: ConsoleApi; bundleId: string; 
   return (
     <section className="stack artifact-content" aria-label={`Contents of ${path}`}>
       <div className="code-head">
-        <span className="row-id">{file.bytes.toLocaleString()} bytes</span>
-        <DownloadButton
-          content={file.content}
-          filename={path.split("/").pop() ?? "artifact.txt"}
-          disabled={file.truncated}
-        />
-        <button type="button" className="btn btn-sm" onClick={() => void loaded.reload()}>
-          Reload file
-        </button>
+        <span className="row-id">{formatBytes(file.bytes)}</span>
+        <div className="code-head-actions">
+          <DownloadButton
+            content={file.content}
+            filename={path.split("/").pop() ?? "artifact.txt"}
+            disabled={file.truncated}
+          />
+          <button type="button" className="btn btn-sm" onClick={() => void loaded.reload()}>
+            Reload
+          </button>
+        </div>
       </div>
       {file.truncated ? (
         <p role="status">

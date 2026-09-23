@@ -7,6 +7,7 @@ import {
   type DecisionRow,
   type PackList,
   POLICIES,
+  plural,
   REVIEWER_KEY,
   selectByPolicy,
   toRows,
@@ -395,11 +396,11 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
         <ul className="progress">
           {reviewedPacks.map((pack) => (
             <li key={pack.hash}>
-              <Chip value="review" label={`${pack.receipts.length} receipts`} />
+              <Chip value="review" label={plural(pack.receipts.length, "receipt")} />
               <span>
-                <code>{pack.hash.slice(0, 12)}</code> · {pack.dir} · approved{" "}
-                {pack.receipts.filter((r) => r.decision === "approved").length}, rejected{" "}
-                {pack.receipts.filter((r) => r.decision === "rejected").length}{" "}
+                <code>{pack.hash.slice(0, 12)}</code> · {pack.dir} ·{" "}
+                {pack.receipts.filter((r) => r.decision === "approved").length} approved,{" "}
+                {pack.receipts.filter((r) => r.decision === "rejected").length} rejected{" "}
                 <button
                   type="button"
                   className="btn btn-sm"
@@ -468,31 +469,34 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
                 setCursor(0);
               }}
             />
-            <Label>policy</Label>
-            {POLICIES.map((policy) => (
+            <div className="queue-toolbar-row">
+              <Label>select by policy</Label>
+              {POLICIES.map((policy) => (
+                <button
+                  key={policy.id}
+                  type="button"
+                  className="policy"
+                  aria-pressed={policyId === policy.id}
+                  data-empty={selectByPolicy(rows, policy).length === 0 || undefined}
+                  onClick={() => applyPolicy(policy.id)}
+                >
+                  {policy.label} <span className="n">{selectByPolicy(rows, policy).length}</span>
+                </button>
+              ))}
               <button
-                key={policy.id}
                 type="button"
-                className="policy"
-                aria-pressed={policyId === policy.id}
-                onClick={() => applyPolicy(policy.id)}
+                className="btn btn-primary btn-sm"
+                disabled={busy || chosen.length === 0 || bulkNeedsReviewer}
+                onClick={() => void runBulk()}
+                title={
+                  bulkNeedsReviewer
+                    ? "pack decisions need a reviewer and a reason (detail pane)"
+                    : undefined
+                }
               >
-                {policy.label} <span className="n">{selectByPolicy(rows, policy).length}</span>
+                approve {chosen.length} selected
               </button>
-            ))}
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              disabled={busy || chosen.length === 0 || bulkNeedsReviewer}
-              onClick={() => void runBulk()}
-              title={
-                bulkNeedsReviewer
-                  ? "pack decisions need a reviewer and a reason (detail pane)"
-                  : undefined
-              }
-            >
-              approve {chosen.length} selected
-            </button>
+            </div>
           </div>
           <div className="rows" role="listbox" aria-label="decisions" aria-multiselectable="true">
             {visible.map((row, index) => {
@@ -534,7 +538,7 @@ export function QueueView({ api, bundleId, data, reload }: Props) {
                     <div className="row-title">{row.title}</div>
                     <div className="row-id">{row.id}</div>
                     <RowEvidence row={row} />
-                    {barrier ? <div className="barrier">not bulk-selectable: {barrier}</div> : null}
+                    {barrier ? <div className="barrier">{barrier}</div> : null}
                   </div>
                   <div className="chips">{row.blocking ? <Chip value="blocked" /> : null}</div>
                 </div>

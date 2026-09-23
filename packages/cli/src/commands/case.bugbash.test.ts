@@ -584,7 +584,7 @@ describe("anvil case inspect", () => {
     const { code, io } = await runCli(["case", "inspect", dir]);
     expect(code).toBe(1);
     expect(io.stderr[0]).toMatch(/^anvil: /);
-    expect(io.stderr[0]).toContain("ENOENT");
+    expect(io.stderr[0]).toContain("no such file or directory");
   });
 });
 

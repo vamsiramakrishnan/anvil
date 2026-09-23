@@ -79,7 +79,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
     })
     .addHelpText(
       "after",
-      "\nRun `anvil <command> --help` for usage. The CLI, MCP server, and skill\nare all generated from one AIR model. No drift.",
+      "\nQuick start:\n  anvil agentify examples/payments/openapi.yaml --out ./payments\n  anvil inspect ./payments\n  anvil console ./payments\n\nRun `anvil <command> --help` for usage. The CLI, MCP server, and skill\nare all generated from one AIR model. No drift.",
     );
 
   // Lifecycle order: discovery → review → quality → gates → operations.
@@ -88,12 +88,14 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   // deployment inputs that become part of what `certify` hashes (see
   // skills/anvil/SKILL.md's numbered loop, steps 6-8) — generating them
   // after certify would list them in an order a user can't actually follow.
+  program.commandsGroup("Start:");
   registerSource(program, ctx);
   registerAgentify(program, ctx);
   registerAdopt(program, ctx);
   registerCompile(program, ctx);
   // The manifest schema sits beside compile: it describes the file compile reads.
   registerSchema(program, ctx);
+  program.commandsGroup("Review:");
   registerStatus(program, ctx);
   registerInspect(program, ctx);
   registerAssess(program, ctx);
@@ -112,11 +114,13 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   // approves through the same functions `approve` and `capability` call.
   registerConsole(program, ctx);
   registerLint(program, ctx);
+  program.commandsGroup("Build:");
   registerBuild(program, ctx);
   registerSdk(program, ctx);
   registerReview(program, ctx);
   registerTarget(program, ctx);
   registerDeploy(program, ctx);
+  program.commandsGroup("Verify:");
   registerCertify(program, ctx);
   registerSelftest(program, ctx);
   registerConformance(program, ctx);
@@ -127,6 +131,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerDisclosure(program, ctx);
   registerEvals(program, ctx);
   registerPack(program, ctx);
+  program.commandsGroup("Ship and operate:");
   registerPublish(program, ctx);
   registerSync(program, ctx);
   registerDrift(program, ctx);
@@ -136,6 +141,8 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerServe(program, ctx);
   registerPackage(program, ctx);
   registerSkill(program, ctx);
+  // Commander's own `help [command]` joins the group a newcomer reads first.
+  program.commandsGroup("Start:").helpCommand(true);
 
   // `anvil version` (the positional spelling of --version) stays supported but
   // hidden — it is an alias, not a lifecycle step.

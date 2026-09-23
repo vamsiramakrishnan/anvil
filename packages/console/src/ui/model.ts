@@ -138,36 +138,36 @@ export function bulkBarrier(row: DecisionItem): string | undefined {
   switch (row.kind) {
     case "operation": {
       const { effect, idempotency, confirmation } = row.subject;
-      if (row.blocking) return "blocked — resolve its diagnostics and recompile";
+      if (row.blocking) return "blocked — resolve diagnostics and recompile";
       if (effect.kind === "mutation" && idempotency.mode === "none") {
-        return "non-idempotent mutation — one at a time, with --confirm";
+        return "non-idempotent mutation — review individually";
       }
       if (effect.risk === "destructive" || effect.action === "delete") {
-        return "destructive — never bulk-approved";
+        return "destructive — review individually";
       }
       if (effect.kind === "mutation" && !effect.reversible) {
-        return "irreversible mutation — never bulk-approved";
+        return "irreversible mutation — review individually";
       }
-      if (confirmation.required) return "requires confirmation — decide it individually";
+      if (confirmation.required) return "requires confirmation — review individually";
       return undefined;
     }
     case "capability":
       if (row.subject.budget.verdict !== "ok") {
-        return `budget ${row.subject.budget.verdict} — needs an individual decision`;
+        return `budget ${row.subject.budget.verdict} — review individually`;
       }
       return undefined;
     case "workflow":
-      return "workflows are decided by recompiling; the contract has no approve route";
+      return "decided by recompiling the bundle";
     case "refinement":
-      return "a deficiency is resolved by `anvil refine run`, not approved";
+      return "resolved by running a refinement, not approved";
     case "pack":
-      if (row.subject.tier !== "review") return `tier ${row.subject.tier} — not awaiting a receipt`;
+      if (row.subject.tier !== "review") return `tier ${row.subject.tier} — not awaiting review`;
       if (row.subject.delta && row.subject.delta.upliftPts <= 0) {
-        return `measured delta ${row.subject.delta.upliftPts} pts — never bulk-approved`;
+        return `measured delta ${row.subject.delta.upliftPts} pts — review individually`;
       }
       return undefined;
     case "cluster":
-      return "a case file is exported, not approved";
+      return "exported as a case file, not approved";
   }
 }
 
@@ -273,3 +273,18 @@ export const BUNDLE_NAV_GROUPS = [
     views: ["inspect", "compare", "confusion", "evidence", "manifest"],
   },
 ] as const;
+
+/** Format a count and noun with correct pluralization. */
+export function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
+  return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
+/** Format bytes as human-readable size (e.g., "2.5 KB", "1.2 MB"). */
+export function formatBytes(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const size = bytes / k ** i;
+  return `${size.toFixed(size < 10 ? 1 : 0)} ${sizes[i]}`;
+}

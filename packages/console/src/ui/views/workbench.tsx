@@ -156,18 +156,22 @@ function RequestEditor({
           ]}
         />
         {!view.served ? (
-          <div className="error" role="status">
-            This operation is not on the served surface.{" "}
-            {op.state !== "approved"
-              ? "Review its policy before approving it."
-              : "An approved workflow supersedes it."}{" "}
-            {op.state !== "approved" ? (
-              <a href={href(bundleId, "queue", { item: `operation:${op.id}` })}>
-                Review this operation
-              </a>
-            ) : (
-              <a href={href(bundleId, "catalog", { op: op.id })}>Inspect this operation</a>
-            )}
+          <div className="callout warning" role="status">
+            <strong>This operation is not on the served surface.</strong>
+            <p>
+              {op.state !== "approved"
+                ? "Review its policy before approving it."
+                : "An approved workflow supersedes it."}{" "}
+              {op.state !== "approved" ? (
+                <a href={href(bundleId, "queue", { item: `operation:${op.id}` })}>
+                  Review this operation <span aria-hidden="true">→</span>
+                </a>
+              ) : (
+                <a href={href(bundleId, "catalog", { op: op.id })}>
+                  Inspect this operation <span aria-hidden="true">→</span>
+                </a>
+              )}
+            </p>
           </div>
         ) : null}
       </Panel>

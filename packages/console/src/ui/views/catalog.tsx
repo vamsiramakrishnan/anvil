@@ -3,7 +3,7 @@ import type { ConsoleResponse } from "../../contract.js";
 import { type ConsoleApi, type ConsoleApiError, toConsoleApiError } from "../api.js";
 import { Chip, Claims, CodeBlock, ErrorBox, KV, Label, Panel, Tag } from "../components.js";
 import { useLoad } from "../hooks.js";
-import { href, show } from "../model.js";
+import { href, plural, show } from "../model.js";
 import { shellQuote } from "../request-builder.js";
 import { LoadState, setQuery } from "../workbench-components.js";
 
@@ -55,9 +55,6 @@ export function CatalogView({
             Explore operations imported from your API. Review their inputs and preview a request.
           </p>
         </div>
-        <button className="btn" type="button" onClick={() => void loaded.reload()}>
-          Refresh
-        </button>
       </div>
       <div className="filter-bar">
         <input
@@ -91,7 +88,9 @@ export function CatalogView({
           <option value="mutation">Mutations</option>
         </select>
         <span className="mono">
-          {filtered.length} / {operations.length}
+          {filtered.length === operations.length
+            ? plural(filtered.length, "operation")
+            : `${filtered.length} of ${operations.length}`}
         </span>
       </div>
       <div className="workbench-grid">
@@ -130,27 +129,29 @@ export function CatalogView({
               </button>
             </div>
           ) : null}
-          <div className="pagination">
-            <button
-              type="button"
-              className="btn btn-sm"
-              disabled={page === 0}
-              onClick={() => update({ page: String(page - 1), op: "" })}
-            >
-              Previous
-            </button>
-            <span>
-              {filtered.length ? page + 1 : 0} / {Math.ceil(filtered.length / PAGE_SIZE)}
-            </span>
-            <button
-              type="button"
-              className="btn btn-sm"
-              disabled={(page + 1) * PAGE_SIZE >= filtered.length}
-              onClick={() => update({ page: String(page + 1), op: "" })}
-            >
-              Next
-            </button>
-          </div>
+          {Math.ceil(filtered.length / PAGE_SIZE) > 1 ? (
+            <div className="pagination">
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={page === 0}
+                onClick={() => update({ page: String(page - 1), op: "" })}
+              >
+                Previous
+              </button>
+              <span>
+                {filtered.length ? page + 1 : 0} / {Math.ceil(filtered.length / PAGE_SIZE)}
+              </span>
+              <button
+                type="button"
+                className="btn btn-sm"
+                disabled={(page + 1) * PAGE_SIZE >= filtered.length}
+                onClick={() => update({ page: String(page + 1), op: "" })}
+              >
+                Next
+              </button>
+            </div>
+          ) : null}
         </section>
         {selected ? (
           <OperationDetail

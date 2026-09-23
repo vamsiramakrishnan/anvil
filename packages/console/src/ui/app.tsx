@@ -317,15 +317,9 @@ export function App({ api }: { api: ConsoleApi }) {
         </button>
         <nav className="side-nav">
           <a href="#/" aria-current={route.view === "workspace" ? "page" : undefined}>
-            <span className="nav-mark" aria-hidden="true">
-              ◫
-            </span>
             Workspace
           </a>
           <a href="#/new" aria-current={route.view === "new" ? "page" : undefined}>
-            <span className="nav-mark" aria-hidden="true">
-              ＋
-            </span>
             Import API
           </a>
           <a href="#/projects" aria-current={route.view === "projects" ? "page" : undefined}>
@@ -413,26 +407,30 @@ export function App({ api }: { api: ConsoleApi }) {
               <>
                 <span>/</span>
                 <a href={href(bundleId, "overview")}>{bundleId}</a>
+                <span>/</span>
+                <strong>{activeName}</strong>
               </>
             ) : null}
-            <span>/</span>
-            <strong>{activeName}</strong>
           </div>
-          {bundleId ? (
-            <button
-              type="button"
-              className="btn btn-sm"
-              onClick={() => {
-                setBundleRevision((n) => n + 1);
-                void workspace.reload();
-              }}
-            >
-              Refresh bundle
-            </button>
-          ) : null}
-          <a className="btn btn-sm" href="#/new">
-            ＋ Import API
-          </a>
+          <div className="topbar-actions">
+            {bundleId ? (
+              <button
+                type="button"
+                className="btn btn-sm"
+                onClick={() => {
+                  setBundleRevision((n) => n + 1);
+                  void workspace.reload();
+                }}
+              >
+                Refresh bundle
+              </button>
+            ) : null}
+            {route.view !== "new" && route.view !== "workspace" ? (
+              <a className="btn btn-sm" href="#/new">
+                ＋ Import API
+              </a>
+            ) : null}
+          </div>
         </header>
         <main id="main-content" tabIndex={-1}>
           {route.view === "workspace" ? (

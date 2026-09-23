@@ -70,8 +70,8 @@ describe("bulk policies", () => {
     expect(bulkBarrier(byId.get("deletePaymentMethod") as never)).toMatch(/destructive/);
     expect(bulkBarrier(byId.get("createRefund") as never)).toMatch(/irreversible/);
     expect(bulkBarrier(byId.get("exportStatement") as never)).toMatch(/blocked/);
-    expect(bulkBarrier(byId.get("reconcile_statement") as never)).toMatch(/no approve route/);
-    expect(bulkBarrier(byId.get("cluster_payment_lookup") as never)).toMatch(/exported/);
+    expect(bulkBarrier(byId.get("reconcile_statement") as never)).toMatch(/recompiling/);
+    expect(bulkBarrier(byId.get("cluster_payment_lookup") as never)).toMatch(/case file/);
     // A pack row the receipt binding would refuse, or whose measured delta is
     // not positive, is barred even if a server ever listed it.
     const lookup = packRow(all, "rf_group_lookup_payment");
@@ -86,7 +86,7 @@ describe("bulk policies", () => {
         ...lookup,
         subject: { ...lookup.subject, delta: { ...delta, upliftPts: -12.5 } },
       }),
-    ).toMatch(/never bulk-approved/);
+    ).toMatch(/review individually/);
   });
 
   it("keeps a policy inside the un-barred set whatever its predicate claims", () => {

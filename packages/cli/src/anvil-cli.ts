@@ -7,6 +7,14 @@ import { createAnvilProgram, programExitCode } from "./program.js";
 export type { AnvilCliDeps } from "./commands/context.js";
 
 /**
+ * A missing input reads as the path that is missing, not as Node's
+ * `ENOENT: no such file or directory, open '<path>'` errno text.
+ */
+export function formatEnoentError(err: NodeJS.ErrnoException): string {
+  return err.path ? `anvil: no such file or directory: ${err.path}` : `anvil: ${err.message}`;
+}
+
+/**
  * The top-level `anvil` command (spec §17, §20). A thin embedding shell over
  * the Commander tree in program.ts: build the program, parse, and map every
  * outcome — action exit codes, help, version, and Commander's own usage
@@ -37,6 +45,11 @@ export async function runAnvilCli(argv: string[], deps: AnvilCliDeps = {}): Prom
     }
     if (err instanceof CapabilityReviewError) {
       io.err(`error ${err.code}: ${err.message}`);
+      return 1;
+    }
+    const nodeErr = err as NodeJS.ErrnoException;
+    if (nodeErr.code === "ENOENT") {
+      io.err(formatEnoentError(nodeErr));
       return 1;
     }
     io.err(`anvil: ${(err as Error).message}`);
