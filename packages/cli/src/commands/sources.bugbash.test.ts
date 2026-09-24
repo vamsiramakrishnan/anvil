@@ -72,7 +72,7 @@ describe("anvil sources init — error handling", () => {
     const missing = join(freshDir(), "does-not-exist.yaml");
     const result = await sources("init", missing);
     expect(result.code).toBe(1);
-    expect(result.err).toContain("ENOENT");
+    expect(result.err).toContain("no such file or directory");
     expect(result.err).toContain(missing);
   });
 
@@ -96,7 +96,7 @@ describe("anvil sources init — error handling", () => {
     const missing = "/completely/nonexistent/path/to/file.yaml";
     const result = await sources("init", missing);
     expect(result.code).toBe(1);
-    expect(result.err).toContain("ENOENT");
+    expect(result.err).toContain("no such file or directory");
     expect(result.err).toContain(missing);
   });
 });

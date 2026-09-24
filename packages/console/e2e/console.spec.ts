@@ -106,7 +106,7 @@ test("1. the workspace lists the bundle with the counts on disk", async ({ page 
   await expect(cells.nth(4)).toHaveText(String(review + generated));
   await expect(cells.nth(5)).toHaveText(String(approved));
   await expect(cells.nth(6)).toHaveText(String(blocked));
-  await expect(row).toContainText(`${proposed} proposed capabilities · 1 packs`);
+  await expect(row).toContainText(`${proposed} proposed capabilities · 1 pack`);
   await expect(page.getByRole("navigation", { name: "API to agent workflow" })).toBeVisible();
   await expect(row.getByRole("link", { name: "Review →" })).toHaveAttribute(
     "href",
@@ -142,7 +142,7 @@ test("3. a non-idempotent financial mutation is barred from every bulk policy, a
   const row = rowFor(page, id);
   const checkbox = page.getByLabel(`select ${id}`, { exact: true });
   await expect(checkbox).toBeDisabled();
-  await expect(row).toContainText("not bulk-selectable: non-idempotent mutation");
+  await expect(row).toContainText("non-idempotent mutation — review individually");
   await expect(row).toContainText("idempotency none");
   await expect(row).toContainText("retries none");
 

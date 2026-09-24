@@ -1,5 +1,5 @@
 import type { ConsoleApi } from "../api.js";
-import { Chip, ErrorBox, Label, Panel } from "../components.js";
+import { Chip, ErrorBox, Label, Panel, TextWithCode } from "../components.js";
 import { useLoad } from "../hooks.js";
 import type { Inspector } from "../model.js";
 import { Command, CopyButton, Loading, PageHeader, shellArg } from "../workbench-components.js";
@@ -54,7 +54,9 @@ export function EvidenceView({ api, inspector }: { api: ConsoleApi; inspector: I
                 />
               </div>
               <h2>Certification</h2>
-              <p>{evidence.certification.detail}</p>
+              <p>
+                <TextWithCode>{evidence.certification.detail}</TextWithCode>
+              </p>
               <Command>{`anvil certify ${path}`}</Command>
             </section>
             {evidence.executable.map((lane) => (
@@ -79,7 +81,9 @@ export function EvidenceView({ api, inspector }: { api: ConsoleApi; inspector: I
                       ? "Conformance"
                       : "Simulation"}
                 </h2>
-                <p>{lane.detail}</p>
+                <p>
+                  <TextWithCode>{lane.detail}</TextWithCode>
+                </p>
                 <Command>{`anvil ${lane.lane === "simulation" ? "simulate" : lane.lane} ${path}`}</Command>
               </section>
             ))}
@@ -118,7 +122,9 @@ export function EvidenceView({ api, inspector }: { api: ConsoleApi; inspector: I
                       <td>
                         <code>{check.id}</code>
                       </td>
-                      <td>{check.detail}</td>
+                      <td>
+                        <TextWithCode>{check.detail}</TextWithCode>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

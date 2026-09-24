@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { runAnvilCli } from "./anvil-cli.js";
+import { formatEnoentError, runAnvilCli } from "./anvil-cli.js";
 import { installEpipeExit } from "./io.js";
 
 installEpipeExit();
@@ -8,7 +8,12 @@ runAnvilCli(process.argv.slice(2)).then(
     process.exitCode = code;
   },
   (err) => {
-    process.stderr.write(`anvil: ${err?.message ?? err}\n`);
+    const nodeErr = err as NodeJS.ErrnoException;
+    if (nodeErr?.code === "ENOENT") {
+      process.stderr.write(`${formatEnoentError(nodeErr)}\n`);
+    } else {
+      process.stderr.write(`anvil: ${err?.message ?? err}\n`);
+    }
     process.exitCode = 1;
   },
 );

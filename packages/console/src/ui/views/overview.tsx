@@ -1,6 +1,6 @@
 import type { ConsoleApi } from "../api.js";
 import { Chip, KV, Label, Panel, Tag } from "../components.js";
-import { href, type Inspector } from "../model.js";
+import { href, type Inspector, plural } from "../model.js";
 import { Command, Metric, PageHeader, shellArg } from "../workbench-components.js";
 import { HistoryPanel } from "./history.js";
 
@@ -33,39 +33,17 @@ export function OverviewView({
           </a>
         }
       />
-      <nav className="experience-steps" aria-label="Bundle workflow">
-        <a href={href(id, "catalog")}>
-          <span>01 · Explore</span>
-          <strong>Explore API operations</strong>
-          <p>Inspect source operations, inputs, and behavior.</p>
-        </a>
-        <a href={href(id, "queue")}>
-          <span>02 · Review</span>
-          <strong>Review callable operations</strong>
-          <p>Review behavior and approve callable operations.</p>
-        </a>
-        <a href={href(id, "workbench")}>
-          <span>03 · Try</span>
-          <strong>Preview a request</strong>
-          <p>Build a call without contacting the API.</p>
-        </a>
-        <a href={href(id, "artifacts")}>
-          <span>04 · Use</span>
-          <strong>Choose an interface</strong>
-          <p>Skill, CLI, MCP, SDK, or Gemini Enterprise.</p>
-        </a>
-      </nav>
       <div className="metrics">
         <Metric
           label="Operations"
           value={operations.length}
-          detail={`${operations.filter((op) => op.effect.kind === "read").length} reads · ${operations.filter((op) => op.effect.kind === "mutation").length} mutations`}
+          detail={`${plural(operations.filter((op) => op.effect.kind === "read").length, "read")} · ${plural(operations.filter((op) => op.effect.kind === "mutation").length, "mutation")}`}
         />
         <Metric
           label="Awaiting operation review"
           value={pending.length}
           tone="attention"
-          detail={`${blocked.length} additional blocked operations`}
+          detail={`${plural(blocked.length, "additional blocked operation")}`}
         />
         <Metric
           label="Served MCP tools"
@@ -75,7 +53,7 @@ export function OverviewView({
         <Metric
           label="Proposed capabilities"
           value={proposed.length}
-          detail={`${inspector.workflows.length} authored workflows`}
+          detail={`${plural(inspector.workflows.length, "authored workflow")}`}
         />
       </div>
       <div className="overview-grid">
@@ -83,58 +61,57 @@ export function OverviewView({
           title="Prepare your API"
           aside={
             <Tag>
-              {errors.length + pending.length + blocked.length} operation reviews and errors
+              {plural(
+                errors.length + pending.length + blocked.length,
+                "item to review",
+                "items to review",
+              )}
             </Tag>
           }
         >
-          {errors.length ? (
-            <a className="action-row" href={href(id, "inspect", { tab: "contract" })}>
-              <span className="action-index">01</span>
-              <div>
-                <strong>
-                  Resolve {errors.length} compiler {errors.length === 1 ? "error" : "errors"}
-                </strong>
-                <p>Inspect diagnostics before using the generated surface.</p>
-              </div>
-              <span>→</span>
-            </a>
-          ) : null}
-          {pending.length ? (
-            <a className="action-row" href={href(id, "queue")}>
-              <span className="action-index">02</span>
-              <div>
-                <strong>Review {pending.length} operations</strong>
-                <p>Effect, idempotency, confirmation, and provenance are beside each decision.</p>
-              </div>
-              <span>→</span>
-            </a>
-          ) : null}
-          {blocked.length ? (
-            <a className="action-row" href={href(id, "inspect")}>
-              <span className="action-index">03</span>
-              <div>
-                <strong>Inspect {blocked.length} blocked operations</strong>
-                <p>Read the blocker notes and repair the source contract.</p>
-              </div>
-              <span>→</span>
-            </a>
-          ) : null}
-          <a className="action-row" href={href(id, "evidence")}>
-            <span className="action-index">04</span>
-            <div>
-              <strong>Check the evidence for this bundle</strong>
-              <p>Verify static checks and the freshness of executable reports.</p>
-            </div>
-            <span>→</span>
-          </a>
-          <a className="action-row" href={href(id, "artifacts")}>
-            <span className="action-index">05</span>
-            <div>
-              <strong>Inspect the generated tools</strong>
-              <p>Read and download CLI, MCP, skill, SDK, and deployment files.</p>
-            </div>
-            <span>→</span>
-          </a>
+          {[
+            errors.length > 0 && {
+              key: "errors",
+              to: href(id, "inspect", { tab: "contract" }),
+              title: `Resolve ${plural(errors.length, "compiler error")}`,
+              detail: "Inspect diagnostics before using the generated surface.",
+            },
+            pending.length > 0 && {
+              key: "pending",
+              to: href(id, "queue"),
+              title: `Review ${plural(pending.length, "operation")}`,
+              detail: "Effect, idempotency, confirmation, and provenance are beside each decision.",
+            },
+            blocked.length > 0 && {
+              key: "blocked",
+              to: href(id, "inspect"),
+              title: `Inspect ${plural(blocked.length, "blocked operation")}`,
+              detail: "Read the blocker notes and repair the source contract.",
+            },
+            {
+              key: "evidence",
+              to: href(id, "evidence"),
+              title: "Check the evidence for this bundle",
+              detail: "Verify static checks and the freshness of executable reports.",
+            },
+            {
+              key: "artifacts",
+              to: href(id, "artifacts"),
+              title: "Inspect the generated tools",
+              detail: "Read and download CLI, MCP, skill, SDK, and deployment files.",
+            },
+          ]
+            .filter((action) => action !== false)
+            .map((action, index) => (
+              <a key={action.key} className="action-row" href={action.to}>
+                <span className="action-index">{String(index + 1).padStart(2, "0")}</span>
+                <div>
+                  <strong>{action.title}</strong>
+                  <p>{action.detail}</p>
+                </div>
+                <span>→</span>
+              </a>
+            ))}
         </Panel>
         <Panel title="API details">
           <KV

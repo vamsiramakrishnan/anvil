@@ -1,5 +1,5 @@
 import { Chip, Claims, Delta, KV, Label, Tag } from "../components.js";
-import { type DecisionRow, href, type RoutingDelta, show } from "../model.js";
+import { type DecisionRow, href, plural, type RoutingDelta, show } from "../model.js";
 
 /**
  * The decision queue's row evidence, detail pane, and per-kind actions —
@@ -23,7 +23,7 @@ export function RowEvidence({ row }: { row: DecisionRow }) {
           <Tag>{confirmation.required ? "confirm required" : "no confirm"}</Tag>
           <Tag>risk {effect.risk}</Tag>
           <Tag>{effect.reversible ? "reversible" : "irreversible"}</Tag>
-          <Tag>{row.evidence.length} claims</Tag>
+          <Tag>{plural(row.evidence.length, "claim")}</Tag>
         </div>
       );
     }
@@ -31,7 +31,7 @@ export function RowEvidence({ row }: { row: DecisionRow }) {
       return (
         <div className="chips">
           <Chip value={row.subject.budget.verdict} label={`budget ${row.subject.budget.verdict}`} />
-          <Tag>{row.subject.budget.toolCount} tools</Tag>
+          <Tag>{plural(row.subject.budget.toolCount, "tool")}</Tag>
         </div>
       );
     case "workflow":
@@ -55,7 +55,7 @@ export function RowEvidence({ row }: { row: DecisionRow }) {
           ) : (
             <Tag>no measured delta</Tag>
           )}
-          <Tag>{row.evidence.length} claims</Tag>
+          <Tag>{plural(row.evidence.length, "claim")}</Tag>
         </div>
       );
     case "refinement":
@@ -70,8 +70,13 @@ export function RowEvidence({ row }: { row: DecisionRow }) {
     case "cluster":
       return (
         <div className="chips">
-          <Tag>{row.subject.evidence.reduce((n, e) => n + e.count, 0)} mis-routes</Tag>
-          <Tag>{row.subject.memberOperationIds.length} members</Tag>
+          <Tag>
+            {plural(
+              row.subject.evidence.reduce((n, e) => n + e.count, 0),
+              "mis-route",
+            )}
+          </Tag>
+          <Tag>{plural(row.subject.memberOperationIds.length, "member")}</Tag>
         </div>
       );
   }

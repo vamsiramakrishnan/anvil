@@ -77,10 +77,10 @@ describe("the Review", () => {
       expect(box.disabled, id).toBe(true);
     }
     expect((await rowFor("sendReceipt")).textContent).toMatch(
-      /not bulk-selectable: non-idempotent/,
+      /non-idempotent mutation — review individually/,
     );
     expect((await rowFor("deletePaymentMethod")).textContent).toMatch(/destructive/);
-    expect((await button(/approve 2 selected/)).disabled).toBe(false);
+    expect((await button(/approve 2 selected$/)).disabled).toBe(false);
   });
 
   it("bulk approval issues one operations call, re-fetches, and reports per row", async () => {
@@ -113,7 +113,7 @@ describe("the Review", () => {
     await waitFor(() =>
       expect(screen.queryByLabelText("select rf_describe_sendReceipt")).toBeNull(),
     );
-    expect(screen.getByText(/1 receipts/)).toBeTruthy();
+    expect(screen.getByText(/1 receipt\b/)).toBeTruthy();
   });
 
   it("applying a reviewed pack writes AIR only and tells the reviewer to recompile", async () => {

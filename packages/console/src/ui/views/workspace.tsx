@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { ConsoleResponse } from "../../contract.js";
 import { ErrorBox, Tag } from "../components.js";
 import type { Loaded } from "../hooks.js";
-import { href } from "../model.js";
+import { href, plural } from "../model.js";
 import { Loading, PageHeader } from "../workbench-components.js";
 
 type Bundle = ConsoleResponse<"workspace">["bundles"][number];
@@ -257,8 +257,12 @@ export function WorkspaceView({ loaded }: { loaded: Loaded<ConsoleResponse<"work
                         {bundle.id}
                       </div>
                       <div className="bundle-meta">
-                        {bundle.counts.capabilities.proposed ?? 0} proposed capabilities ·{" "}
-                        {bundle.packs} packs
+                        {plural(
+                          bundle.counts.capabilities.proposed ?? 0,
+                          "proposed capability",
+                          "proposed capabilities",
+                        )}{" "}
+                        · {plural(bundle.packs, "pack")}
                       </div>
                     </td>
                     <td>

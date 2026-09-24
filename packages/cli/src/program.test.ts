@@ -100,8 +100,26 @@ describe("root help", () => {
     // 55 -> 56 when `anvil fuzz` landed (one command, one line).
     // 56 -> 57 when `anvil schema` landed (one command, one line).
     // 57 -> 58 when `anvil rollback` landed (one command, one line).
-    expect(text.split("\n").length).toBeLessThan(58);
+    // 58 -> 72 when the commands were grouped and the help gained a quick start.
+    expect(text.split("\n").length).toBeLessThan(72);
     expect(text).not.toContain("--manifest");
+  });
+
+  it("includes help groups and quick start", async () => {
+    const { code, io } = await anvil("--help");
+    expect(code).toBe(0);
+    const text = io.text();
+
+    // Check for help group headings
+    for (const group of ["Start:", "Review:", "Build:", "Verify:", "Ship and operate:"]) {
+      expect(text).toContain(`\n${group}\n`);
+    }
+
+    // Check for quick start section
+    expect(text).toContain("Quick start:");
+    expect(text).toContain("anvil agentify examples/payments/openapi.yaml --out ./payments");
+    expect(text).toContain("anvil inspect ./payments");
+    expect(text).toContain("anvil console ./payments");
   });
 
   it("no args prints root help on stdout and exits 0", async () => {
@@ -224,6 +242,14 @@ describe("embedding contract", () => {
     const io = bufferIO();
     expect(await runAnvilCli(["lint", "/nope/definitely/missing"], { io })).toBe(1);
     expect(io.stderr.join("\n")).toContain("anvil:");
+  });
+
+  it("names a missing path instead of printing Node's errno text", async () => {
+    const io = bufferIO();
+    expect(await runAnvilCli(["inspect", "/nonexistent"], { io })).toBe(1);
+    const stderr = io.stderr.join("\n");
+    expect(stderr).toBe("anvil: no such file or directory: /nonexistent");
+    expect(stderr).not.toContain("ENOENT");
   });
 
   it("createAnvilProgram exposes the tree for embedding and reflection", () => {

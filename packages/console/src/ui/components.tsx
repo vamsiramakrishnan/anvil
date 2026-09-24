@@ -16,6 +16,12 @@ export function Label({ children }: { children: ReactNode }) {
   return <span className="label">{children}</span>;
 }
 
+/** Render text with backticks converted to inline code tags. */
+export function TextWithCode({ children }: { children: string }) {
+  const parts = children.split(/`([^`]+)`/);
+  return <>{parts.map((part, i) => (i % 2 === 0 ? part : <code key={part}>{part}</code>))}</>;
+}
+
 /** A designed empty state: what is missing and the `anvil` command that produces it. */
 export function Empty({
   title,
@@ -125,37 +131,25 @@ export function Claims({ claims }: { claims: DecisionItem["evidence"] }) {
     );
   }
   return (
-    <div className="table-wrap claims">
-      <table>
-        <thead>
-          <tr>
-            <th>predicate</th>
-            <th>value</th>
-            <th>source</th>
-            <th>conf.</th>
-            <th>note</th>
-          </tr>
-        </thead>
-        <tbody>
-          {claims.map((claim, index) => (
-            <tr key={claim.id ?? `${claim.predicate}:${index}`}>
-              <td>
-                <code>{claim.predicate}</code>
-              </td>
-              <td>
-                <code>{show(claim.value)}</code>
-              </td>
-              <td>
-                <Tag>{claim.source}</Tag>
-                {claim.sourceRef ? <div className="row-id">{claim.sourceRef}</div> : null}
-              </td>
-              <td className="mono">{claim.confidence.toFixed(2)}</td>
-              <td>{claim.note ?? ""}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <ul className="claims">
+      {claims.map((claim, index) => (
+        <li key={claim.id ?? `${claim.predicate}:${index}`}>
+          <div className="claim-head">
+            <code>{claim.predicate}</code>
+            <span aria-hidden="true">=</span>
+            <code className="claim-value">{show(claim.value)}</code>
+            <span className="claim-confidence" title="confidence">
+              {claim.confidence.toFixed(2)}
+            </span>
+          </div>
+          <div className="claim-source">
+            <Tag>{claim.source}</Tag>
+            {claim.sourceRef ? <code>{claim.sourceRef}</code> : null}
+          </div>
+          {claim.note ? <p>{claim.note}</p> : null}
+        </li>
+      ))}
+    </ul>
   );
 }
 
