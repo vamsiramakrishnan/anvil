@@ -202,6 +202,9 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
     // (buildFleetServer). Same direction generators already points (cli ->
     // generators -> mcp-runtime); no cycle.
     "mcp-runtime",
+    // `anvil simulate serve` serves the simulator over HTTP. Same direction
+    // certification already points (cli -> certification -> simulator).
+    "simulator",
   ],
 };
 

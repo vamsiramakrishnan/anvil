@@ -1223,7 +1223,7 @@ Options:
 - `--catalog <mode>` — which catalog(s) to route over: flat (default, today's behavior), laddered (stage over @anvil/air's disclosure ladder), or both (adds a flat-vs-laddered comparison)
 
 ### `anvil simulate`  *(mutates)*
-`anvil simulate [options] <dir>`
+`anvil simulate [options] [command] <dir>`
 
 Drive the full safety matrix through the simulator and report coverage.
 
@@ -1232,6 +1232,25 @@ Mechanistic coverage for a bundle's approved surface. Enumerates the matrix (eac
 Options:
 - `--seed <n>` — deterministic simulator seed
 - `--json` — emit the full report as JSON
+
+#### `anvil simulate serve`
+`anvil simulate serve [options]`
+
+Serve the simulator over HTTP at the contract's paths, optionally provider-backed.
+
+Serves a bundle's approved operations over HTTP at their declared paths and methods, so a generated SDK (base_url) or the generated MCP server (ANVIL_BASE_URL) can target the simulator. Anvil keeps the surface: auth scopes, required idempotency and replay, injected faults (X-Anvil-Fault), page envelopes, and the contract's error statuses. With --provider-cmd, state and query semantics come from a child process speaking JSON-RPC 2.0 over stdio (see docs/simulator-state-providers.md); without it, the built-in seeded store serves. Prints the bound URL on stdout's first line. With --trace, appends one JSON line per call.
+
+Options:
+- `--contract <path>` — generated bundle directory (or its air.yaml)
+- `--provider-cmd <command>` — shell command that starts a stdio JSON-RPC state provider
+- `--provider-timeout <ms>` — per-request provider deadline in milliseconds
+- `--host <host>` — interface to bind
+- `--port <port>` — port to bind; 0 picks a free one
+- `--seed <n>` — deterministic simulator seed
+- `--capability <id>` — serve one discovered capability instead of the whole service
+- `--principal <id>` — simulated principal for requests that name none (default: one holding every scope)
+- `--page-size <n>` — page size when the contract lets Anvil derive none
+- `--trace <file>` — append a JSONL call trace to this file
 
 ### `anvil disclosure`
 `anvil disclosure [options] <dir>`

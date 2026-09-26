@@ -133,6 +133,9 @@ importers:
       '@anvil/runtime':
         specifier: workspace:*
         version: link:../runtime
+      '@anvil/simulator':
+        specifier: workspace:*
+        version: link:../simulator
       '@anvil/system-pack':
         specifier: workspace:*
         version: link:../system-pack
