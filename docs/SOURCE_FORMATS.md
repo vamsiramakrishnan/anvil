@@ -195,7 +195,7 @@ the profile named. The profile rows compile 20 to 60 operations.
 | Confluence v2, 0.6MB JSON (218) | 3.3s, 430MB | 33 operations: 2.0s, 297MB | not measured |
 | Slack Web API, Swagger 2.0, 1.2MB JSON (174) | 3.5s, 417MB | 29 operations: 2.0s, 282MB | not measured |
 | Google Drive v3 Discovery, 0.3MB JSON (64) | 2.4s, 353MB | 28 operations: 2.3s, 325MB | not measured |
-| Microsoft Graph v1.0, 44MB YAML (17,870) | failed after 325s at 8.0GB (file name too long) | 46 operations: 8.1s, 730MB | 129s, 9.0GB, with `max_ref_depth: 1` and `max_schema_nodes: 1000` |
+| Microsoft Graph v1.0, 44MB YAML (17,870) | failed after 325s at 8.0GB (file name too long) | 46 operations: 12s, 1.6GB | 129s, 9.0GB, with `max_ref_depth: 1` and `max_schema_nodes: 1000` |
 
 Parsing alone, on the same machine: the Jira JSON took 1.6s with the `yaml`
 document parser and 0.02s with `JSON.parse`; the Graph YAML took 22s and

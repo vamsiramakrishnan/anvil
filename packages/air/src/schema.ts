@@ -1445,7 +1445,6 @@ export const PathGrammar = z.object({
 });
 export type PathGrammar = z.infer<typeof PathGrammar>;
 
-
 export const Service = z.object({
   id: ServiceId,
   version: z.string(),
