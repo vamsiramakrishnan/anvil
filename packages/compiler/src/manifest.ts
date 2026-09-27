@@ -20,6 +20,12 @@ import { analyzeTemplate, lexicalFamily } from "@anvil/grammar";
 import { z } from "zod";
 import { decideAuthorizationCodeApproval, manifestReviewAnnotation } from "./auth-approval.js";
 import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
+import {
+  applyPaginationPatch,
+  applyParamsPatch,
+  ManifestPagination,
+  ManifestParams,
+} from "./manifest-inputs.js";
 import { projectRoutingNames, singularize } from "./naming.js";
 import { analyzeSqlTemplate, supportedSqlDialects } from "./sql-grammar.js";
 
@@ -411,45 +417,10 @@ export const OperationManifest = z.strictObject({
    * (see `applyOperationManifest`).
    */
   async_contract: ManifestAsyncContract.optional(),
-  /**
-   * Declare how a paginated read is paged, when the spec did not make it
-   * inferable (`classifyPagination`) and the refinement loop has not proposed
-   * it. Style is required; the parameter names are validated against the
-   * operation's real inputs, because a pagination contract bound to a phantom
-   * parameter would teach every surface to pass an argument the wire ignores.
-   */
-  pagination: z
-    .strictObject({
-      style: z.enum(["cursor", "page", "offset", "link"]),
-      cursor_param: z.string().optional(),
-      next_field: z.string().optional(),
-      items_field: z.string().optional(),
-      /** Where a page-numbered response reports `{page, count, pages, total}` (Slack's `messages.paging`). */
-      paging_field: z.string().optional(),
-      page_size_param: z.string().optional(),
-      max_page_size: z.number().int().positive().optional(),
-      default_page_size: z.number().int().positive().optional(),
-    })
-    .optional(),
-  /**
-   * Retype an input the source types wrongly, by its wire name: a query,
-   * path, header, or cookie parameter, or a top-level body field. Slack's
-   * contract types a message timestamp (`chat.delete`'s `ts`,
-   * `"1700000000.123400"`) as a number, so it would travel as a float and
-   * lose its trailing zeros; the timestamp is an id and must be carried as
-   * the string it is. The new type replaces the old one with its
-   * type-specific constraints; descriptions are kept.
-   */
-  params: z
-    .record(
-      z.string(),
-      z.strictObject({
-        type: z.enum(["string", "number", "integer", "boolean"]),
-        format: z.string().optional(),
-        pattern: z.string().optional(),
-      }),
-    )
-    .optional(),
+  /** How a paginated read is paged; see `ManifestPagination`. */
+  pagination: ManifestPagination.optional(),
+  /** Retype inputs the source types wrongly, by wire name; see `ManifestParams`. */
+  params: ManifestParams.optional(),
   /**
    * Resize a subscription's observation window. Only the ceilings are
    * manifest-writable: the transport, the delivery semantics, and the
@@ -1138,68 +1109,8 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
     }
   }
 
-  // Pagination is a fact about how a READ hands back a large result. On a
-  // mutation it is meaningless, and a carrier parameter that names no real
-  // input would teach every surface to pass an argument the wire ignores —
-  // both decline with the reason, in the async_contract pattern, rather than
-  // half-applying.
-  if (m.pagination) {
-    const inputNames = new Set(op.input.params.map((p) => p.name));
-    const phantom = [m.pagination.cursor_param, m.pagination.page_size_param].filter(
-      (name): name is string => name !== undefined && !inputNames.has(name),
-    );
-    if (op.effect.kind !== "read") {
-      const note =
-        "pagination manifest patch left unset: the operation is a mutation, and pagination " +
-        "is a contract about how a read hands back a large result.";
-      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
-    } else if (phantom.length > 0) {
-      const note =
-        `pagination manifest patch left unset: parameter(s) ${phantom.map((n) => `'${n}'`).join(", ")} ` +
-        `do not exist on this operation, and a pagination contract bound to a phantom parameter ` +
-        `would teach every surface to pass an argument the wire ignores.`;
-      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
-    } else {
-      op.pagination = {
-        style: m.pagination.style,
-        ...(m.pagination.cursor_param !== undefined
-          ? { cursorParam: m.pagination.cursor_param }
-          : {}),
-        ...(m.pagination.next_field !== undefined ? { nextField: m.pagination.next_field } : {}),
-        ...(m.pagination.items_field !== undefined ? { itemsField: m.pagination.items_field } : {}),
-        ...(m.pagination.paging_field !== undefined
-          ? { pagingField: m.pagination.paging_field }
-          : {}),
-        ...(m.pagination.page_size_param !== undefined
-          ? { pageSizeParam: m.pagination.page_size_param }
-          : {}),
-        ...(m.pagination.max_page_size !== undefined
-          ? { maxPageSize: m.pagination.max_page_size }
-          : {}),
-        ...(m.pagination.default_page_size !== undefined
-          ? { defaultPageSize: m.pagination.default_page_size }
-          : {}),
-      };
-      const note =
-        `Pagination declared by manifest: ${m.pagination.style}` +
-        (m.pagination.cursor_param ? ` via '${m.pagination.cursor_param}'` : "") +
-        ".";
-      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
-    }
-  }
-
-  // Retype inputs by wire name. A name that matches nothing declines with the
-  // reason rather than inventing an input the wire never carries.
-  if (m.params) {
-    for (const [name, retype] of Object.entries(m.params)) {
-      const retyped = retypeInput(op, name, retype);
-      const note = retyped
-        ? `Input '${name}' retyped by manifest: ${retyped} → ${retype.type}.`
-        : `params manifest patch for '${name}' left unset: the operation has no parameter ` +
-          "or top-level body field of that name.";
-      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
-    }
-  }
+  if (m.pagination) applyPaginationPatch(op, m.pagination);
+  if (m.params) applyParamsPatch(op, m.params);
 
   // Resize the observation window of an operation that already streams. The
   // window's existence is what makes a subscription a call, and the compiler
@@ -1626,70 +1537,3 @@ const titleCase = (s: string): string =>
     .filter(Boolean)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
-
-/** Keywords that describe a value without constraining its type; they survive a retype. */
-const TYPE_NEUTRAL_KEYWORDS = new Set([
-  "title",
-  "description",
-  "deprecated",
-  "nullable",
-  "readOnly",
-  "writeOnly",
-]);
-
-function retypedSchema(
-  schema: Record<string, unknown>,
-  retype: { type: string; format?: string; pattern?: string },
-): Record<string, unknown> {
-  const kept = Object.fromEntries(
-    Object.entries(schema).filter(
-      ([key]) => TYPE_NEUTRAL_KEYWORDS.has(key) || key.startsWith("x-"),
-    ),
-  );
-  return {
-    ...kept,
-    type: retype.type,
-    ...(retype.format !== undefined ? { format: retype.format } : {}),
-    ...(retype.pattern !== undefined ? { pattern: retype.pattern } : {}),
-  };
-}
-
-/**
- * Retype every input named `name`: parameters in any location, a projected
- * body field, and the body schema's property. Returns the type it had (or
- * `untyped`), or `undefined` when nothing carries that name.
- */
-function retypeInput(
-  op: Operation,
-  name: string,
-  retype: { type: string; format?: string; pattern?: string },
-): string | undefined {
-  let previous: string | undefined;
-  const typeOf = (schema: Record<string, unknown> | undefined) =>
-    typeof schema?.type === "string" ? schema.type : "untyped";
-  for (const param of op.input.params) {
-    if (param.name !== name) continue;
-    previous ??= typeOf(param.schema);
-    param.schema = retypedSchema(param.schema ?? {}, retype);
-  }
-  const body = op.input.body;
-  if (body) {
-    for (const field of body.fields) {
-      if (field.name !== name) continue;
-      previous ??= typeOf(field.schema);
-      field.schema = retypedSchema(field.schema ?? {}, retype);
-    }
-    const props = body.schema.properties;
-    if (props && typeof props === "object" && !Array.isArray(props)) {
-      const prop = (props as Record<string, unknown>)[name];
-      if (prop && typeof prop === "object" && !Array.isArray(prop)) {
-        previous ??= typeOf(prop as Record<string, unknown>);
-        (props as Record<string, unknown>)[name] = retypedSchema(
-          prop as Record<string, unknown>,
-          retype,
-        );
-      }
-    }
-  }
-  return previous;
-}
