@@ -39,6 +39,8 @@ executed. Parsing and lowering can succeed while the wire path remains blocked.
   hooks, custom ledger and credential backends, trace exporters, and metrics
   on every serving surface.
 - [Wire protocols](wire-protocols.md): what executes and what is refused.
+- [Simulator state providers](simulator-state-providers.md): serve the
+  simulator over HTTP from your own data, and read back a call trace.
 - [Review console](console.md): inspect pending decisions in the workspace.
 - [Fleet operations](fleet.md): manage repeated work across integrations.
 - [Legacy SDK](legacy-sdk.md): programmatic legacy inventory and review.

@@ -36,6 +36,7 @@
     "fflate": "^0.8.3",
     "gpt-tokenizer": "^3.4.0",
     "graphql": "^17.0.2",
+    "js-yaml": "^4.3.0",
     "node-sql-parser": "^5.4.0",
     "protobufjs": "^8.7.0",
     "swagger2openapi": "^7.0.8",
@@ -43,6 +44,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
     "@types/swagger2openapi": "^7.0.4",
     "fast-check": "^4.9.0",
     "tsup": "^8.5.0",

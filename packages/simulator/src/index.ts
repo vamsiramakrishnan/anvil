@@ -10,9 +10,13 @@
 import type { SurfaceSignature } from "@anvil/compiler";
 
 export * from "./define.js";
+export * from "./http.js";
 export * from "./model.js";
+export * from "./provider.js";
 export { Rng } from "./rng.js";
 export * from "./runtime.js";
+export * from "./stdio-provider.js";
+export * from "./trace.js";
 
 /**
  * The hard invariant, as an assertion: a simulator surface and a production/MCP

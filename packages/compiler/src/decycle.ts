@@ -1,4 +1,3 @@
-import { collapseExpandable, compactLeafSchema } from "./schema-leaf.js";
 /**
  * Turn a fully `$ref`-dereferenced OpenAPI document into one that is both
  * JSON-safe and bounded in size, without losing real structure. This is a
@@ -31,6 +30,8 @@ import { collapseExpandable, compactLeafSchema } from "./schema-leaf.js";
  *    whole spec's schema graph) only happens once, in phase 1; phase 2 runs
  *    per operation over an already-small, already-deduped input.
  */
+import { flattenInheritance, withoutDiscriminatorMapping } from "./schema-inherit.js";
+import { collapseExpandable, compactLeafSchema } from "./schema-leaf.js";
 import { SCHEMA_MAP_KEYS, truncateToStub } from "./schema-stub.js";
 
 export interface BundleResult<T> {
@@ -743,6 +744,20 @@ interface Budget {
   max: number;
   /** True once the budget is exhausted — further structure truncates to stubs. */
   spent: boolean;
+  /** See `MaterializeOptions.inheritAllOf`. */
+  inheritAllOf: boolean;
+}
+
+export interface MaterializeOptions {
+  /**
+   * Resolve a `$ref` that is a direct member of an `allOf` without spending a
+   * ref hop. `allOf: [{$ref: Base}, {...}]` is inheritance: the base's fields
+   * are the schema's own fields, not a nested object. Microsoft Graph models
+   * every entity this way (`user` extends `directoryObject` extends `entity`),
+   * so under the one-hop default an entity's inherited fields, `id` among
+   * them, were cut to a stub. The ancestor guard still stops a cycle.
+   */
+  inheritAllOf?: boolean;
 }
 
 /**
@@ -760,6 +775,7 @@ export function materializeSchema(
   namedSchemas: Record<string, unknown>,
   maxRefDepth = DEFAULT_MAX_REF_DEPTH,
   maxNodes = DEFAULT_MAX_SCHEMA_NODES,
+  options: MaterializeOptions = {},
 ): MaterializeResult {
   const refDepthLimitedAt: string[] = [];
   const nodeBudgetLimitedAt: string[] = [];
@@ -773,7 +789,8 @@ export function materializeSchema(
   // was enough to produce a 400MB+ document even though `bundleDocument`
   // (the whole-spec pass) had already deduplicated everything once.
   const resolved = new Map<string, { refDepth: number; value: unknown }>();
-  const budget: Budget = { count: 0, max: maxNodes, spent: false };
+  const inheritAllOf = options.inheritAllOf === true;
+  const budget: Budget = { count: 0, max: maxNodes, spent: false, inheritAllOf };
   const result = resolveRefs(
     schema,
     namedSchemas,
@@ -819,11 +836,16 @@ function resolveRefs(
   if (isRef(node)) {
     const name = refName(node);
     if (name === undefined || !(name in namedSchemas)) return node; // unresolvable — leave as-is, never silently drop
+    const inherited = budget.inheritAllOf && /\.allOf\[\d+\]$/.test(path);
+    // The memo is keyed by the depth the body expands at, less one: an
+    // inherited base expands at the ref's own depth, a nested ref one deeper.
+    const memoDepth = inherited ? refDepth - 1 : refDepth;
     const cached = resolved.get(name);
-    if (cached !== undefined && cached.refDepth <= refDepth) return cached.value;
+    if (cached !== undefined && cached.refDepth <= memoDepth) return cached.value;
     if (
       ancestors.has(name) ||
       (refDepth >= maxRefDepth &&
+        !inherited &&
         !(/\.oneOf\[\d+\]$/.test(path) && compactLeafSchema(namedSchemas[name])))
     ) {
       refDepthLimitedAt.push(path);
@@ -841,7 +863,7 @@ function resolveRefs(
       namedSchemas[name],
       namedSchemas,
       nextAncestors,
-      refDepth + 1,
+      inherited ? refDepth : refDepth + 1,
       maxRefDepth,
       `${path}(${name})`,
       refDepthLimitedAt,
@@ -849,10 +871,13 @@ function resolveRefs(
       resolved,
       budget,
     );
+    // An inherited base's discriminator mapping lists the base's subtypes
+    // (Graph's `entity` names every entity type, about 1.4MB): not our shape.
+    const shaped = inherited ? withoutDiscriminatorMapping(value) : value;
     // Only memoize a fully-expanded value: one truncated by an exhausted budget
     // is not the type's real body and must not be served to another reference.
-    if (!budget.spent) resolved.set(name, { refDepth, value });
-    return value;
+    if (!budget.spent) resolved.set(name, { refDepth: memoDepth, value: shaped });
+    return shaped;
   }
 
   if (Array.isArray(node)) {
@@ -886,6 +911,9 @@ function resolveRefs(
       budget,
       !inSchemaMap && SCHEMA_MAP_KEYS.has(k),
     );
+  }
+  if (budget.inheritAllOf && !inSchemaMap && Array.isArray(obj.allOf)) {
+    return flattenInheritance(obj) ?? obj;
   }
   return obj;
 }

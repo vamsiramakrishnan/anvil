@@ -17,6 +17,7 @@ import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
+import { registerSimulateServe } from "./simulate-serve.js";
 
 /**
  * `anvil simulate <dir>` — the mechanistic coverage lane. It generates the full
@@ -31,9 +32,12 @@ import { annotate } from "./meta.js";
  * Exit 0 only when every cell holds and every applicable safety mutant is killed.
  */
 export function registerSimulate(parent: Command, ctx: CommandContext): void {
-  annotate(
+  const simulate = annotate(
     parent
       .command("simulate")
+      // `simulate serve` has its own --seed; without positional options the
+      // parent would consume it before the subcommand saw it.
+      .enablePositionalOptions()
       .summary("Drive the full safety matrix through the simulator and report coverage.")
       .description(
         "Mechanistic coverage for a bundle's approved surface. Enumerates the matrix (each operation × the dimensions that apply: auth scope gating, confirmation refusal, required-idempotency + replay, injected faults, pagination, and disclosure cost against the agent's context budget) and drives every cell through the deterministic simulator, checking each against an independent contract expectation. Then runs the mutation battery — deliberately weakening each safety control, booting the weakened surface, and requiring a static or executable check to fail against it (a mutant that only moves the surface digest is reported as a survivor, naming why). Reports per-dimension coverage and, per mutant, the check that killed it. Deterministic: same seed + contract → same cells. Writes simulation.report.json. Exit 0 only when every cell holds and every applicable safety mutant is killed.",
@@ -46,6 +50,7 @@ export function registerSimulate(parent: Command, ctx: CommandContext): void {
       }),
     { mutates: true },
   );
+  registerSimulateServe(simulate, ctx);
 }
 
 export interface SimulateOptions {

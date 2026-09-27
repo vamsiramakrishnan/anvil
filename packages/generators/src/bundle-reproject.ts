@@ -144,6 +144,7 @@ export function prepareOperationApproval(
   const air = loadAir(path);
   const requested = [...new Set(ids)];
   validateApprovals(air.operations, requested);
+  assertInsideExposureProfile(air, requested);
   const priorState = new Map(air.operations.map((op) => [op.id, op.state]));
   const pendingApproval = requested.filter((id) => priorState.get(id) !== "approved");
   if (pendingApproval.length > 0) {
@@ -561,6 +562,50 @@ function validateApprovals(
       `Blocked operation(s) cannot be approved: ${blocked.join(", ")}. Resolve their blocking diagnostics and recompile first.`,
     );
   }
+}
+
+/**
+ * An AIR compiled under an exposure profile exposes only the profile's
+ * operations; one compiled with `unexposed: compile` still carries the rest,
+ * and approving one of those would widen the surface past what was reviewed.
+ */
+function assertInsideExposureProfile(air: AirDocument, requested: readonly string[]): void {
+  const profile = air.service.source.profile;
+  if (!profile) return;
+  const exposed = new Set(profile.exposedOperations);
+  const outside = requested.filter((id) => !exposed.has(id));
+  if (outside.length > 0) {
+    throw new Error(
+      `Operation(s) outside exposure profile '${profile.id}' cannot be approved: ${outside.join(", ")}. Add them to the profile's selection and recompile first.`,
+    );
+  }
+}
+
+/**
+ * The operations a bulk profile approval covers: every exposed operation not
+ * yet approved and not blocked. Blocked ones are returned separately so the
+ * caller can name them instead of silently skipping them.
+ */
+export function profileApprovalCandidates(air: AirDocument): {
+  profileId: string;
+  digest: string;
+  pending: string[];
+  blocked: string[];
+} {
+  const profile = air.service.source.profile;
+  if (!profile) {
+    throw new Error(
+      "This bundle was not compiled under an exposure profile; pass operation ids, or recompile with `anvil compile --profile`.",
+    );
+  }
+  const exposed = new Set(profile.exposedOperations);
+  const pending: string[] = [];
+  const blocked: string[] = [];
+  for (const op of air.operations) {
+    if (!exposed.has(op.id) || op.state === "approved") continue;
+    (op.state === "blocked" ? blocked : pending).push(op.id);
+  }
+  return { profileId: profile.id, digest: profile.digest, pending, blocked };
 }
 
 /** Preserve the resource-generation inputs encoded in the existing bundle. */

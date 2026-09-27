@@ -19,8 +19,25 @@ import {
   safePageSize,
 } from "@anvil/air";
 import { materializeSchema, type SurfaceSignature, surfaceSignatureFor } from "@anvil/compiler";
-import type { SimulatorDefinition } from "./model.js";
+import { exposureFilter } from "./define.js";
+import type { SimulatedPrincipal, SimulatorDefinition } from "./model.js";
+import {
+  askProvider,
+  initializeParams,
+  mapDomainError,
+  missingRequired,
+  normalizeRequest,
+  operationKind,
+  type ProviderInitializeParams,
+  type ProviderRequest,
+  type ProviderResponse,
+  type StateProvider,
+  servesItems,
+  type WireError,
+} from "./provider.js";
 import { Rng } from "./rng.js";
+import { isRecord, nonEmpty, synthesizeBody } from "./synthesize.js";
+import { TRACE_SCHEMA, type TraceSink, writeTrace } from "./trace.js";
 
 export interface InvokeContext {
   principalId?: string;
@@ -37,7 +54,15 @@ export interface InvokeContext {
   cursor?: string;
 }
 
-export type SimError = { code: ErrorCode; message: string };
+export type SimError = {
+  code: ErrorCode;
+  message: string;
+  /**
+   * The contract's wire form of this error, when a state provider raised it.
+   * Absent on the built-in store's errors, whose shape predates the seam.
+   */
+  wire?: WireError;
+};
 
 export type SimResult =
   | { ok: true; output: unknown; replayed?: boolean; nextCursor?: string }
@@ -45,6 +70,29 @@ export type SimResult =
 
 interface Entity {
   [k: string]: unknown;
+}
+
+/** How a simulator is backed and observed. Every field is optional; none changes the default store. */
+export interface SimulatorOptions {
+  /** An external owner of state and queries; absent means the built-in store. */
+  provider?: StateProvider;
+  /** Receives one entry per `invokeAsync` call (the HTTP server writes its own). */
+  trace?: TraceSink;
+  /**
+   * The page size a provider is asked for when the contract lets AIR derive
+   * none. Without it, the built-in fixture fallback applies.
+   */
+  defaultPageSize?: number;
+}
+
+/** The full record of one call, as `call` returns it. */
+export interface SimCall {
+  seq: number;
+  requestId: string;
+  operation: Operation | undefined;
+  normalized: ProviderRequest | null;
+  provider: ProviderResponse | { transportError: string } | null;
+  result: SimResult;
 }
 
 /**
@@ -93,11 +141,6 @@ const FALLBACK_PAGE_SIZE = 2;
  * contracts are in exactly that state, and their numbers must not move.
  */
 
-/** Whether `read` serves this operation as a page of items. */
-function servesItems(op: Operation): boolean {
-  return op.effect.action === "list" || op.pagination !== undefined;
-}
-
 /**
  * The declared shape of ONE item in an operation's response, `$ref`-free and
  * bounded, or `undefined` when the contract says nothing usable.
@@ -111,14 +154,23 @@ function servesItems(op: Operation): boolean {
  * of Anvil agrees exists.
  */
 export function declaredItemSchema(air: AirDocument, op: Operation): JsonSchema | undefined {
-  const declared = declaredResponseSchema(air, op);
-  if (!declared) return undefined;
-  const { schema } = materializeSchema(declared, air.schemas);
-  if (!isRecord(schema)) return undefined;
+  const schema = declaredResponse(air, op);
+  if (!schema) return undefined;
   // A paginated read's declared schema describes the *envelope*; `read` builds
   // the envelope itself, so what it needs is the element type inside it. A
   // single-entity read or a mutation declares the item directly.
   return nonEmpty(servesItems(op) ? unwrapItems(schema, op) : schema);
+}
+
+/**
+ * An operation's whole declared response schema, `$ref`-free and bounded. The
+ * HTTP serving layer reads the page envelope's field names out of it.
+ */
+export function declaredResponse(air: AirDocument, op: Operation): JsonSchema | undefined {
+  const declared = declaredResponseSchema(air, op);
+  if (!declared) return undefined;
+  const { schema } = materializeSchema(declared, air.schemas);
+  return isRecord(schema) ? nonEmpty(schema) : undefined;
 }
 
 /** An operation's declared response schema: inline if present, else by named ref. */
@@ -160,214 +212,6 @@ function unwrapItems(schema: JsonSchema, op: Operation): JsonSchema | undefined 
     if (isRecord(candidate.items)) return candidate.items as JsonSchema;
   }
   return undefined;
-}
-
-/**
- * How deep a synthesized body follows a declared schema. `materializeSchema`
- * has already removed `$ref` cycles, so this is not a termination guard — it is
- * a statement that a body nested past this point contributes structure no agent
- * reads, and following it further would inflate a cost figure with depth the
- * caller never sees.
- */
-const MAX_BODY_DEPTH = 8;
-
-/** Default synthesized string length when the schema constrains neither end. */
-const DEFAULT_STRING_LENGTH = 8;
-
-/**
- * The most items a synthesized array carries. `minItems` is a declared fact and
- * is honoured up to this bound; the bound itself is a limit on the *instrument*
- * (a pathological declaration must not make synthesis unbounded), never a claim
- * about the payload — which is why it is not consulted unless the contract
- * asked for more than it.
- */
-const MAX_ARRAY_ITEMS = 10;
-
-/** Fixed values for the formats whose shape, not whose entropy, is the point. */
-const FORMAT_VALUES: Record<string, string> = {
-  date: "2026-01-01",
-  "date-time": "2026-01-01T00:00:00Z",
-  time: "00:00:00Z",
-  email: "user@example.com",
-  uri: "https://example.com/resource",
-  url: "https://example.com/resource",
-  hostname: "api.example.com",
-  ipv4: "192.0.2.1",
-  ipv6: "2001:db8::1",
-};
-
-/** Schema keys that annotate without constraining — a schema of only these is a stub. */
-const ANNOTATION_KEYS = new Set([
-  "description",
-  "title",
-  "deprecated",
-  "readOnly",
-  "writeOnly",
-  "nullable",
-  "default",
-  "$comment",
-  "externalDocs",
-  "xml",
-]);
-
-/**
- * A body for one entity, drawn from a declared item schema under a seeded `Rng`.
- *
- * Returns `undefined` for anything that is not a JSON object: the store is
- * object-keyed, and a resource whose declared representation is a scalar or an
- * array keeps its historical body rather than being served a shape the state
- * machine cannot carry.
- */
-function synthesizeBody(schema: JsonSchema, rng: Rng): Record<string, unknown> | undefined {
-  const value = synthesize(schema, rng, 0);
-  return isRecord(value) ? value : undefined;
-}
-
-/**
- * One value for one declared schema node.
- *
- * Declared values beat synthesized ones in every case the contract states one
- * (`const`, `example`, `examples`, `enum`): they are the most faithful answer
- * available, and they cost what the contract says they cost. Everything else is
- * seeded from the `Rng`, so the whole walk stays a pure function of (contract,
- * seed) — the property that lets a measured figure be re-derived instead of
- * merely believed.
- */
-function synthesize(schema: JsonSchema, rng: Rng, depth: number): unknown {
-  if (schema.const !== undefined) return schema.const;
-  if (schema.example !== undefined && schema.example !== null) return schema.example;
-  if (Array.isArray(schema.examples)) {
-    const first = schema.examples.find((e) => e !== null && e !== undefined);
-    if (first !== undefined) return first;
-  }
-  if (Array.isArray(schema.enum)) {
-    const values = schema.enum.filter((v) => v !== null && v !== undefined);
-    const picked = values[rng.int(values.length)];
-    if (picked !== undefined) return picked;
-  }
-  if (depth >= MAX_BODY_DEPTH) return schema.type === "array" ? [] : {};
-
-  // A materialized `allOf` composes one object out of several declarations —
-  // including truncation stubs that contribute nothing — so every member is
-  // synthesized and the object results merged, later members winning.
-  if (Array.isArray(schema.allOf) && schema.allOf.length > 0) {
-    const merged: Record<string, unknown> = {};
-    for (const member of schema.allOf) {
-      if (!isRecord(member)) continue;
-      const part = synthesize(member as JsonSchema, rng, depth + 1);
-      if (isRecord(part)) Object.assign(merged, part);
-    }
-    return merged;
-  }
-  // `oneOf`/`anyOf`: any branch satisfies the contract, so take the first
-  // declared one. A schema may carry both its own structure and alternatives
-  // that only refine it, so the branch merges onto the base rather than
-  // replacing it.
-  const alternatives = (
-    Array.isArray(schema.oneOf) ? schema.oneOf : Array.isArray(schema.anyOf) ? schema.anyOf : []
-  ).filter(isRecord) as JsonSchema[];
-  const branch = alternatives[0];
-  if (branch !== undefined) {
-    const value = synthesize(branch, rng, depth + 1);
-    if (schema.type === undefined && !isRecord(schema.properties)) return value;
-    const own = ownValue(schema, rng, depth);
-    return isRecord(own) && isRecord(value) ? { ...own, ...value } : (own ?? value);
-  }
-  return ownValue(schema, rng, depth);
-}
-
-/** Synthesize from a schema's own declared structure, with no compositors left. */
-function ownValue(schema: JsonSchema, rng: Rng, depth: number): unknown {
-  switch (schema.type) {
-    case "string":
-      return synthesizeString(schema, rng);
-    case "integer":
-      return synthesizeInteger(schema, rng);
-    case "number":
-      return synthesizeInteger(schema, rng) + Math.floor(rng.next() * 100) / 100;
-    case "boolean":
-      return rng.next() < 0.5;
-    case "array":
-      return synthesizeArray(schema, rng, depth);
-    case "object":
-      return synthesizeObject(schema, rng, depth);
-    default:
-      // An untyped schema that still declares `properties` (or a `required`
-      // list, which is an object constraint in all but name) is an object. A
-      // bare annotation stub is an object we know nothing about, so `{}`. A
-      // schema that declares neither is a field the contract admits exists
-      // without saying what it holds: `null` records that honestly, and costs
-      // what an unknown field costs.
-      if (isRecord(schema.properties) || Array.isArray(schema.required)) {
-        return synthesizeObject(schema, rng, depth);
-      }
-      if (Object.keys(schema).every((k) => ANNOTATION_KEYS.has(k))) return {};
-      return null;
-  }
-}
-
-function synthesizeString(schema: JsonSchema, rng: Rng): string {
-  const format = typeof schema.format === "string" ? schema.format : "";
-  const fixed = FORMAT_VALUES[format];
-  if (fixed !== undefined) return fixed;
-  if (format === "uuid") {
-    return `${rng.token(8)}-${rng.token(4)}-4${rng.token(3)}-a${rng.token(3)}-${rng.token(12)}`;
-  }
-  // Length is declared or it is not: a declared bound is a fact about the
-  // payload's size and is honoured in both directions, which is exactly how a
-  // contract that promises long strings comes to simulate as expensive.
-  const min = boundedInt(schema.minLength, 0);
-  const max = boundedInt(schema.maxLength, Number.POSITIVE_INFINITY);
-  return rng.token(Math.max(0, Math.max(min, Math.min(max, DEFAULT_STRING_LENGTH))));
-}
-
-function synthesizeInteger(schema: JsonSchema, rng: Rng): number {
-  const min = boundedInt(schema.minimum, 0);
-  const max = boundedInt(schema.maximum, Number.POSITIVE_INFINITY);
-  if (max === Number.POSITIVE_INFINITY) return min + rng.int(1000);
-  return min + rng.int(Math.max(1, Math.floor(max - min) + 1));
-}
-
-function synthesizeArray(schema: JsonSchema, rng: Rng, depth: number): unknown[] {
-  const items = isRecord(schema.items) ? (schema.items as JsonSchema) : undefined;
-  const min = boundedInt(schema.minItems, 1);
-  const max = boundedInt(schema.maxItems, Number.POSITIVE_INFINITY);
-  const count = Math.min(MAX_ARRAY_ITEMS, Math.max(0, Math.min(max, Math.max(1, min))));
-  if (!items) return new Array(count).fill(null);
-  return Array.from({ length: count }, () => synthesize(items, rng, depth + 1));
-}
-
-function synthesizeObject(schema: JsonSchema, rng: Rng, depth: number): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  const props = isRecord(schema.properties)
-    ? (schema.properties as Record<string, JsonSchema | undefined>)
-    : {};
-  // Declared order, not sorted: this is a payload as served, not a digest, and
-  // reordering keys would move a measured byte count for no reason.
-  for (const [name, prop] of Object.entries(props)) {
-    out[name] = isRecord(prop) ? synthesize(prop, rng, depth + 1) : null;
-  }
-  // A map/record schema (typed `additionalProperties`, no fixed properties)
-  // gets one representative entry, so the body exercises the map shape rather
-  // than the degenerate `{}` that would report a dictionary as free.
-  const extra = schema.additionalProperties;
-  if (Object.keys(out).length === 0 && isRecord(extra)) {
-    out.key = synthesize(extra as JsonSchema, rng, depth + 1);
-  }
-  return out;
-}
-
-function boundedInt(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/** A schema that declares nothing is not a schema, so callers treat it as absent. */
-function nonEmpty(schema: JsonSchema | undefined): JsonSchema | undefined {
-  return schema && Object.keys(schema).length > 0 ? schema : undefined;
 }
 
 /**
@@ -430,9 +274,13 @@ export class Simulator {
    */
   private readonly itemSchemas = new Map<string, JsonSchema | undefined>();
 
+  /** Keyed provider calls still in flight, so a concurrent repeat waits instead of re-running. */
+  private readonly inflight = new Map<string, Promise<SimResult>>();
+
   constructor(
     private readonly air: AirDocument,
     private readonly def: SimulatorDefinition,
+    private readonly options: SimulatorOptions = {},
   ) {
     // The simulator serves exactly one surface: the whole service, or one
     // discovered capability. An unknown capability id is a definition error —
@@ -445,7 +293,8 @@ export class Simulator {
       );
     }
     const memberIds = new Set(capability?.operationIds ?? []);
-    const inCapability = (op: Operation) => isService || memberIds.has(op.id);
+    const inProfile = exposureFilter(air);
+    const inCapability = (op: Operation) => (isService || memberIds.has(op.id)) && inProfile(op);
     this.ops = air.operations.filter((op) => op.state === "approved" && inCapability(op));
     this.rng = new Rng(def.seed);
     this.activeSeed = def.seed;
@@ -507,18 +356,53 @@ export class Simulator {
     }
   }
 
-  /** Invoke one operation by its public (MCP tool) name. */
+  /**
+   * Invoke one operation by its public (MCP tool) name, against the built-in
+   * seeded store. A simulator constructed with a `StateProvider` serves through
+   * `invokeAsync` instead, because a provider may answer asynchronously.
+   */
   invoke(
     toolName: string,
     input: Record<string, unknown> = {},
     ctx: InvokeContext = {},
   ): SimResult {
+    if (this.options.provider) {
+      throw new Error(
+        "This simulator is backed by a StateProvider; call invokeAsync (or call) instead of invoke.",
+      );
+    }
     this.callIndex += 1;
     const op = this.resolve(toolName);
+    const gate = this.admit(op, toolName, input, ctx);
+    if (gate.refused) return gate.refused;
+    const served = op as Operation;
+    const result =
+      served.effect.kind === "read" ? this.read(served, ctx) : this.mutate(served, input);
+    if (gate.keyed) this.replayLog.set(gate.fingerprint, result);
+    return result;
+  }
+
+  /**
+   * The surface gates every call passes before any state is touched: the tool
+   * exists, the principal holds its scopes, a gated mutation is confirmed, a
+   * required key is present (and a repeated one replays), and no injected fault
+   * fires. Shared by the built-in store and the provider path, so the two
+   * cannot drift on what a refusal looks like.
+   */
+  private admit(
+    op: Operation | undefined,
+    toolName: string,
+    input: Record<string, unknown>,
+    ctx: InvokeContext,
+  ):
+    | { refused: SimResult; keyed?: undefined }
+    | { refused?: undefined; keyed: boolean; fingerprint: string } {
     if (!op) {
       return {
-        ok: false,
-        error: { code: "unsupported_operation", message: `No operation '${toolName}'.` },
+        refused: {
+          ok: false,
+          error: { code: "unsupported_operation", message: `No operation '${toolName}'.` },
+        },
       };
     }
 
@@ -526,13 +410,23 @@ export class Simulator {
     if (op.auth.scopes.length > 0 || op.auth.type !== "none") {
       const principal = this.def.authProfiles.find((p) => p.id === ctx.principalId);
       if (!principal) {
-        return { ok: false, error: { code: "auth_required", message: "No principal supplied." } };
+        return {
+          refused: {
+            ok: false,
+            error: { code: "auth_required", message: "No principal supplied." },
+          },
+        };
       }
       const missing = op.auth.scopes.filter((s) => !principal.scopes.includes(s));
       if (missing.length > 0) {
         return {
-          ok: false,
-          error: { code: "permission_denied", message: `Missing scope(s): ${missing.join(", ")}.` },
+          refused: {
+            ok: false,
+            error: {
+              code: "permission_denied",
+              message: `Missing scope(s): ${missing.join(", ")}.`,
+            },
+          },
         };
       }
     }
@@ -540,8 +434,10 @@ export class Simulator {
     // Confirmation gate.
     if (op.confirmation.required && !ctx.confirm) {
       return {
-        ok: false,
-        error: { code: "confirmation_required", message: "Confirmation required." },
+        refused: {
+          ok: false,
+          error: { code: "confirmation_required", message: "Confirmation required." },
+        },
       };
     }
 
@@ -560,23 +456,165 @@ export class Simulator {
     if (op.effect.kind === "mutation") {
       if (op.idempotency.mode === "required" && !ctx.idempotencyKey) {
         return {
-          ok: false,
-          error: { code: "idempotency_required", message: "Idempotency key required." },
+          refused: {
+            ok: false,
+            error: { code: "idempotency_required", message: "Idempotency key required." },
+          },
         };
       }
       if (keyed && this.replayLog.has(fingerprint)) {
         const prior = this.replayLog.get(fingerprint) as SimResult;
-        return prior.ok ? { ...prior, replayed: true } : prior;
+        return { refused: prior.ok ? { ...prior, replayed: true } : prior };
       }
     }
 
     // Fault injection (after the safety gates, before the effect).
     const fault = this.fault(ctx);
-    if (fault) return fault;
+    if (fault) return { refused: fault };
+    return { keyed, fingerprint };
+  }
 
-    const result = op.effect.kind === "read" ? this.read(op, ctx) : this.mutate(op, input);
-    if (keyed) this.replayLog.set(fingerprint, result);
-    return result;
+  /**
+   * Invoke one operation through whichever state backs this simulator and
+   * return the full record of the call: the result, plus the normalized request
+   * and raw answer when a provider served it. Writes nothing to the trace; the
+   * caller that knows the wire request (`invokeAsync`, the HTTP server) does.
+   */
+  async call(
+    toolName: string,
+    input: Record<string, unknown> = {},
+    ctx: InvokeContext = {},
+  ): Promise<SimCall> {
+    this.callIndex += 1;
+    const seq = this.callIndex;
+    const requestId = `r${seq}`;
+    const op = this.resolve(toolName);
+    const base = { seq, requestId, operation: op, normalized: null, provider: null };
+    const gate = this.admit(op, toolName, input, ctx);
+    if (gate.refused) return { ...base, result: gate.refused };
+    const served = op as Operation;
+    const provider = this.options.provider;
+    if (!provider) {
+      const result =
+        served.effect.kind === "read" ? this.read(served, ctx) : this.mutate(served, input);
+      if (gate.keyed) this.replayLog.set(gate.fingerprint, result);
+      return { ...base, result };
+    }
+
+    // A concurrent call with the same key waits for the first rather than
+    // reaching the provider twice: replay is a surface guarantee, and a second
+    // effect is exactly what it exists to prevent.
+    if (gate.keyed) {
+      const inflight = this.inflight.get(gate.fingerprint);
+      if (inflight) {
+        const prior = await inflight;
+        return { ...base, result: prior.ok ? { ...prior, replayed: true } : prior };
+      }
+    }
+
+    const invalid = missingRequired(served, input);
+    if (invalid) {
+      return {
+        ...base,
+        result: { ok: false, error: { code: "validation_error", message: invalid } },
+      };
+    }
+
+    const request = normalizeRequest(served, input, {
+      requestId,
+      capabilityId: this.def.capabilityId,
+      principal: this.def.authProfiles.find((p) => p.id === ctx.principalId),
+      tenantId: ctx.tenantId,
+      idempotencyKey: ctx.idempotencyKey,
+      cursor: ctx.cursor,
+      fallbackPageSize: this.providerFallbackPageSize(served),
+    });
+    const pending = askProvider(provider, served, request);
+    if (gate.keyed)
+      this.inflight.set(
+        gate.fingerprint,
+        pending.then((r) => r.result),
+      );
+    try {
+      const answered = await pending;
+      if (gate.keyed) this.replayLog.set(gate.fingerprint, answered.result);
+      return { ...base, normalized: request, provider: answered.raw, result: answered.result };
+    } finally {
+      if (gate.keyed) this.inflight.delete(gate.fingerprint);
+    }
+  }
+
+  /**
+   * `call`, returning only the result and appending the call to the trace
+   * when one is configured. The in-process entry point for a provider-backed
+   * simulator; it serves the built-in store too.
+   */
+  async invokeAsync(
+    toolName: string,
+    input: Record<string, unknown> = {},
+    ctx: InvokeContext = {},
+  ): Promise<SimResult> {
+    const call = await this.call(toolName, input, ctx);
+    writeTrace(this.options.trace, {
+      schema: TRACE_SCHEMA,
+      seq: call.seq,
+      requestId: call.requestId,
+      transport: "in_process",
+      tool: toolName,
+      operationId: call.operation?.id ?? null,
+      request: { input, context: ctx },
+      normalized: call.normalized,
+      provider: call.provider,
+      result: call.result,
+      status: this.statusFor(call),
+    });
+    return call.result;
+  }
+
+  /** The operations this simulator serves: approved and inside its capability. */
+  operations(): readonly Operation[] {
+    return this.ops;
+  }
+
+  /** The simulated caller identities this simulator recognises. */
+  principals(): readonly SimulatedPrincipal[] {
+    return this.def.authProfiles;
+  }
+
+  /** The `initialize` handshake a state provider receives before its first call. */
+  initializeParams(): ProviderInitializeParams {
+    return initializeParams(
+      this.air,
+      this.ops,
+      this.def.capabilityId,
+      this.def.surfaceSignatureDigest,
+      this.activeSeed,
+    );
+  }
+
+  /** The HTTP status of a call: 201 for a create, 200 for other successes, else the mapped error's. */
+  statusFor(call: SimCall): number {
+    if (call.result.ok)
+      return call.operation && operationKind(call.operation) === "create" ? 201 : 200;
+    return this.wireError(call.operation, call.result.error).status;
+  }
+
+  /** The wire form of an error: the provider's mapped form, or the contract's mapping of the code. */
+  wireError(op: Operation | undefined, error: SimError): WireError {
+    return error.wire ?? mapDomainError(op, error).wire;
+  }
+
+  /**
+   * The page size a provider is asked for when the caller names none: the size
+   * every other surface derives, or `defaultPageSize` where AIR derives none.
+   */
+  private providerFallbackPageSize(op: Operation): number {
+    const derived = this.pageSizeFor(op);
+    const underived =
+      derived.basis === "unmeasured" ||
+      derived.basis === "no_size_control" ||
+      derived.basis === "not_paginated";
+    return underived ? (this.options.defaultPageSize ?? derived.size) : derived.size;
   }
 
   /**

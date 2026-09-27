@@ -8,6 +8,7 @@ import {
   operationSafetyInputKeys,
   resolveIdempotencyCarrier,
 } from "@anvil/air";
+import { operationFileStem } from "./file-stem.js";
 import { stringExample } from "./mock-string.js";
 
 /**
@@ -347,7 +348,7 @@ export function generateMockRoutes(air: AirDocument): MockRoute[] {
         .filter((p) => p.required)
         .map((p) => p.name),
       headerParams: byIn("header").map((p) => p.name),
-      schemaRef: `schemas/${op.id}.schema.json`,
+      schemaRef: `schemas/${operationFileStem(op.id)}.schema.json`,
     };
     const body = op.input.body;
     // Legacy AIR still carries body fields as in:"body" params — honor them so

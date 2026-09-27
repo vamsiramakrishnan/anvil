@@ -3,8 +3,10 @@ import type { Diagnostic, SourceKind } from "@anvil/air";
 import { dereference, load } from "@scalar/openapi-parser";
 import { convertObj } from "swagger2openapi";
 import { bundleDocument, DEFAULT_MAX_SCHEMA_DEPTH } from "./decycle.js";
+import { countDocumentOperations, type ExposureProfile, selectDocument } from "./profile.js";
 import { adaptProtocol, type ProtocolFormat, type ProtoImportResolver } from "./protocols/index.js";
 import { type CompilerSource, ephemeralCompilerSource } from "./source/compiler-source.js";
+import { fastParseSpecText } from "./source/fast-parse.js";
 import { bundleSwaggerExternalRefs } from "./swagger-bundle.js";
 
 /**
@@ -14,7 +16,7 @@ import { bundleSwaggerExternalRefs } from "./swagger-bundle.js";
  */
 interface LoadPlugin {
   check: (value?: unknown) => boolean;
-  get: (value: string) => string;
+  get: (value: string) => unknown;
   resolvePath?: (value: string, reference: string) => string;
   getDir?: (value: string) => string;
   getFilename?: (value: string) => string;
@@ -26,6 +28,35 @@ export interface ParsedSpec {
   document: OpenApiDocument;
   /** Diagnostics raised while parsing (e.g. self-referential schemas truncated). */
   diagnostics: Diagnostic[];
+  /**
+   * Operations the whole source declared, counted before an exposure
+   * profile's selection. Present only when a profile was applied.
+   */
+  sourceOperations?: number;
+}
+
+export interface ParseSourceOptions {
+  /**
+   * An exposure profile. With `unexposed: skip`, unselected operations and
+   * every component only they reach are removed before dereferencing.
+   */
+  profile?: ExposureProfile;
+}
+
+/**
+ * Apply a profile to the pre-dereference document: prune under `skip`, only
+ * count under `compile`. Without a profile the document is untouched.
+ */
+function applyProfile(
+  document: OpenApiDocument,
+  profile: ExposureProfile | undefined,
+): { document: OpenApiDocument; sourceOperations?: number } {
+  if (!profile) return { document };
+  if (profile.unexposed === "compile") {
+    return { document, sourceOperations: countDocumentOperations(document) };
+  }
+  const selected = selectDocument(document, profile);
+  return { document: selected.document, sourceOperations: selected.sourceOperations };
 }
 
 /**
@@ -239,7 +270,10 @@ function stampSchemaTitles(doc: OpenApiDocument): void {
  * source that spans files has its references resolved before conversion, since
  * the converter itself cannot follow them.
  */
-export async function parseSource(source: CompilerSource): Promise<ParsedSpec> {
+export async function parseSource(
+  source: CompilerSource,
+  options: ParseSourceOptions = {},
+): Promise<ParsedSpec> {
   // Non-REST protocols (GraphQL, gRPC/proto, SOAP/WSDL) are lowered into a
   // pre-dereference OpenAPI 3.0 document, then run through the identical
   // dereference + normalize path — so one internal model serves every format.
@@ -283,6 +317,8 @@ export async function parseSource(source: CompilerSource): Promise<ParsedSpec> {
       const detail = err instanceof Error ? err.message : String(err);
       throw new Error(`Failed to parse ${protocol.format} source: ${detail}`);
     }
+    const profiled = applyProfile(lowered, options.profile);
+    lowered = profiled.document;
     stampSchemaTitles(lowered);
     const { schema, errors } = await dereference(lowered as Record<string, unknown>);
     if (!schema) throw failure(errors);
@@ -291,6 +327,7 @@ export async function parseSource(source: CompilerSource): Promise<ParsedSpec> {
       kind: protocol.kind,
       ...decycled,
       diagnostics: [...adapterDiagnostics, ...decycled.diagnostics],
+      ...counted(profiled.sourceOperations),
     };
   }
 
@@ -335,18 +372,28 @@ export async function parseSource(source: CompilerSource): Promise<ParsedSpec> {
       }
       resolved = bundled.document as OpenApiDocument;
     }
-    const converted = await convertSwagger(resolved);
-    const { schema, errors } = await dereference(converted);
+    const converted = applyProfile(await convertSwagger(resolved), options.profile);
+    const { schema, errors } = await dereference(converted.document);
     if (!schema) throw failure(errors);
     const decycled = decycle(schema as OpenApiDocument);
-    return { kind: "swagger", ...decycled };
+    return { kind: "swagger", ...decycled, ...counted(converted.sourceOperations) };
   }
 
+  let sourceOperations: number | undefined;
+  if (options.profile && entrypoint) {
+    const entry = filesystem.find((f) => f.isEntrypoint);
+    const profiled = applyProfile(entrypoint, options.profile);
+    if (entry) entry.specification = profiled.document as typeof entry.specification;
+    sourceOperations = profiled.sourceOperations;
+  }
   const { schema, errors } = await dereference(filesystem);
   if (!schema) throw failure(errors);
   const decycled = decycle(schema as OpenApiDocument);
-  return { kind: "openapi", ...decycled };
+  return { kind: "openapi", ...decycled, ...counted(sourceOperations) };
 }
+
+const counted = (sourceOperations: number | undefined): { sourceOperations?: number } =>
+  sourceOperations === undefined ? {} : { sourceOperations };
 
 /**
  * Parse + dereference a single spec string. Compatibility convenience: wraps
@@ -384,7 +431,13 @@ function virtualFilePlugin(files: ReadonlyMap<string, Uint8Array>): LoadPlugin {
       if (bytes === undefined) {
         throw new Error(`reference is not represented in the snapshot: ${key(value)}`);
       }
-      return decoder.decode(bytes);
+      // The loader accepts either text (which it parses with JSON.parse, then
+      // the \`yaml\` package) or an already-parsed value. Hand it the fast
+      // path's value when it reads the document; otherwise the text, so the
+      // loader's own parse and its error reporting are unchanged.
+      const text = decoder.decode(bytes);
+      const fast = fastParseSpecText(text);
+      return fast.ok ? fast.value : text;
     },
     resolvePath(value, reference) {
       const dir = posix.dirname(key(value));

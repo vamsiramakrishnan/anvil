@@ -3,10 +3,12 @@ import {
   approveOperationsInBundle,
   type HistoryEntry,
   previewOperationApproval,
+  profileApprovalCandidates,
   type ReprojectionDeps,
   type ReviewIdentity,
   renderApprovalPreview,
 } from "@anvil/generators";
+import { loadAir } from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
@@ -30,6 +32,8 @@ const DERIVED_RECORD_FILES = new Set([
 export interface ApproveOptions extends ReviewIdentity {
   /** Stage the approval in memory and print what would change; write nothing. */
   dryRun?: boolean;
+  /** Approve every pending operation of the bundle's exposure profile. */
+  profile?: boolean;
 }
 
 /** `anvil approve` — approve and atomically re-project the complete bundle. */
@@ -42,7 +46,11 @@ export function registerApprove(parent: Command, ctx: CommandContext): void {
         "Only approved operations appear in the MCP server, CLI catalog, compiled runtime, and skill. Approve deliberately after inspecting risk. The AIR and every generated projection are staged, checked for exact bytes and surface agreement, then swapped into place together; the replaced generation is retained under .anvil/history (see `anvil rollback`) and the decision is appended to .anvil/approvals.jsonl with the reviewer, the states that moved, and the bundle hash before and after. Receipt-bound gateway imports refuse in-place approval and provide the exact manifest re-import command so import-to-approval lineage stays immutable.",
       )
       .argument("<path>", "generated bundle directory or air.yaml")
-      .argument("<operation-ids...>", "operation ids to approve")
+      .argument("[operation-ids...]", "operation ids to approve (or pass --profile)")
+      .option(
+        "--profile",
+        "approve every exposed, unblocked operation of the bundle's exposure profile; requires --reviewer and records the profile digest",
+      )
       .option(
         "--reviewer <id>",
         "who is approving, recorded verbatim in the approval record (absent records 'unrecorded')",
@@ -70,6 +78,19 @@ export function runApprove(
   deps: ReprojectionDeps = {},
   opts: ApproveOptions = {},
 ): number {
+  if (opts.profile === true) {
+    const resolved = profileApproval(path, ids, io, opts);
+    if (resolved === undefined) return 1;
+    if (resolved.ids.length === 0) {
+      io.out("Every exposed operation of the profile is already approved or blocked.");
+      return 0;
+    }
+    ids = resolved.ids;
+    opts = { ...opts, note: resolved.note };
+  } else if (ids.length === 0) {
+    io.err("anvil: pass operation ids to approve, or --profile to approve the exposure profile.");
+    return 1;
+  }
   if (opts.dryRun === true) {
     for (const line of renderApprovalPreview(previewOperationApproval(path, ids))) io.out(line);
     return 0;
@@ -99,6 +120,42 @@ export function runApprove(
     );
   }
   return 0;
+}
+
+/**
+ * Resolve `--profile` into explicit ids. The reviewer must be named and the
+ * record's note carries the profile id and digest, so the decision in
+ * .anvil/approvals.jsonl says which reviewed selection it approved. Blocked
+ * operations are named, never approved.
+ */
+function profileApproval(
+  path: string,
+  ids: string[],
+  io: CliIO,
+  opts: ApproveOptions,
+): { ids: string[]; note: string } | undefined {
+  if (ids.length > 0) {
+    io.err("anvil: pass either operation ids or --profile, not both.");
+    return undefined;
+  }
+  if (!opts.reviewer?.trim()) {
+    io.err("anvil: --profile approves in bulk and needs --reviewer <id> for the approval record.");
+    return undefined;
+  }
+  let candidates: ReturnType<typeof profileApprovalCandidates>;
+  try {
+    candidates = profileApprovalCandidates(loadAir(path));
+  } catch (err) {
+    io.err(`anvil: ${err instanceof Error ? err.message : String(err)}`);
+    return undefined;
+  }
+  if (candidates.blocked.length > 0) {
+    io.err(
+      `  ${candidates.blocked.length} exposed operation(s) are blocked and were not approved: ${candidates.blocked.join(", ")}.`,
+    );
+  }
+  const base = `Exposure profile ${candidates.profileId} (${candidates.digest}): ${candidates.pending.length} operation(s).`;
+  return { ids: candidates.pending, note: opts.note ? `${base} ${opts.note}` : base };
 }
 
 /** The record line every decision prints: who, when, and which generation was retained. */

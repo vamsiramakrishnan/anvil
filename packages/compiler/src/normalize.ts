@@ -28,7 +28,6 @@ import {
   findJobHandleField,
   findStateField,
 } from "./classify.js";
-import { materializeSchema } from "./decycle.js";
 import { deriveNames, estatePathContext, singularize } from "./naming.js";
 import { resolveAuth } from "./normalize-auth.js";
 import { buildRequestBody } from "./normalize-body.js";
@@ -43,6 +42,7 @@ import {
   WEBHOOK_ARCHETYPE_EXTENSION,
   webhookPathItems,
 } from "./protocols/webhooks.js";
+import { DEFAULT_SCHEMA_BOUNDS, materializeWithin, type SchemaBounds } from "./schema-bounds.js";
 
 const HTTP_METHODS = HttpMethod.options;
 
@@ -141,11 +141,15 @@ function mergeParams(pathLevel: RawParam[], opLevel: RawParam[]): RawParam[] {
   return [...pathLevel.filter((p) => !overridden(p)), ...opLevel];
 }
 
-function toParam(raw: RawParam, namedSchemas: Record<string, unknown>): Param | null {
+function toParam(
+  raw: RawParam,
+  namedSchemas: Record<string, unknown>,
+  bounds: SchemaBounds,
+): Param | null {
   const loc = raw.in as ParamLocation;
   if (!["path", "query", "header", "cookie"].includes(loc)) return null;
   const schema = raw.schema
-    ? (materializeSchema(raw.schema, namedSchemas).schema as JsonSchema)
+    ? (materializeWithin(raw.schema, namedSchemas, bounds).schema as JsonSchema)
     : { type: "string" };
   // Serialization is carried only when the source declared it, and only when
   // it is a style OpenAPI defines: absent stays absent (the runtime resolves
@@ -168,11 +172,12 @@ function toParam(raw: RawParam, namedSchemas: Record<string, unknown>): Param | 
 function jsonSchemaOf(
   content: Record<string, { schema?: JsonSchema }> | undefined,
   namedSchemas: Record<string, unknown>,
+  bounds: SchemaBounds,
 ): JsonSchema | undefined {
   if (!content) return undefined;
   const raw = content["application/json"]?.schema ?? Object.values(content)[0]?.schema;
   if (!raw) return undefined;
-  return materializeSchema(raw, namedSchemas).schema as JsonSchema;
+  return materializeWithin(raw, namedSchemas, bounds).schema as JsonSchema;
 }
 
 const STATUS_TO_CODE: Record<string, ErrorSpec["code"]> = {
@@ -377,6 +382,8 @@ export interface NormalizeResult {
 export interface NormalizeOptions {
   /** An explicit manifest `path_grammar` declaration; wins over the evidence. */
   pathGrammarOverride?: Exclude<PathGrammarClassification, "ambiguous">;
+  /** Materialization bounds for operation schemas (an exposure profile's, or the defaults). */
+  schemaBounds?: SchemaBounds;
 }
 
 /** Normalize a parsed OpenAPI document into AIR operations (classifier applied). */
@@ -399,6 +406,7 @@ export function normalize(
   // directly (`.properties`, `.type`) resolves back through this bag,
   // per-operation, via `materializeSchema`.
   const namedSchemas = doc.components?.schemas ?? {};
+  const bounds = options.schemaBounds ?? DEFAULT_SCHEMA_BOUNDS;
   const operations: Operation[] = [];
   const diagnostics: Diagnostic[] = [];
   // Long-running detections carried to the second pass that links each one to
@@ -518,7 +526,7 @@ export function normalize(
           });
           continue;
         }
-        const p = toParam(rp, namedSchemas);
+        const p = toParam(rp, namedSchemas, bounds);
         if (p) params.push(p);
       }
       const body = buildRequestBody(
@@ -526,6 +534,7 @@ export function normalize(
         raw.requestBody?.required ?? false,
         namedSchemas,
         params,
+        bounds,
       );
 
       // Parsed rather than trusted, like the wire binding beside it: the
@@ -550,9 +559,16 @@ export function normalize(
       // a half-built one the codec would then read.
       const wireBinding = WireBinding.safeParse(raw["x-anvil-wire-binding"]).data;
 
+      // A range code (`2XX`, OpenAPI 3's wildcard) is the success response when
+      // no exact one is declared; Microsoft Graph declares only ranges.
       const successRes =
-        raw.responses?.["200"] ?? raw.responses?.["201"] ?? raw.responses?.["202"] ?? undefined;
-      const outputSchema = jsonSchemaOf(successRes?.content, namedSchemas);
+        raw.responses?.["200"] ??
+        raw.responses?.["201"] ??
+        raw.responses?.["202"] ??
+        raw.responses?.["2XX"] ??
+        raw.responses?.["2xx"] ??
+        undefined;
+      const outputSchema = jsonSchemaOf(successRes?.content, namedSchemas, bounds);
       const pagination = classifyPagination(effect, effect.action, params, outputSchema);
       const auth = resolveAuth(doc, raw.security);
       if (auth.issue) {

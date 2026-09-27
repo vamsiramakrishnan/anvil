@@ -6,7 +6,7 @@ import {
   type RequestBody,
   snakeCase,
 } from "@anvil/air";
-import { materializeSchema } from "./decycle.js";
+import { DEFAULT_SCHEMA_BOUNDS, materializeWithin, type SchemaBounds } from "./schema-bounds.js";
 
 const SCALAR_TYPES = new Set(["string", "integer", "number", "boolean"]);
 
@@ -32,6 +32,7 @@ export function buildRequestBody(
   required: boolean,
   namedSchemas: Record<string, unknown>,
   params: readonly Param[],
+  bounds: SchemaBounds = DEFAULT_SCHEMA_BOUNDS,
 ): RequestBody | undefined {
   if (!content) return undefined;
   // One body, one content type. JSON first because it is the wire the whole
@@ -51,7 +52,7 @@ export function buildRequestBody(
   // is the one place a body needs its own fields directly inspectable
   // (`.properties`, `.type`), so resolve back to a small, self-contained
   // schema scoped to just this operation before doing anything else with it.
-  const schema = materializeSchema(rawSchema, namedSchemas).schema as JsonSchema;
+  const schema = materializeWithin(rawSchema, namedSchemas, bounds).schema as JsonSchema;
 
   const props = schema.properties as Record<string, JsonSchema> | undefined;
   const requiredList = (schema.required as string[] | undefined) ?? [];

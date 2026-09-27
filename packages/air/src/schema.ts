@@ -26,6 +26,8 @@ import {
   SourceKind,
 } from "./enums.js";
 import { ErrorSpec } from "./error-spec.js";
+import { ExposureProfileRecord } from "./profile-record.js";
+import { ServiceId } from "./service-id.js";
 
 /**
  * A JSON Schema fragment, carried through AIR verbatim. Anvil does not
@@ -1443,22 +1445,6 @@ export const PathGrammar = z.object({
 });
 export type PathGrammar = z.infer<typeof PathGrammar>;
 
-/**
- * Canonical service identifier. It is safe as one path/CLI segment; generators
- * project it into stricter provider-specific slugs (npm, Skills, GCP) without
- * changing this identity, because changing an established id breaks overlays,
- * approval history, and drift lineage.
- */
-export const ServiceId = z
-  .string()
-  .min(1)
-  .max(64)
-  .regex(
-    /^[a-z](?:[a-z0-9_-]{0,62}[a-z0-9])?$/,
-    "service id must be a safe lowercase slug (1-64 chars), start with a letter, and end with a letter or digit",
-  );
-export type ServiceId = z.infer<typeof ServiceId>;
-
 export const Service = z.object({
   id: ServiceId,
   version: z.string(),
@@ -1478,6 +1464,7 @@ export const Service = z.object({
     entrypoint: z.string().optional(),
     /** The estate's path grammar, classified at compile time (see PathGrammar). */
     pathGrammar: PathGrammar.optional(),
+    profile: ExposureProfileRecord.optional(),
   }),
   auth: AuthRequirement.default({
     type: "none",

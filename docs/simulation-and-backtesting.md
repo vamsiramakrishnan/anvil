@@ -25,6 +25,12 @@ Everything about the simulator is repeatable: a seeded RNG, generated fixtures
 per entity, and state machines and fault profiles you can author. The same seed
 replays the same world — which is what makes a simulator run usable as evidence.
 
+To serve an agent from your own data instead of seeded fixtures, give the
+simulator a state provider: Anvil keeps auth, idempotency, faults, paging, and
+error shapes, and the provider owns the records. `anvil simulate serve` puts
+the same surface on HTTP at the contract's paths, so a generated SDK or MCP
+server can target it. See [Simulator state providers](simulator-state-providers.md).
+
 ## Certification: use the simulator to attack the bundle
 
 `anvil certify` (ADR-0018, `@anvil/certification`) grades a bundle

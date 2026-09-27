@@ -85,6 +85,11 @@ const PAGES = [
   { src: "docs/runtime-extensions.md", dest: "guides/runtime-extensions.md", order: 6 },
   { src: "docs/fleet.md", dest: "guides/fleet.md", order: 6 },
   { src: "docs/wire-protocols.md", dest: "guides/wire-protocols.md", order: 7 },
+  {
+    src: "docs/simulator-state-providers.md",
+    dest: "guides/simulator-state-providers.md",
+    order: 7,
+  },
   { src: "docs/refinement-sdk.md", dest: "guides/refinement-sdk.md", order: 7 },
   { src: "docs/group-refinement.md", dest: "guides/group-refinement.md", order: 7 },
   { src: "docs/legacy-inventory.md", dest: "guides/legacy-inventory.md", order: 8 },
