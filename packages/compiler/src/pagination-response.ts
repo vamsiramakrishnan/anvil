@@ -61,6 +61,7 @@ export function inferPaginationResponseFields(outputSchema: Record<string, unkno
   itemsField?: string;
   nextField?: string;
   nextLinkField?: string;
+  pagingField?: string;
 } {
   // `alternative`: reached through one branch of a union, so an array there is
   // not the envelope's collection, while a continuation is still where the
@@ -107,7 +108,18 @@ export function inferPaginationResponseFields(outputSchema: Record<string, unkno
       (schema.type === undefined || schema.type === "string")
     );
   });
+  // A page-numbered position block: an object named `paging` with a `page`.
+  const pagings = paths.filter(({ path, schema, alternative }) => {
+    const props = schema.properties;
+    return (
+      !alternative &&
+      path.split(".").at(-1) === "paging" &&
+      isObject(props) &&
+      props.page !== undefined
+    );
+  });
   return {
+    ...(pagings.length === 1 ? { pagingField: pagings[0]?.path } : {}),
     ...(arrays.length === 1 ? { itemsField: arrays[0]?.path } : {}),
     ...(continuations.length === 1 ? { nextField: continuations[0]?.path } : {}),
     ...(links.length === 1 ? { nextLinkField: links[0]?.path } : {}),

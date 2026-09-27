@@ -126,6 +126,58 @@ function writePageMarkers(
   }
 }
 
+/** What the serving layer knows about the page beyond its items. */
+export interface PageFacts {
+  /** The continuation the request carried; for page-numbered paging, the page number. */
+  cursor?: string;
+  /** The page size the items were drawn for. */
+  size?: number;
+  /** The whole query's item count, when the provider reported it. */
+  total?: number;
+}
+
+const PAGING_KEYS = ["count", "per_page", "page", "pages", "total"] as const;
+
+/**
+ * Write a page-numbered position block (Slack's `paging`): the page number
+ * and size, and the total and page count when they are known. The provider's
+ * `total` makes them known on every page; without it they are known only on
+ * the last page, where they follow from the items served. Nothing else is
+ * derived, so a client never reads a page count the data does not support.
+ * When the block's schema is declared, only its declared keys are written.
+ */
+function writePagingBlock(
+  body: Record<string, unknown>,
+  declared: JsonSchema | undefined,
+  field: string,
+  served: number,
+  more: boolean,
+  facts: PageFacts,
+): void {
+  const asked = Number(facts.cursor);
+  const number = Number.isInteger(asked) && asked > 0 ? asked : 1;
+  const size = facts.size ?? served;
+  const total = facts.total ?? (more ? undefined : (number - 1) * size + served);
+  const values: Record<(typeof PAGING_KEYS)[number], number | undefined> = {
+    count: size,
+    per_page: size,
+    page: number,
+    pages: total === undefined ? undefined : Math.max(1, Math.ceil(total / Math.max(1, size))),
+    total,
+  };
+  const declaredKeys = Object.keys(propertiesOf(schemaAt(declared, responseFieldPath(field))));
+  const keys =
+    declaredKeys.length > 0
+      ? PAGING_KEYS.filter((key) => declaredKeys.includes(key))
+      : PAGING_KEYS.filter((key) => key !== "per_page");
+  const block: Record<string, number> = {};
+  for (const key of keys) {
+    const value = values[key];
+    if (value !== undefined) block[key] = value;
+  }
+  setPath(body, field, block);
+}
+
 /**
  * Write a page of items in the envelope the contract declares: a bare array
  * when the response is an array, else the items at `itemsField` (or the first
@@ -139,6 +191,7 @@ export function pageEnvelope(
   items: unknown[],
   nextCursor: string | undefined,
   url: URL,
+  page: PageFacts = {},
 ): { body: unknown; headers: Record<string, string> } {
   const declared = declaredResponse(air, op);
   const pagination = op.pagination;
@@ -166,8 +219,15 @@ export function pageEnvelope(
   const itemsField = pagination?.itemsField ?? firstArrayField(declared) ?? "items";
   writePageMarkers(body, declared, responseFieldPath(itemsField), next !== undefined);
   setPath(body, itemsField, items);
-  if (next !== undefined) setPath(body, pagination?.nextField ?? "next_cursor", next);
-  else if (pagination?.nextField && requiredString(declared, pagination.nextField)) {
+  const pagingField = pagination?.style === "page" ? pagination.pagingField : undefined;
+  if (pagingField) {
+    writePagingBlock(body, declared, pagingField, items.length, next !== undefined, page);
+  }
+  // A page-numbered client reads its position from the paging block, so a
+  // continuation token is written there only where the contract names one.
+  if (next !== undefined && (pagination?.nextField || !pagingField)) {
+    setPath(body, pagination?.nextField ?? "next_cursor", next);
+  } else if (pagination?.nextField && requiredString(declared, pagination.nextField)) {
     // A continuation the contract requires is present on the last page too,
     // empty: Slack's `response_metadata.next_cursor` is `""` when no page
     // follows, and that is what its clients stop on.

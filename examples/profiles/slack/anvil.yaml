@@ -55,10 +55,12 @@ operations:
       items_field: messages
       next_field: response_metadata.next_cursor
   # search.messages pages by page number and returns its matches under
-  # messages.matches, which the published schema also leaves out.
+  # messages.matches, with its position in messages.paging; the published
+  # schema leaves both out.
   search_messages:
     pagination:
       style: page
       cursor_param: page
       page_size_param: count
       items_field: messages.matches
+      paging_field: messages.paging

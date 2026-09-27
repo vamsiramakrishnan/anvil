@@ -114,6 +114,12 @@ export type ProviderResponse =
       result?: unknown;
       items?: unknown[];
       nextCursor?: string | null;
+      /**
+       * How many items the whole paged query holds, when the provider knows.
+       * Served only where the contract reports a total (a page-numbered
+       * `paging` block). Added within protocol version 1.
+       */
+      total?: number;
       meta?: ProviderMeta;
     }
   | { ok: false; error: ProviderError; meta?: ProviderMeta };
@@ -328,11 +334,16 @@ export function shapeProviderResponse(
         `returned ${raw.items.length} items for a page of ${request.page.size}; honour page.size and return a nextCursor.`,
       );
     }
+    const total = raw.total;
+    if (total !== undefined && !(Number.isInteger(total) && total >= 0)) {
+      return malformed("'total' must be a non-negative integer.");
+    }
     const next = raw.nextCursor;
     return {
       ok: true,
       output: { items: raw.items },
       ...(typeof next === "string" && next !== "" ? { nextCursor: next } : {}),
+      ...(total !== undefined ? { total } : {}),
     };
   }
   return { ok: true, output: raw.result === undefined ? null : raw.result };

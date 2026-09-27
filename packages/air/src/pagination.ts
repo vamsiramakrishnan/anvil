@@ -22,6 +22,14 @@ export const Pagination = z.object({
   nextField: z.string().optional(),
   itemsField: z.string().optional(),
   /**
+   * Where a page-numbered response reports its position: an object holding
+   * the page number, the page size, and when known the total and the page
+   * count (Slack's `paging: {count, page, pages, total}`, at
+   * `messages.paging` in `search.messages`). A client of such an API reads
+   * `page < pages` to decide whether to ask again.
+   */
+  pagingField: z.string().optional(),
+  /**
    * The parameter that controls page *size* (`per_page`, `limit`, `maxResults`,
    * `page_size`, `top`, …). Distinct from `cursorParam`, which only controls
    * *continuation*. This is the single knob that lets a serving surface hold a

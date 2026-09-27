@@ -190,6 +190,7 @@ export function classifyPagination(
       in?: "body";
       nextField?: string;
       itemsField?: string;
+      pagingField?: string;
       pageSizeParam?: string;
       maxPageSize?: number;
       defaultPageSize?: number;
@@ -222,7 +223,7 @@ export function classifyPagination(
   // same rule the itemsField/nextField "exactly one" tests apply below.
   const size = pageSizeAmong(fromBody ? bodyFields : params);
 
-  const { nextLinkField, ...fields } = responseFields;
+  const { nextLinkField, pagingField, ...fields } = responseFields;
   // A cursor handed back only inside a next-page URL (`_links.next`) is link
   // paging: the client reads the cursor parameter out of that URL.
   const link =
@@ -234,6 +235,7 @@ export function classifyPagination(
     ...(fromBody ? { in: "body" as const } : {}),
     ...fields,
     ...link,
+    ...(match.style === "page" && pagingField ? { pagingField } : {}),
     ...(size ?? {}),
   };
 }

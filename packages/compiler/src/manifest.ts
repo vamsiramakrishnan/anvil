@@ -424,6 +424,8 @@ export const OperationManifest = z.strictObject({
       cursor_param: z.string().optional(),
       next_field: z.string().optional(),
       items_field: z.string().optional(),
+      /** Where a page-numbered response reports `{page, count, pages, total}` (Slack's `messages.paging`). */
+      paging_field: z.string().optional(),
       page_size_param: z.string().optional(),
       max_page_size: z.number().int().positive().optional(),
       default_page_size: z.number().int().positive().optional(),
@@ -1146,6 +1148,9 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
           : {}),
         ...(m.pagination.next_field !== undefined ? { nextField: m.pagination.next_field } : {}),
         ...(m.pagination.items_field !== undefined ? { itemsField: m.pagination.items_field } : {}),
+        ...(m.pagination.paging_field !== undefined
+          ? { pagingField: m.pagination.paging_field }
+          : {}),
         ...(m.pagination.page_size_param !== undefined
           ? { pageSizeParam: m.pagination.page_size_param }
           : {}),

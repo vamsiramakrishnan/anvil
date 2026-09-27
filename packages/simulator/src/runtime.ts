@@ -65,7 +65,14 @@ export type SimError = {
 };
 
 export type SimResult =
-  | { ok: true; output: unknown; replayed?: boolean; nextCursor?: string }
+  | {
+      ok: true;
+      output: unknown;
+      replayed?: boolean;
+      nextCursor?: string;
+      /** The whole paged query's item count, when a provider reported it. */
+      total?: number;
+    }
   | { ok: false; error: SimError };
 
 interface Entity {

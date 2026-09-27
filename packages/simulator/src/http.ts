@@ -458,6 +458,11 @@ export async function serveSimulatorHttp(
           output.items,
           call.result.nextCursor,
           url,
+          {
+            ...(ctx.cursor !== undefined ? { cursor: ctx.cursor } : {}),
+            ...(call.normalized?.page ? { size: call.normalized.page.size } : {}),
+            ...(call.result.total !== undefined ? { total: call.result.total } : {}),
+          },
         ));
       } else {
         responseBody = output ?? null;

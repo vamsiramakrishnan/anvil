@@ -153,6 +153,15 @@ compile costs for five vendor specs are in
   the link, since the token covers it). A response declared as a bare array is served as
   one, with the continuation in a `Link: <...>; rel="next"` header whose
   target is the same kind of URL, carrying the cursor parameter.
+- A page-numbered operation with a `pagingField` (Slack's `paging`, found in
+  the response schema, or `pagination.paging_field` in a manifest, as
+  `messages.paging` for search.messages) gets a position block there:
+  `page` (the requested page number, default 1), `count` (the page size),
+  and `pages` and `total` when they are known. They are known on every page
+  when the provider reports `total`, and otherwise only on the last page,
+  where they follow from the items served. A declared block gets only its
+  declared keys. No continuation token is written for such an operation
+  unless the contract names a `nextField`.
 - A page marker the response declares as a boolean, at its top level or
   beside a nested items array, is written from whether another page follows:
   `isLast` or `is_last` is true on the last page (Jira), and `has_more` or
@@ -287,7 +296,10 @@ The provider answers with one of three shapes in `result`:
 - A paged request (`page` not null) needs `items`, at most `page.size` of
   them, and `nextCursor` (a string, or `null` on the last page). More items
   than `page.size` is refused with `schema_mismatch`: trimming them would
-  lose records the cursor could not reach.
+  lose records the cursor could not reach. It may also carry `total`, the
+  whole query's item count (a non-negative integer), which fills a
+  page-numbered position block. `total` was added without changing
+  `protocolVersion`, like `meta` below.
 - Any other success returns `result` (any JSON value).
 - An error names `code`, one of Anvil's error codes: `validation_error`,
   `auth_required`, `permission_denied`, `not_found`, `conflict`,

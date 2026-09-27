@@ -412,3 +412,101 @@ describe("a response declared as a bare array", () => {
     }
   });
 });
+
+describe("page-numbered paging with a position block", () => {
+  // Slack's search.messages: the spec declares only `ok`; the manifest names
+  // where the matches and the paging block go, as the shipped example does.
+  const searchSpec = `openapi: "3.0.3"
+info: { title: Slack search, version: "1.0.0" }
+paths:
+  /search.messages:
+    get:
+      operationId: search_messages
+      parameters:
+        - { name: query, in: query, required: true, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer } }
+        - { name: count, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties: { ok: { type: boolean, enum: [true] } }
+`;
+  const manifest = `operations:
+  search_messages:
+    pagination:
+      style: page
+      cursor_param: page
+      page_size_param: count
+      items_field: messages.matches
+      paging_field: messages.paging
+`;
+  const MATCHES = Array.from({ length: 5 }, (_, i) => ({ ts: `17000000${i}0.000100` }));
+
+  async function searching(reportTotal: boolean) {
+    const compiled = await compile({ spec: searchSpec, serviceId: "slack", manifest });
+    const searchAir = approveOperations(
+      compiled,
+      compiled.operations.map((o) => o.id),
+    );
+    for (const op of searchAir.operations) op.auth = { ...op.auth, type: "none", scopes: [] };
+    const provider: StateProvider = {
+      invoke: (req): ProviderResponse => {
+        const number = Number(req.page?.cursor ?? 1);
+        const size = req.page?.size ?? 1;
+        const start = (number - 1) * size;
+        return {
+          ok: true,
+          items: MATCHES.slice(start, start + size),
+          nextCursor: start + size < MATCHES.length ? String(number + 1) : null,
+          ...(reportTotal ? { total: MATCHES.length } : {}),
+        };
+      },
+    };
+    const sim = new Simulator(searchAir, simulatorDefinitionFor(searchAir), { provider });
+    return serveSimulatorHttp(sim, searchAir);
+  }
+
+  it("serves the matches and the paging block the manifest names, with the provider's total", async () => {
+    const http = await searching(true);
+    try {
+      const first = await (await fetch(`${http.url}/search.messages?query=q&count=2`)).json();
+      expect(first).toEqual({
+        ok: true,
+        messages: {
+          matches: MATCHES.slice(0, 2),
+          paging: { count: 2, page: 1, pages: 3, total: 5 },
+        },
+      });
+      const third = (await (
+        await fetch(`${http.url}/search.messages?query=q&count=2&page=3`)
+      ).json()) as { messages: unknown };
+      expect(third.messages).toEqual({
+        matches: MATCHES.slice(4),
+        paging: { count: 2, page: 3, pages: 3, total: 5 },
+      });
+    } finally {
+      await http.close();
+    }
+  });
+
+  it("reports a total and page count only where the data supports them", async () => {
+    const http = await searching(false);
+    try {
+      type Paged = { messages: { paging: unknown } };
+      const first = (await (
+        await fetch(`${http.url}/search.messages?query=q&count=2`)
+      ).json()) as Paged;
+      expect(first.messages.paging).toEqual({ count: 2, page: 1 });
+      const lastRes = await fetch(`${http.url}/search.messages?query=q&count=2&page=3`);
+      const last = (await lastRes.json()) as Paged;
+      expect(last.messages.paging).toEqual({ count: 2, page: 3, pages: 3, total: 5 });
+    } finally {
+      await http.close();
+    }
+  });
+});

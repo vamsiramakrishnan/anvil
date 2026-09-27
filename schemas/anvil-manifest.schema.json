@@ -926,6 +926,9 @@
               "items_field": {
                 "type": "string"
               },
+              "paging_field": {
+                "type": "string"
+              },
               "page_size_param": {
                 "type": "string"
               },

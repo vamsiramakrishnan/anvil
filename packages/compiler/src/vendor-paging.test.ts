@@ -490,3 +490,53 @@ describe("a continuation nested in a response", () => {
     });
   });
 });
+
+describe("a page-numbered position block", () => {
+  it("finds Slack's paging block for a page-numbered read, and only for one", async () => {
+    const paging = {
+      type: "object",
+      properties: {
+        count: { type: "integer" },
+        page: { type: "integer" },
+        pages: { type: "integer" },
+        total: { type: "integer" },
+      },
+    };
+    const read = (params: string[]) => ({
+      get: {
+        parameters: params.map((name) => ({ name, in: "query", schema: { type: "string" } })),
+        responses: {
+          "200": {
+            description: "ok",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { files: { type: "array", items: { type: "object" } }, paging },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const air = await compile({
+      spec: JSON.stringify({
+        openapi: "3.0.1",
+        info: { title: "Files", version: "1" },
+        servers: [{ url: "https://slack.example.test/api" }],
+        paths: { "/files.list": read(["page", "count"]), "/files.cursor": read(["cursor"]) },
+      }),
+      serviceId: "files",
+    });
+    const pagination = (path: string) =>
+      air.operations.find((o) => o.sourceRef.path === path)?.pagination;
+    expect(pagination("/files.list")).toMatchObject({
+      style: "page",
+      cursorParam: "page",
+      itemsField: "files",
+      pagingField: "paging",
+    });
+    expect(pagination("/files.cursor")?.pagingField).toBeUndefined();
+  });
+});
