@@ -1,8 +1,9 @@
 import { CapabilityReviewError } from "@anvil/compiler";
 import { CommanderError } from "commander";
+import { buildIdentity } from "./build-identity.js";
 import type { AnvilCliDeps } from "./commands/context.js";
 import { processIO } from "./io.js";
-import { createAnvilProgram, programExitCode } from "./program.js";
+import { createAnvilProgram, programExitCode, VERSION } from "./program.js";
 
 export type { AnvilCliDeps } from "./commands/context.js";
 
@@ -28,6 +29,17 @@ export async function runAnvilCli(argv: string[], deps: AnvilCliDeps = {}): Prom
   // Bare `anvil` orients rather than errors: root help on stdout, exit 0.
   if (argv.length === 0) {
     io.out(program.helpInformation().trimEnd());
+    return 0;
+  }
+
+  // `--version --json` (either order) is the build identity a consumer keys a
+  // cache on; Commander's own --version prints and exits before --json is read.
+  if (
+    argv.length === 2 &&
+    argv.includes("--json") &&
+    argv.some((a) => a === "--version" || a === "-V")
+  ) {
+    io.out(JSON.stringify(buildIdentity(VERSION), null, 2));
     return 0;
   }
 

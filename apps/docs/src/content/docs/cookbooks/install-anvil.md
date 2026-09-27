@@ -45,6 +45,19 @@ pnpm anvil --help
 ```
 
 `pnpm anvil` runs `packages/cli/dist/bin-anvil.js` from the current checkout.
+
+The version is the same at every commit. To key a cache on the build that
+produced an artifact, read the build identity instead:
+
+```bash
+pnpm anvil --version --json
+```
+
+It prints the version, the commit the CLI was built at (`null` outside a git
+checkout), and `digest`, a SHA-256 over the built files of the CLI and every
+`@anvil/*` package it loads, with each package's own digest under
+`packages`. The digest changes when any of that code changes and stays the
+same for an identical build at another commit.
 The remaining documentation uses:
 
 - `pnpm anvil` for commands run from this repository; and
