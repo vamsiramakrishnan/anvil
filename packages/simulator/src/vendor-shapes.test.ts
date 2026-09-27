@@ -10,7 +10,7 @@ import type { TraceEntry } from "./trace.js";
 /**
  * Wire shapes of real vendor contracts served over HTTP through a provider:
  * a continuation token in the request and response bodies (Jira's enhanced
- * search).
+ * search) and OData's `@odata.nextLink` (Microsoft Graph).
  */
 const SPEC = `openapi: "3.0.3"
 info: { title: Vendor shapes, version: "1.0.0" }
@@ -40,6 +40,39 @@ paths:
                   isLast: { type: boolean }
                   issues: { type: array, items: { type: object } }
                   nextPageToken: { type: string }
+  /wiki/api/v2/pages:
+    get:
+      operationId: getPages
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, maximum: 250 } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  results: { type: array, items: { type: object } }
+                  _links: { type: object, properties: { next: { type: string } } }
+  /users:
+    get:
+      operationId: users.user.ListUser
+      parameters:
+        - { name: $top, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: $skip, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: $filter, in: query, schema: { type: string } }
+      responses:
+        2XX:
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  "@odata.nextLink": { type: string, nullable: true }
+                  value: { type: array, items: { type: object } }
 `;
 
 const ROWS = Array.from({ length: 5 }, (_, i) => ({ id: String(i + 1) }));
@@ -125,6 +158,71 @@ describe("a continuation token carried in the request body", () => {
         body: JSON.stringify({ jql: "x", maxResults: 500 }),
       });
       expect(s.provider.seen[0]?.page?.size).toBe(100);
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+describe("OData paging", () => {
+  it("serves a followable @odata.nextLink and accepts $skiptoken or $skip as the cursor", async () => {
+    const s = await serving();
+    try {
+      const first = await fetch(`${s.url}/users?$top=2&$filter=x`);
+      const page1 = (await first.json()) as Record<string, unknown>;
+      expect(page1.value).toEqual([{ id: "1" }, { id: "2" }]);
+      const next = new URL(String(page1["@odata.nextLink"]));
+      expect(next.origin).toBe(s.url);
+      expect(next.pathname).toBe("/users");
+      expect(next.searchParams.get("$skiptoken")).toBe("2");
+      expect(next.searchParams.get("$top")).toBe("2");
+      expect(next.searchParams.get("$filter")).toBe("x");
+
+      const followed = (await (await fetch(next)).json()) as Record<string, unknown>;
+      expect(followed.value).toEqual([{ id: "3" }, { id: "4" }]);
+      expect(s.provider.seen[1]?.page).toEqual({ cursor: "2", size: 2 });
+
+      const skipped = (await (await fetch(`${s.url}/users?$top=2&$skip=4`)).json()) as Record<
+        string,
+        unknown
+      >;
+      expect(skipped).toEqual({ value: [{ id: "5" }] });
+      expect(s.provider.seen[2]?.page).toEqual({ cursor: "4", size: 2 });
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("drops a $skip the token already covers from the next link", async () => {
+    const s = await serving();
+    try {
+      const page = (await (await fetch(`${s.url}/users?$top=1&$skip=1`)).json()) as Record<
+        string,
+        unknown
+      >;
+      const next = new URL(String(page["@odata.nextLink"]));
+      expect(next.searchParams.get("$skip")).toBeNull();
+      expect(next.searchParams.get("$skiptoken")).toBe("2");
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+describe("a next-page URL in the response", () => {
+  it("writes _links.next as a followable URL carrying the cursor", async () => {
+    const s = await serving();
+    try {
+      const page = (await (await fetch(`${s.url}/wiki/api/v2/pages?limit=2`)).json()) as {
+        results: unknown[];
+        _links: { next: string };
+      };
+      expect(page.results).toEqual([{ id: "1" }, { id: "2" }]);
+      const next = new URL(page._links.next);
+      expect(next.origin).toBe(s.url);
+      expect(next.searchParams.get("cursor")).toBe("2");
+      const followed = (await (await fetch(next)).json()) as { results: unknown[] };
+      expect(followed.results).toEqual([{ id: "3" }, { id: "4" }]);
     } finally {
       await s.close();
     }

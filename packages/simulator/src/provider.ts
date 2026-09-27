@@ -18,6 +18,7 @@ import {
   type ErrorCode,
   ErrorCode as ErrorCodeEnum,
   isModeledIdempotencyCarrierInput,
+  isODataPaging,
   type Operation,
   type OperationAction,
   resolveIdempotencyCarrier,
@@ -374,7 +375,10 @@ function providerPage(
   ctx: NormalizeContext,
 ): { cursor: string | null; size: number } {
   const inputFor = (name: string | undefined) => pagingInput(op, input, name);
-  const rawCursor = ctx.cursor ?? inputFor(op.pagination?.cursorParam);
+  const rawCursor =
+    ctx.cursor ??
+    inputFor(op.pagination?.cursorParam) ??
+    (isODataPaging(op.pagination) ? inputFor("$skip") : undefined);
   const cursor = rawCursor === undefined || rawCursor === null ? null : String(rawCursor);
   const asked = Number(inputFor(op.pagination?.pageSizeParam));
   let size = Number.isInteger(asked) && asked > 0 ? asked : ctx.fallbackPageSize;

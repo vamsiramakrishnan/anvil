@@ -132,15 +132,20 @@ compile costs for five vendor specs are in
 - **Cursor and page size.** From the contract's `cursorParam` and
   `pageSizeParam`, which are parameters, or request-body fields when the
   contract pages in the body (`pagination.in: body`, as Jira's
-  `POST /rest/api/3/search/jql` sends `nextPageToken` and `maxResults`). A
-  requested size is clamped to the declared `maxPageSize`.
+  `POST /rest/api/3/search/jql` sends `nextPageToken` and `maxResults`). An
+  OData collection (Microsoft Graph) continues with `$skiptoken`, or with
+  `$skip`. A requested size is clamped to the declared `maxPageSize`.
 
 ### How a response is written
 
 - A paged operation's items go under the declared `itemsField` (or the first
   array property of the declared response), and a continuation under the
   declared `nextField` (default `next_cursor`). A `link` style continuation is
-  a URL carrying the cursor. A response declared as a bare array is served as
+  a URL on the server's own origin carrying the cursor, which the same client
+  can follow: `_links.next` for a contract that declares it (Confluence v2),
+  or `@odata.nextLink` with `$skiptoken` for an OData collection declaring
+  `$top`, `$skip`, or `$skiptoken` (a `$skip` in the request is dropped from
+  the link, since the token covers it). A response declared as a bare array is served as
   one, with the continuation in a `Link: <...>; rel="next"` header.
 - Other successes return the provider's `result` as the body, with a status
   the contract declares for an HTTP+JSON operation: `204` with no body when

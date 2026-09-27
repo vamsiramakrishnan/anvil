@@ -198,6 +198,12 @@ export function classifyPagination(
   if (effect.kind !== "read" || (action !== "search" && action !== "list")) return undefined;
 
   const responseFields = inferPaginationResponseFields(outputSchema);
+  const odata = odataPagination(params, outputSchema);
+  if (odata)
+    return {
+      ...odata,
+      ...(responseFields.itemsField ? { itemsField: responseFields.itemsField } : {}),
+    };
 
   const fromParams = continuationAmong(params);
   // A continuation token carried in the request body (a POST search) counts
@@ -216,10 +222,18 @@ export function classifyPagination(
   // same rule the itemsField/nextField "exactly one" tests apply below.
   const size = pageSizeAmong(fromBody ? bodyFields : params);
 
+  const { nextLinkField, ...fields } = responseFields;
+  // A cursor handed back only inside a next-page URL (`_links.next`) is link
+  // paging: the client reads the cursor parameter out of that URL.
+  const link =
+    match.style === "cursor" && !fields.nextField && nextLinkField
+      ? { style: "link" as const, nextField: nextLinkField }
+      : {};
   return {
     ...match,
     ...(fromBody ? { in: "body" as const } : {}),
-    ...responseFields,
+    ...fields,
+    ...link,
     ...(size ?? {}),
   };
 }
@@ -279,4 +293,41 @@ function bodyCandidates(body: RequestBody | undefined): PagingCandidate[] {
     name,
     schema: (schema && typeof schema === "object" ? schema : {}) as JsonSchema,
   }));
+}
+
+/** OData's server-driven paging: the next page's URL, `$skiptoken` inside it. */
+const ODATA_NEXT_LINK = "@odata.nextLink";
+const ODATA_PAGING_PARAMS = new Set(["$top", "$skip", "$skiptoken"]);
+
+/**
+ * OData collections (Microsoft Graph, SAP, Dynamics) page by handing back the
+ * next request as a URL in `@odata.nextLink`, which carries a `$skiptoken` (or
+ * a `$skip`) the server chose. The two facts together are the contract: a
+ * declared `$top`/`$skip`/`$skiptoken` system query option, and the
+ * `@odata.nextLink` annotation on the declared response. Either alone is not.
+ */
+function odataPagination(
+  params: readonly Param[],
+  outputSchema: Record<string, unknown> | undefined,
+):
+  | {
+      style: "link";
+      cursorParam: string;
+      nextField: string;
+      pageSizeParam?: string;
+      maxPageSize?: number;
+      defaultPageSize?: number;
+    }
+  | undefined {
+  const props = outputSchema?.properties;
+  if (!props || typeof props !== "object" || !(ODATA_NEXT_LINK in props)) return undefined;
+  const query = params.filter((p) => p.in === "query");
+  if (!query.some((p) => ODATA_PAGING_PARAMS.has(p.name.toLowerCase()))) return undefined;
+  const top = query.find((p) => p.name.toLowerCase() === "$top");
+  return {
+    style: "link",
+    cursorParam: "$skiptoken",
+    nextField: ODATA_NEXT_LINK,
+    ...(top ? { pageSizeParam: top.name, ...pageSizeBounds(top.schema) } : {}),
+  };
 }

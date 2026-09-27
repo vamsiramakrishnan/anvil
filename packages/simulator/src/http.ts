@@ -23,11 +23,13 @@ import {
   type AirDocument,
   agentPropKey,
   type GraphqlWireBinding,
+  isODataPaging,
   type JsonSchema,
   type Operation,
   type Param,
   protocolFacadeApplies,
   resolveIdempotencyCarrier,
+  responseFieldPath,
   wireExecutability,
   wireProtocolFor,
 } from "@anvil/air";
@@ -106,7 +108,7 @@ function compileRoute(op: Operation): Route | undefined {
 }
 
 function setPath(target: Record<string, unknown>, path: string, value: unknown): void {
-  const keys = path.split(".");
+  const keys = responseFieldPath(path);
   let cursor = target;
   for (const key of keys.slice(0, -1)) {
     const next = cursor[key];
@@ -153,6 +155,9 @@ function envelope(
   let next: string | undefined = nextCursor;
   if (nextCursor !== undefined && pagination?.style === "link" && pagination.cursorParam) {
     const link = new URL(url.toString());
+    // The token names the whole continuation; an OData `$skip` the caller
+    // sent is already folded into it and must not be applied twice.
+    if (isODataPaging(pagination)) link.searchParams.delete("$skip");
     link.searchParams.set(pagination.cursorParam, nextCursor);
     next = link.toString();
   }
@@ -408,7 +413,9 @@ export async function serveSimulatorHttp(
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const method = (req.method ?? "GET").toUpperCase();
-    const url = new URL(req.url ?? "/", "http://simulator.local");
+    // The origin the caller reached, so a continuation link (`Link`,
+    // `@odata.nextLink`) is a URL the same client can follow.
+    const url = new URL(req.url ?? "/", `http://${headerValue(req, "host") ?? "simulator.local"}`);
     let raw: Buffer;
     try {
       raw = await readBody(req);
@@ -581,7 +588,8 @@ export async function serveSimulatorHttp(
 
 /**
  * The continuation a request carries, from wherever the contract pages: the
- * cursor parameter or the cursor field of the body.
+ * cursor parameter, the cursor field of the body, or for OData either
+ * `$skiptoken` or `$skip`.
  */
 function wireCursor(
   op: Operation,
@@ -595,7 +603,9 @@ function wireCursor(
     const value = isRecord(body) ? body[cursorParam] : undefined;
     return typeof value === "string" && value !== "" ? value : undefined;
   }
-  return query[cursorParam]?.at(-1);
+  return (
+    query[cursorParam]?.at(-1) ?? (isODataPaging(pagination) ? query.$skip?.at(-1) : undefined)
+  );
 }
 
 function isItems(output: unknown): output is { items: unknown[] } {

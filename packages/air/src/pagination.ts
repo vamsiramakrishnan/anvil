@@ -15,6 +15,10 @@ export const Pagination = z.object({
    * are declared parameters.
    */
   in: z.enum(["body"]).optional(),
+  /**
+   * A top-level response field is named literally even when it contains a dot
+   * (OData's `@odata.nextLink`); any other dotted value is a path.
+   */
   nextField: z.string().optional(),
   itemsField: z.string().optional(),
   /**
@@ -38,3 +42,21 @@ export const Pagination = z.object({
   defaultPageSize: z.number().int().positive().optional(),
 });
 export type Pagination = z.infer<typeof Pagination>;
+
+/**
+ * The key path a pagination field names in a response. A dotted value is a
+ * path (`response_metadata.next_cursor`), except an OData annotation such as
+ * `@odata.nextLink`, whose dot is part of one top-level key.
+ */
+export function responseFieldPath(field: string): string[] {
+  return field.startsWith("@") ? [field] : field.split(".");
+}
+
+/**
+ * Whether a pagination contract is OData's server-driven paging: the next
+ * request arrives as a URL in `@odata.nextLink` carrying `$skiptoken`, and a
+ * client may also continue with `$skip`.
+ */
+export function isODataPaging(pagination: Pagination | undefined): boolean {
+  return pagination?.style === "link" && pagination.nextField === "@odata.nextLink";
+}
