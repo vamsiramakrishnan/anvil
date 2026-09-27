@@ -30,7 +30,7 @@ import {
 import { deriveNames, estatePathContext, singularize } from "./naming.js";
 import { resolveAuth } from "./normalize-auth.js";
 import { buildRequestBody } from "./normalize-body.js";
-import { classifyPagination } from "./pagination-inference.js";
+import { classifyPagination, isSingletonRead } from "./pagination-inference.js";
 import type { ParsedSpec } from "./parse.js";
 import {
   classifyPathGrammar,
@@ -548,6 +548,21 @@ export function normalize(
       // same standing as `isWebhookReceiver`, rather than guessed from shape.
       const stream = StreamContractSchema.safeParse(raw["x-anvil-stream"]).data;
 
+      // A range code (`2XX`, OpenAPI 3's wildcard) is the success response when
+      // no exact one is declared; Microsoft Graph declares only ranges.
+      const successRes =
+        raw.responses?.["200"] ??
+        raw.responses?.["201"] ??
+        raw.responses?.["202"] ??
+        raw.responses?.["2XX"] ??
+        raw.responses?.["2xx"] ??
+        undefined;
+      const outputSchema = jsonSchemaOf(successRes?.content, namedSchemas, bounds);
+      const pagination = classifyPagination(effect, effect.action, params, outputSchema, body);
+      // A read with no trailing id defaults to `list`; an unpaged one whose
+      // declared response is not a collection (`GET /me`) reads one resource.
+      if (!pagination && isSingletonRead(effect, outputSchema)) effect.action = "get";
+
       const archetype = classifyArchetype(
         effect,
         effect.action,
@@ -564,17 +579,6 @@ export function normalize(
       // a half-built one the codec would then read.
       const wireBinding = WireBinding.safeParse(raw["x-anvil-wire-binding"]).data;
 
-      // A range code (`2XX`, OpenAPI 3's wildcard) is the success response when
-      // no exact one is declared; Microsoft Graph declares only ranges.
-      const successRes =
-        raw.responses?.["200"] ??
-        raw.responses?.["201"] ??
-        raw.responses?.["202"] ??
-        raw.responses?.["2XX"] ??
-        raw.responses?.["2xx"] ??
-        undefined;
-      const outputSchema = jsonSchemaOf(successRes?.content, namedSchemas, bounds);
-      const pagination = classifyPagination(effect, effect.action, params, outputSchema, body);
       const auth = resolveAuth(doc, raw.security);
       if (auth.issue) {
         diagnostics.push({

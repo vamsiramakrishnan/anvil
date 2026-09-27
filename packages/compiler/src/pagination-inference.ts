@@ -331,3 +331,36 @@ function odataPagination(
     ...(top ? { pageSizeParam: top.name, ...pageSizeBounds(top.schema) } : {}),
   };
 }
+
+/**
+ * An unpaged `list` read (the default for a GET without a trailing id) whose
+ * declared response is an object that is not a collection envelope: it has
+ * no array at its top level (Slack's `users.info`), or several, none of them
+ * singled out as the items (Microsoft Graph's `GET /me`, a user with its
+ * list-valued attributes). A collection envelope holds exactly one array; a
+ * read that declares no response, or a bare array, is left a list.
+ */
+export function isSingletonRead(
+  effect: Effect,
+  outputSchema: Record<string, unknown> | undefined,
+): boolean {
+  if (effect.kind !== "read" || effect.action !== "list" || !outputSchema) return false;
+  if (outputSchema.type === "array" || outputSchema.items !== undefined) return false;
+  // Inherited fields sit in `allOf` members when a bound kept the chain.
+  const props: Record<string, unknown> = {};
+  for (const part of [
+    outputSchema,
+    ...(Array.isArray(outputSchema.allOf) ? outputSchema.allOf : []),
+  ]) {
+    const own = (part as JsonSchema | undefined)?.properties;
+    if (own && typeof own === "object") Object.assign(props, own);
+  }
+  if (Object.keys(props).length === 0) return false;
+  const arrays = Object.values(props).filter(
+    (prop) =>
+      typeof prop === "object" &&
+      prop !== null &&
+      ((prop as JsonSchema).type === "array" || (prop as JsonSchema).items !== undefined),
+  );
+  return arrays.length !== 1;
+}

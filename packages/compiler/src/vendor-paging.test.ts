@@ -217,3 +217,54 @@ describe("a next-page URL in the response", () => {
     });
   });
 });
+
+describe("reads that return one resource", () => {
+  const spec = (paths: Record<string, unknown>) =>
+    JSON.stringify({
+      openapi: "3.0.1",
+      info: { title: "Singletons", version: "1" },
+      servers: [{ url: "https://api.example.test" }],
+      paths,
+    });
+  const get = (schema: unknown) => ({
+    get: {
+      responses: { "200": { description: "ok", content: { "application/json": { schema } } } },
+    },
+  });
+  const user = {
+    type: "object",
+    properties: {
+      id: { type: "string" },
+      businessPhones: { type: "array", items: { type: "string" } },
+      imAddresses: { type: "array", items: { type: "string" } },
+    },
+  };
+
+  it("reads GET /me and Slack's users.info as get, and a collection as list", async () => {
+    const air = await compile({
+      spec: spec({
+        "/me": get(user),
+        "/me/drive": get({
+          allOf: [
+            { properties: { id: { type: "string" } } },
+            { properties: { name: { type: "string" } } },
+          ],
+        }),
+        "/users.info": get({ type: "object", properties: { ok: { type: "boolean" }, user } }),
+        "/users": get({ type: "object", properties: { value: { type: "array", items: user } } }),
+        "/tags": get({ type: "array", items: { type: "string" } }),
+        "/ping": get({ type: "object" }),
+      }),
+      serviceId: "people",
+    });
+    const action = (path: string) =>
+      air.operations.find((o) => o.sourceRef.path === path)?.effect.action;
+    expect(action("/me")).toBe("get");
+    expect(action("/me/drive")).toBe("get");
+    expect(action("/users.info")).toBe("get");
+    expect(action("/users")).toBe("list");
+    expect(action("/tags")).toBe("list");
+    // Nothing declared: no evidence either way, so the default stands.
+    expect(action("/ping")).toBe("list");
+  });
+});
