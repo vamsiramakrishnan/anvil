@@ -52,15 +52,22 @@ contract's paths, so neither could target it.
    can be written in any language.
 
 4. **HTTP serving.** `anvil simulate serve --contract <bundle>` serves each
-   approved operation at its declared path and method and prints the bound
-   URL. Principal, tenant, and fault scenario come from headers; the
+   approved operation where the runtime's codec for its protocol sends it
+   (its declared path and method; for GraphQL, one endpoint with the
+   operation in the document) and prints the bound URL. A body is decoded in
+   the content type the operation declares. An operation the server cannot
+   reach over its native protocol is refused at startup, not served as 404;
+   `--protocol-facade` serves SOAP and other coordinate-only protocols at
+   their synthesized paths for clients that declare a facade. Principal, tenant, and fault scenario come from headers; the
    idempotency key comes from the contract's carrier. Confirmation is treated
    as given, because every calling surface enforces it before sending and the
    wire has no field for it.
 
 5. **A call trace.** Each call can append one JSON line: the request as the
    agent sent it, the normalized request, the provider's answer, the result,
-   and the final status and body. No clock is recorded.
+   and the final status and body. No clock is recorded. The trace file is
+   opened before serving; a later write failure is reported and never changes
+   the response of a call that already happened.
 
 ## Consequences
 

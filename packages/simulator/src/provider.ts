@@ -73,6 +73,8 @@ export interface ProviderRequest {
     path: Record<string, unknown>;
     query: Record<string, unknown>;
     header: Record<string, unknown>;
+    /** Declared cookie parameters (added within protocol version 1; see the docs). */
+    cookie: Record<string, unknown>;
   };
   /** The request body as the contract names its fields; `null` when absent. */
   body: unknown;
@@ -157,16 +159,16 @@ export function initializeParams(
   };
 }
 
-/** Split an agent-keyed input into wire-named path/query/header params and a body. */
+/** Split an agent-keyed input into wire-named path/query/header/cookie params and a body. */
 export function wireParams(
   op: Operation,
   input: Record<string, unknown>,
 ): { params: ProviderRequest["params"]; body: unknown } {
-  const params: ProviderRequest["params"] = { path: {}, query: {}, header: {} };
+  const params: ProviderRequest["params"] = { path: {}, query: {}, header: {}, cookie: {} };
   for (const p of op.input.params) {
     const value = input[agentPropKey(p)];
     if (value === undefined || value === null) continue;
-    if (p.in === "path" || p.in === "query" || p.in === "header") params[p.in][p.name] = value;
+    if (p.in !== "body") params[p.in][p.name] = value;
   }
   const declared = op.input.body;
   let body: unknown = null;

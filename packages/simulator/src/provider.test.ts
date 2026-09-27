@@ -231,7 +231,7 @@ describe("in-process provider", () => {
       resource: "ticket",
       method: "GET",
       pathTemplate: "/tickets",
-      params: { path: {}, query: { status: "open" }, header: {} },
+      params: { path: {}, query: { status: "open" }, header: {}, cookie: {} },
       body: null,
       page: { cursor: null, size: 2 },
       principal: null,
