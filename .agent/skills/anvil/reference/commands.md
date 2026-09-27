@@ -94,6 +94,7 @@ Options:
 - `--entrypoint <path>` — snapshot-relative entrypoint when a source has several
 - `--manifest <file>` — Anvil manifest with semantic overrides, workflows, and exact-id capability reviews
 - `--service <id>` — override the derived service id
+- `--profile <file>` — exposure profile: which operations of the full source are the exposed surface, schema bounds, and an optional declarative approval
 - `--out <dir>` — bundle output directory (default generated/<service-id>)
 - `--endpoint <url>` — MCP endpoint recorded in the generated artifacts
 - `--human-approval <policy>` — require explicit human approval on gated mutations: none | unsafe | all (per-op manifest `human_approval` overrides)
@@ -113,6 +114,16 @@ Prints machine-readable schemas derived from the same definitions the compiler v
 The JSON Schema for the anvil.yaml manifest.
 
 Emits draft 2020-12 JSON Schema for the manifest (`--manifest` to `anvil compile`). Add `# yaml-language-server: $schema=<path>` as the first line of a manifest to get completion and validation in an editor. Keys are strict: an unknown key is a compile error, and this schema says which keys exist.
+
+Options:
+- `--out <file>` — write the schema to a file instead of stdout
+
+#### `anvil schema profile`
+`anvil schema profile [options]`
+
+The JSON Schema for an exposure profile.
+
+Emits draft 2020-12 JSON Schema for an exposure profile (`--profile` to `anvil compile`): which operations of a full source are the exposed surface, schema bounds, and an optional declarative approval. Keys are strict.
 
 Options:
 - `--out <file>` — write the schema to a file instead of stdout
@@ -884,13 +895,14 @@ Options:
 - `--json` — emit the proposal + interview questions as JSON
 
 ### `anvil approve`  *(mutates)*
-`anvil approve [options] <path> <operation-ids...>`
+`anvil approve [options] <path> [operation-ids...]`
 
 Approve operations so they are exposed by the generated artifacts.
 
 Only approved operations appear in the MCP server, CLI catalog, compiled runtime, and skill. Approve deliberately after inspecting risk. The AIR and every generated projection are staged, checked for exact bytes and surface agreement, then swapped into place together; the replaced generation is retained under .anvil/history (see `anvil rollback`) and the decision is appended to .anvil/approvals.jsonl with the reviewer, the states that moved, and the bundle hash before and after. Receipt-bound gateway imports refuse in-place approval and provide the exact manifest re-import command so import-to-approval lineage stays immutable.
 
 Options:
+- `--profile` — approve every exposed, unblocked operation of the bundle's exposure profile; requires --reviewer and records the profile digest
 - `--reviewer <id>` — who is approving, recorded verbatim in the approval record (absent records 'unrecorded')
 - `--note <note>` — review note persisted with the decision
 - `--dry-run` — run every gate and print what would change across the MCP, CLI, and skill surfaces; write nothing

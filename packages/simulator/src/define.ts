@@ -22,14 +22,26 @@ export interface DefineOptions {
   responseBudgetTokens?: number;
 }
 
-/** The served operations: approved, and in the capability when one is named. */
+/**
+ * The served operations: approved, inside the exposure profile when the AIR
+ * was compiled under one, and in the capability when one is named.
+ */
 function servedOperations(air: AirDocument, capabilityId?: string) {
   const memberIds = capabilityId
     ? new Set(air.capabilities.find((c) => c.id === capabilityId)?.operationIds ?? [])
     : undefined;
+  const inProfile = exposureFilter(air);
   return air.operations.filter(
-    (op) => op.state === "approved" && (!memberIds || memberIds.has(op.id)),
+    (op) => op.state === "approved" && inProfile(op) && (!memberIds || memberIds.has(op.id)),
   );
+}
+
+/** Whether an operation is inside the AIR's exposure profile (every one is, without a profile). */
+export function exposureFilter(air: AirDocument): (op: { id: string }) => boolean {
+  const profile = air.service.source.profile;
+  if (!profile) return () => true;
+  const exposed = new Set(profile.exposedOperations);
+  return (op) => exposed.has(op.id);
 }
 
 /** Default fault scenarios every simulator supports. */

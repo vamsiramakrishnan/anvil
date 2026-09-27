@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { manifestJsonSchema } from "@anvil/compiler";
+import { manifestJsonSchema, profileJsonSchema } from "@anvil/compiler";
 import type { Command } from "commander";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
@@ -33,14 +33,29 @@ export function registerSchema(parent: Command, ctx: CommandContext): void {
     )
     .option("--out <file>", "write the schema to a file instead of stdout")
     .action((opts: { out?: string }) => {
-      const text = `${JSON.stringify(manifestJsonSchema(), null, 2)}\n`;
-      if (opts.out) {
-        mkdirSync(dirname(opts.out), { recursive: true });
-        writeFileSync(opts.out, text, "utf8");
-        ctx.io.err(`Wrote ${opts.out}`);
-      } else {
-        ctx.io.out(text.trimEnd());
-      }
-      ctx.code = 0;
+      ctx.code = emitSchema(ctx, manifestJsonSchema(), opts.out);
     });
+
+  schema
+    .command("profile")
+    .summary("The JSON Schema for an exposure profile.")
+    .description(
+      "Emits draft 2020-12 JSON Schema for an exposure profile (`--profile` to `anvil compile`): which operations of a full source are the exposed surface, schema bounds, and an optional declarative approval. Keys are strict.",
+    )
+    .option("--out <file>", "write the schema to a file instead of stdout")
+    .action((opts: { out?: string }) => {
+      ctx.code = emitSchema(ctx, profileJsonSchema(), opts.out);
+    });
+}
+
+function emitSchema(ctx: CommandContext, schema: unknown, out: string | undefined): number {
+  const text = `${JSON.stringify(schema, null, 2)}\n`;
+  if (out) {
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, text, "utf8");
+    ctx.io.err(`Wrote ${out}`);
+  } else {
+    ctx.io.out(text.trimEnd());
+  }
+  return 0;
 }

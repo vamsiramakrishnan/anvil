@@ -2,6 +2,7 @@ import {
   AIR_VERSION,
   type AirDocument,
   type AuthRequirement,
+  authCoherenceIssues,
   type Diagnostic,
   type JsonSchema,
   loadAirDocument,
@@ -28,11 +29,22 @@ import {
   buildQueryTemplates,
   buildWorkflows,
   manifestAuthProviderToAir,
+  operationMatchesKey,
 } from "./manifest.js";
 import { parseManifest, unresolvedManifestEntries } from "./manifest-parse.js";
 import { critiqueNames, resolveNameCollisions, servicePrefixStutterDiagnostic } from "./naming.js";
 import { normalize } from "./normalize.js";
 import { type ParsedSpec, parseSource } from "./parse.js";
+import {
+  type ExposureProfile,
+  profileApproves,
+  profileDigest,
+  profileRecord,
+  profileSchemaBounds,
+  profileSelects,
+  selectableOf,
+} from "./profile.js";
+import { DEFAULT_SCHEMA_BOUNDS } from "./schema-bounds.js";
 import { type CompilerSource, ephemeralCompilerSource } from "./source/compiler-source.js";
 import { validate } from "./validate.js";
 
@@ -62,6 +74,12 @@ export interface CompileInput {
 export interface CompileSourceOptions {
   /** Optional supplemental Anvil manifest text. */
   manifest?: string;
+  /**
+   * An exposure profile (see profile.ts): which operations of the source are
+   * the exposed surface, the schema bounds, and an optional declarative
+   * approval. Recorded in `service.source.profile`.
+   */
+  profile?: ExposureProfile;
   /** Override the derived service id. */
   serviceId?: string;
   /** Coarse human-approval default; per-op manifest `human_approval` overrides. */
@@ -115,7 +133,13 @@ export async function compileSourceEffective(
   source: CompilerSource,
   options: EffectiveCompileOptions = {},
 ): Promise<EffectiveCompileResult> {
-  const parsed = await parseSource(source);
+  const pinned = options.profile?.source?.digest;
+  if (pinned !== undefined && pinned !== source.sourceHash) {
+    throw new Error(
+      `Exposure profile '${options.profile?.profile}' is pinned to source ${pinned}, but the snapshot being compiled is ${source.sourceHash}. Review the profile against this source and update source.digest.`,
+    );
+  }
+  const parsed = await parseSource(source, options.profile ? { profile: options.profile } : {});
   return buildAir(parsed, { ...options, provenance: source });
 }
 
@@ -140,6 +164,7 @@ interface BuildAirOptions extends EffectiveCompileOptions {
 function applyServiceAuthDefaults(
   operations: Operation[],
   config: NonNullable<AnvilManifest["auth"]> | undefined,
+  alternativesUnmodeled: ReadonlySet<string> = new Set(),
 ): { operations: Operation[]; diagnostics: Diagnostic[] } {
   if (!config) return { operations, diagnostics: [] };
   const diagnostics: Diagnostic[] = [];
@@ -148,7 +173,37 @@ function applyServiceAuthDefaults(
   return {
     operations: operations.map((operation) => {
       let next = operation;
-      if (config.type === "oauth2") {
+      if (
+        alternativesUnmodeled.has(operation.id) &&
+        config.type !== undefined &&
+        config.type !== "oauth2"
+      ) {
+        // The source offers OR'd security alternatives the compiler would not
+        // pick between (auth/alternatives_unmodeled). A service-level manifest
+        // auth type IS the explicit choice that diagnostic asks for: apply it,
+        // and lift the auth block to review, never to approval. Coherence is
+        // still checked by the manifest application, which re-blocks an
+        // incomplete contract.
+        const { scopes: _scopes, type: _type, ...auth } = config;
+        const wasBlocked = operation.state === "blocked";
+        next = applyOperationManifest(operation, { auth: { ...auth, type: config.type } });
+        if (wasBlocked && next.state === "blocked" && authCoherenceIssues(next.auth).length === 0) {
+          next.state = "review_required";
+        }
+        next.reviewNotes = next.reviewNotes.filter(
+          (n) => !n.includes("AIR cannot safely select one implicitly"),
+        );
+        const note =
+          `Service auth ${config.type} selected by the manifest among the source's alternative ` +
+          "security requirements. Confirm it is one of the declared alternatives before approval.";
+        if (!next.reviewNotes.includes(note)) next.reviewNotes.push(note);
+        diagnostics.push({
+          level: "info",
+          code: "auth/alternative_selected_by_manifest",
+          message: note,
+          operationId: operation.id,
+        });
+      } else if (config.type === "oauth2") {
         if (operation.auth.type === "none") {
           next = applyOperationManifest(operation, {
             auth: { type: "custom_header" },
@@ -297,14 +352,34 @@ async function buildAir(
   const title = (doc.info?.title as string | undefined) ?? "service";
   const serviceId = options.serviceId ?? manifest.service?.name ?? snakeCase(title) ?? "service";
 
+  const profile = options.profile;
+  const schemaBounds = profile ? profileSchemaBounds(profile) : DEFAULT_SCHEMA_BOUNDS;
   const normalized = normalize(serviceId, parsed, {
     pathGrammarOverride: manifest.path_grammar,
+    schemaBounds,
   });
-  const serviceAuthDefaults = applyServiceAuthDefaults(normalized.operations, manifest.auth);
+  // `unexposed: skip` already pruned the document; this drops what pruning
+  // could not judge (an operation behind a `$ref` path item).
+  if (profile?.unexposed === "skip") {
+    normalized.operations = normalized.operations.filter((op) =>
+      profileSelects(profile, selectableOf(op)),
+    );
+  }
+  const alternativesUnmodeled = new Set(
+    normalized.diagnostics
+      .filter((d) => d.code === "auth/alternatives_unmodeled" && d.operationId)
+      .map((d) => d.operationId as string),
+  );
+  const serviceAuthDefaults = applyServiceAuthDefaults(
+    normalized.operations,
+    manifest.auth,
+    alternativesUnmodeled,
+  );
   let operations = serviceAuthDefaults.operations;
   // Naming pass: resolve any name collisions coherently across id/CLI/tool with
   // meaningful tokens (never a silent `_2`) before enrichment or validation.
   const namingDiagnostics = resolveNameCollisions(operations);
+  if (profile?.approve) applyProfileApproval(manifest, operations, profile);
 
   // An OPERATOR-chosen service id that duplicates the operationIds' leading
   // word makes every tool name stutter (BigQuery's `--service bigquery` over
@@ -523,14 +598,94 @@ async function buildAir(
     }
   }
 
+  if (profile) {
+    enforceProfile(reviewedAir, profile, {
+      digest: profileDigest(profile),
+      sourceOperations: parsed.sourceOperations ?? reviewedAir.operations.length,
+      bounds: schemaBounds,
+    });
+  }
+
   return { air: loadAirDocument(reviewedAir), conflicts, blockedOperationIds, appliedOverlays };
+}
+
+/**
+ * Fold a profile's declarative approval into the manifest as `state: approved`
+ * entries, so it meets every gate a manifest approval meets (auth approval,
+ * validation, the overlay conflict rules). An operation whose manifest entry
+ * already decides its state keeps that decision.
+ */
+function applyProfileApproval(
+  manifest: AnvilManifest,
+  operations: readonly Operation[],
+  profile: ExposureProfile,
+): void {
+  const approval = profile.approve;
+  if (!approval) return;
+  const entries = Object.entries(manifest.operations);
+  for (const op of operations) {
+    if (!profileApproves(profile, selectableOf(op))) continue;
+    const existing = entries.find(([key]) => operationMatchesKey(op, key));
+    if (existing?.[1].state !== undefined) continue;
+    const key = existing?.[0] ?? op.id;
+    manifest.operations[key] = {
+      ...(existing?.[1] ?? {}),
+      state: "approved",
+      reviewed_by: existing?.[1].reviewed_by ?? approval.reviewed_by,
+      review_reason:
+        existing?.[1].review_reason ?? `Exposure profile ${profile.profile}: ${approval.reason}`,
+    };
+  }
+}
+
+/**
+ * The profile's last word: an approved operation outside the exposed surface
+ * returns to review (a manifest cannot approve past the profile), and the
+ * record binding the profile and source digests is stamped on the service.
+ */
+function enforceProfile(
+  air: AirDocument,
+  profile: ExposureProfile,
+  input: { digest: string; sourceOperations: number; bounds: typeof DEFAULT_SCHEMA_BOUNDS },
+): void {
+  const exposed: string[] = [];
+  const approved: string[] = [];
+  for (const op of air.operations) {
+    const view = selectableOf(op);
+    if (profileSelects(profile, view)) {
+      exposed.push(op.id);
+      if (op.state === "approved" && profileApproves(profile, view)) approved.push(op.id);
+      continue;
+    }
+    if (op.state !== "approved") continue;
+    op.state = "review_required";
+    const note = `Outside exposure profile '${profile.profile}'; approval withdrawn. Add it to the profile's selection to expose it.`;
+    if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    air.diagnostics.push({
+      level: "warning",
+      code: "profile/approval_outside_profile",
+      message: note,
+      operationId: op.id,
+    });
+  }
+  air.service.source.profile = profileRecord(profile, input.digest, {
+    ...(air.service.source.sourceHash ? { sourceHash: air.service.source.sourceHash } : {}),
+    sourceOperations: input.sourceOperations,
+    exposed,
+    approved,
+    bounds: input.bounds,
+  });
 }
 
 /** Approve operations by id (spec §17 approval workflow). */
 export function approveOperations(air: AirDocument, ids: string[]): AirDocument {
   const set = new Set(ids);
+  // Under an exposure profile, only the profile's operations are approvable.
+  const profile = air.service.source.profile;
+  const exposed = profile ? new Set(profile.exposedOperations) : undefined;
   for (const op of air.operations) {
     if (!set.has(op.id) || op.state === "blocked") continue;
+    if (exposed && !exposed.has(op.id)) continue;
     const carrier = resolveIdempotencyCarrier(op);
     const schemaIssue = carrier.ok ? operationIdempotencyKeySchemaIssue(op) : undefined;
     if (!carrier.ok || schemaIssue) {

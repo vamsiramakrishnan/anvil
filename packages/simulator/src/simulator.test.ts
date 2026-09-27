@@ -529,3 +529,25 @@ describe("review fixes — surface scoping and replay isolation", () => {
     if (first.ok && second.ok) expect(second.output).toEqual(first.output);
   });
 });
+
+describe("exposure profile", () => {
+  it("serves only approved operations inside the AIR's exposure profile", () => {
+    const list = air.operations.find((op) => op.sourceRef.operationId === "listRefunds");
+    air.service.source.profile = {
+      id: "reads",
+      digest: `sha256:${"0".repeat(64)}`,
+      unexposed: "compile",
+      sourceOperations: air.operations.length,
+      exposedOperations: [list?.id ?? ""],
+      schemaBounds: {
+        maxRefDepth: 1,
+        maxSchemaNodes: 4000,
+        inheritAllOf: false,
+        fitToBudget: false,
+      },
+    };
+    const def = simulatorDefinitionFor(air);
+    const sim = new Simulator(air, def);
+    expect(sim.operations().map((op) => op.id)).toEqual([list?.id]);
+  });
+});

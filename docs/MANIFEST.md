@@ -237,6 +237,20 @@ auth:
   secret_source: secret_manager
 ```
 
+When a source declares alternative security requirements that carry
+different authority (Jira and Confluence accept basic auth or OAuth), the
+compiler does not pick one and blocks each operation with
+`auth/alternatives_unmodeled`. A service-level `auth.type` is the explicit
+choice that diagnostic asks for: it applies to those operations, moves them
+from `blocked` to `review_required`, and records an
+`auth/alternative_selected_by_manifest` note. Confirm the chosen type is one
+of the declared alternatives before approving.
+
+```yaml
+auth:
+  type: basic
+```
+
 ### mTLS, custom headers, and end-user authorization-code
 
 Three more auth types the runtime executes, each declared by NAME only —

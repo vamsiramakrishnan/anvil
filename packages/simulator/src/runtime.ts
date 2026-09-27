@@ -19,6 +19,7 @@ import {
   safePageSize,
 } from "@anvil/air";
 import { materializeSchema, type SurfaceSignature, surfaceSignatureFor } from "@anvil/compiler";
+import { exposureFilter } from "./define.js";
 import type { SimulatedPrincipal, SimulatorDefinition } from "./model.js";
 import {
   askProvider,
@@ -292,7 +293,8 @@ export class Simulator {
       );
     }
     const memberIds = new Set(capability?.operationIds ?? []);
-    const inCapability = (op: Operation) => isService || memberIds.has(op.id);
+    const inProfile = exposureFilter(air);
+    const inCapability = (op: Operation) => (isService || memberIds.has(op.id)) && inProfile(op);
     this.ops = air.operations.filter((op) => op.state === "approved" && inCapability(op));
     this.rng = new Rng(def.seed);
     this.activeSeed = def.seed;

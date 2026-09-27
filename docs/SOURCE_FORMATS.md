@@ -71,6 +71,145 @@ can snapshot.
 For multi-entrypoint directories, pass the exact entrypoint when compiling a
 snapshot. Do not rely on filename order.
 
+## Full vendor specs and exposure profiles
+
+Compile a vendor's whole published contract, not a trimmed copy, and choose
+the operations an agent sees with an exposure profile. The snapshot stays the
+contract of record. The profile narrows what may be approved and served, and
+the compile records both digests in `service.source.profile`.
+
+### Write a profile
+
+```yaml
+# jira.profile.yaml
+profile: jira-issues                 # lowercase slug
+description: Issue tracking for a support agent.
+source:
+  digest: sha256:0fc9d1d0...         # optional: the snapshot sourceHash this was reviewed against
+select:                              # or: select: all
+  - operation_id: [getIssue, createIssue, editIssue, doTransition]
+  - tag: [Issue comments, Issue worklogs]
+  - tag: Projects
+    method: get
+  - path: "/rest/api/3/user/search/**"
+exclude:
+  - method: delete
+unexposed: skip                      # or: compile
+schema_bounds:                       # optional; profile defaults shown
+  max_ref_depth: 3
+  max_schema_nodes: 2000
+  inherit_all_of: true
+approve:                             # optional declarative approval
+  reviewed_by: reviewer@example.com
+  reason: Read operations reviewed against the vendor reference.
+  select:
+    - method: get
+```
+
+| Key | Meaning |
+| --- | --- |
+| `select` | `all`, or a list of selectors. An operation is selected when any selector matches. |
+| selector | Any of `operation_id`, `tag`, `path`, `method`, each a value or a list. Every key a selector sets must match. `operation_id` is the source's own operationId (for Google Discovery, the method id such as `drive.files.list`). `operation_id` and `tag` accept `*`. `path` is a glob over the source path: `*` stays within one segment and `**` spans segments. Quote a path in YAML when it contains `{` or `*`. |
+| `exclude` | Selectors removed from the selection. |
+| `unexposed` | `skip` (default) leaves unselected operations out of the AIR and prunes every component schema only they reach, before `$ref` dereferencing. `compile` keeps them in the AIR, compiled, but never approvable. |
+| `schema_bounds` | How operation schemas are materialized; see [Schema bounds](#schema-bounds). |
+| `approve` | A named reviewer and reason approving some or all selected operations at compile time. It goes through the manifest's `state: approved` channel, so every gate a manifest approval meets still applies: an unresolvable idempotency carrier, a query-language passthrough, or an incoherent auth contract leaves the operation blocked. |
+| `source.digest` | Refuse to compile against any other snapshot. |
+
+Keys are strict. `anvil schema profile` prints the JSON Schema for editor
+validation. The profile digest is the sha256 of its parsed, key-sorted JSON,
+so reformatting the file does not change it.
+
+### Compile, approve, and serve
+
+```bash
+anvil compile jira.json --profile jira.profile.yaml --manifest anvil.yaml \
+  --out generated/jira
+# Compiled 39 operations ...
+#   profile jira-issues (sha256:...): 39 of 619 source operations exposed; the rest skipped.
+
+anvil inspect generated/jira
+anvil approve generated/jira --profile --reviewer alice@example.com --dry-run
+anvil approve generated/jira --profile --reviewer alice@example.com
+anvil sdk generated/jira --lang python --out sdk
+anvil simulate serve --contract generated/jira --port 0
+```
+
+`anvil approve --profile` approves every selected operation that is not yet
+approved and not blocked, names the blocked ones, and appends one record to
+`.anvil/approvals.jsonl` whose note carries the profile id and digest. It
+requires `--reviewer`. Approving an operation outside the profile is refused,
+by `anvil approve` and by a manifest `state: approved` (the compile withdraws
+it with a `profile/approval_outside_profile` warning). Generated artifacts and
+the simulator expose approved operations only, so the exposed surface is
+always a subset of the profile.
+
+Some vendor contracts need a manifest before any operation can be approved.
+Jira and Confluence declare basic auth or OAuth as alternatives, which blocks
+every operation until a service-level `auth.type` chooses one (see
+[MANIFEST.md](./MANIFEST.md#auth-without-secrets)).
+
+A whole-source profile is `select: all`. It compiles every operation, which
+for a very large contract is slow and produces a large AIR; lower
+`schema_bounds` for it (see the measurements below).
+
+### Schema bounds
+
+A compile materializes each operation's request and response schema into a
+self-contained, `$ref`-free schema. Without a profile the historical bounds
+apply: one named-schema hop, and a 4,000-node expansion budget. A profile
+compile uses these defaults instead:
+
+| Bound | Profile default | Meaning |
+| --- | --- | --- |
+| `max_ref_depth` | 3 | The deepest named-schema hop chain tried |
+| `max_schema_nodes` | 2000 | The largest materialized tree accepted |
+| `inherit_all_of` | `true` | A `$ref` directly inside `allOf` is inheritance and spends no hop; the base's discriminator mapping is dropped |
+
+Each schema gets the deepest depth up to `max_ref_depth` whose tree fits in
+`max_schema_nodes`; if none does, one hop truncated at the node budget. On
+Microsoft Graph, `GET /users` then shows the collection envelope and each
+`user` with its inherited `directoryObject` and `entity` fields, and
+`GET /users/{user-id}` stays at one hop instead of expanding every navigation
+property. A cycle is always cut to a stub that names the schema.
+
+### Large documents
+
+A JSON document is read with `JSON.parse`, and a YAML document with js-yaml
+under a schema that resolves scalars exactly as YAML 1.2 core does. Documents
+with anchors or merge keys, and documents either fast reader rejects, go
+through the `yaml` document parser, which reports errors with a line and
+column.
+
+### Measurements
+
+Workload: the published specs listed below, fetched 2026-09-26. Method: one
+run each of `anvil compile` from a spec file into an empty workspace on a
+4-core Linux container with 15GB of memory, Node 22; wall time and peak RSS
+of the process. "Before" is revision 1b448fc with no profile; "after" adds
+the profile named. The profile rows compile 20 to 60 operations.
+
+| Spec (operations) | Before, whole source | After, profile | After, `select: all` |
+| --- | --- | --- | --- |
+| Jira Cloud platform v3, 2.5MB JSON (619) | 7.6s, 760MB; 605 operations blocked | 39 operations: 2.9s, 385MB | 12.5s, 1.0GB |
+| Confluence v2, 0.6MB JSON (218) | 3.3s, 430MB | 33 operations: 2.0s, 297MB | not measured |
+| Slack Web API, Swagger 2.0, 1.2MB JSON (174) | 3.5s, 417MB | 29 operations: 2.0s, 282MB | not measured |
+| Google Drive v3 Discovery, 0.3MB JSON (64) | 2.4s, 353MB | 28 operations: 2.3s, 325MB | not measured |
+| Microsoft Graph v1.0, 44MB YAML (17,870) | failed after 325s at 8.0GB (file name too long) | 46 operations: 8.1s, 730MB | 129s, 9.0GB, with `max_ref_depth: 1` and `max_schema_nodes: 1000` |
+
+Parsing alone, on the same machine: the Jira JSON took 1.6s with the `yaml`
+document parser and 0.02s with `JSON.parse`; the Graph YAML took 22s and
+1.5GB with the `yaml` package and 2.6s and 0.4GB with js-yaml.
+
+For each profile bundle, `anvil sdk --lang python` took 1.3s to 3.1s,
+`anvil simulate serve` printed its URL within 1.6s to 3.6s at 272MB to 506MB
+peak RSS, and every approved read answered over HTTP. The Jira `select: all`
+compile is slower than the unprofiled one because it materializes deeper
+schemas under the profile bounds (a 26MB AIR instead of 7.7MB). The Graph
+`select: all` compile needs a machine with more than 9GB of memory; at the
+profile default bounds its AIR passes the 512MB string limit of the
+JavaScript engine, and the compile says to lower the bounds.
+
 ## Format-specific notes
 
 ### OpenAPI and Swagger

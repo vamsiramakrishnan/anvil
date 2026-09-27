@@ -57,6 +57,26 @@ so any HTTP client of the real API can target it:
 | `--page-size <n>` | Page size when the contract lets Anvil derive none |
 | `--trace <file>` | Append one JSON line per call |
 
+### Serve a profile of a full vendor spec
+
+Compile the vendor's whole published spec under an exposure profile, approve
+the profile's operations, and serve the bundle. The server answers only
+approved operations inside the profile; every other path of the real API
+returns `unsupported_operation`, so an agent sees the chosen subset while its
+requests and responses follow the vendor's real contract.
+
+```sh
+anvil compile swagger-v3.v3.json --profile jira.profile.yaml \
+  --manifest anvil.yaml --out ./jira
+anvil approve ./jira --profile --reviewer alice@example.com
+anvil simulate serve --contract ./jira --port 0 --trace ./calls.jsonl
+```
+
+A profile that selects every operation (`select: all`) serves the whole
+approved contract. The profile format, its schema bounds, and measured
+compile costs for five vendor specs are in
+[Full vendor specs and exposure profiles](./SOURCE_FORMATS.md#full-vendor-specs-and-exposure-profiles).
+
 ### How a request is read
 
 - **Principal.** The `X-Anvil-Principal` header, else a bearer token equal to

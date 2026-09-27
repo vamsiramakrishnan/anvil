@@ -4,9 +4,11 @@ import type { AirDocument, Diagnostic } from "@anvil/air";
 import {
   type CompilerSource,
   compileSource,
+  type ExposureProfile,
   formatManifestIssue,
   type HumanApprovalPolicy,
   type ManifestIssue,
+  parseExposureProfile,
   parseManifestDetailed,
   type SourceDiagnostic,
 } from "@anvil/compiler";
@@ -34,6 +36,9 @@ export interface CompileBundleOptions {
   /** Path to the manifest file, or its text (`manifestText`). */
   manifest?: string;
   manifestText?: string;
+  /** Path to an exposure profile, or its text (`profileText`). See docs/SOURCE_FORMATS.md. */
+  profile?: string;
+  profileText?: string;
   serviceId?: string;
   /** Bundle output directory. Defaults to `generated/<service-id>`. */
   out?: string;
@@ -58,8 +63,12 @@ export type CompileBundleResult =
     }
   | {
       ok: false;
-      /** Why nothing was written: the source could not be locked or read, or the manifest is invalid. */
-      stage: "source" | "manifest";
+      /**
+       * Why nothing was written: the source could not be locked or read, the
+       * manifest is invalid, or the exposure profile is invalid or pinned to
+       * another source.
+       */
+      stage: "source" | "manifest" | "profile";
       diagnostics: Array<Diagnostic | SourceDiagnostic>;
       /** Present for a manifest failure: each issue located in the YAML. */
       manifestIssues?: ManifestIssue[];
@@ -133,16 +142,66 @@ export async function compileBundle(options: CompileBundleOptions): Promise<Comp
     }
   }
 
+  let profile: ExposureProfile | undefined;
+  let profileText = options.profileText;
+  if (options.profile !== undefined) {
+    if (!existsSync(options.profile)) {
+      return fail(
+        "profile",
+        "profile/not_found",
+        `Exposure profile '${options.profile}' does not exist; nothing was compiled.`,
+      );
+    }
+    profileText = readFileSync(options.profile, "utf8");
+  }
+  if (profileText !== undefined) {
+    const parsed = parseExposureProfile(profileText);
+    if (!parsed.ok) {
+      return {
+        ok: false,
+        stage: "profile",
+        diagnostics: parsed.issues.map((issue) => ({
+          level: "error" as const,
+          code: "profile/invalid",
+          message: `${options.profile ?? "profile"}: ${issue}`,
+        })),
+      };
+    }
+    profile = parsed.profile;
+    const pinned = profile.source?.digest;
+    if (pinned !== undefined && pinned !== resolved.source.sourceHash) {
+      return fail(
+        "profile",
+        "profile/source_mismatch",
+        `Exposure profile '${profile.profile}' is pinned to source ${pinned}, but snapshot ${resolved.source.snapshotId} is ${resolved.source.sourceHash}. Review the profile against this source and update source.digest; nothing was compiled.`,
+      );
+    }
+  }
+
   const air = await compileSource(resolved.source, {
     manifest: manifestText,
     serviceId: options.serviceId,
     humanApproval: options.humanApproval,
+    ...(profile ? { profile } : {}),
   });
   // A bundle with error diagnostics is still written — exactly as the command
   // always has — so the operator can inspect what compiled; `diagnostics`
   // carries the errors and the CLI exits non-zero on them.
   const outDir = options.out ?? join("generated", air.service.id);
-  const bundle = generateBundle(air, { mcpEndpoint: options.endpoint });
+  let bundle: ReturnType<typeof generateBundle>;
+  try {
+    bundle = generateBundle(air, { mcpEndpoint: options.endpoint });
+  } catch (err) {
+    // V8 caps a string near 512MB; a whole-source compile of a very large
+    // contract can serialize past it. Say what to change instead of the
+    // engine's bare "Invalid string length".
+    if (err instanceof RangeError && /string length/i.test(err.message)) {
+      throw new Error(
+        `The compiled AIR for ${air.operations.length} operations is too large to serialize. Narrow the exposure profile's selection, or lower its schema_bounds (max_ref_depth, max_schema_nodes).`,
+      );
+    }
+    throw err;
+  }
   const written = installGeneratedBundle(outDir, bundle, {
     onCleanupWarning: (message) => options.onWarning?.(message),
   });
@@ -165,6 +224,10 @@ export function compileHasErrors(result: CompileBundleResult): boolean {
   return result.diagnostics.some((d) => d.level === "error");
 }
 
-function fail(stage: "source" | "manifest", code: string, message: string): CompileBundleResult {
+function fail(
+  stage: "source" | "manifest" | "profile",
+  code: string,
+  message: string,
+): CompileBundleResult {
   return { ok: false, stage, diagnostics: [{ level: "error", code, message }] };
 }

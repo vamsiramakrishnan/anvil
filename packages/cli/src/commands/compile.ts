@@ -28,6 +28,10 @@ export function registerCompile(parent: Command, ctx: CommandContext): void {
         "Anvil manifest with semantic overrides, workflows, and exact-id capability reviews",
       )
       .option("--service <id>", "override the derived service id")
+      .option(
+        "--profile <file>",
+        "exposure profile: which operations of the full source are the exposed surface, schema bounds, and an optional declarative approval",
+      )
       .option("--out <dir>", "bundle output directory (default generated/<service-id>)")
       .option("--endpoint <url>", "MCP endpoint recorded in the generated artifacts")
       .option(
@@ -47,6 +51,7 @@ interface CompileOptions {
   source?: string;
   entrypoint?: string;
   manifest?: string;
+  profile?: string;
   service?: string;
   out?: string;
   endpoint?: string;
@@ -79,6 +84,7 @@ async function runCompile(
     source: opts.source,
     entrypoint: opts.entrypoint,
     manifest: opts.manifest,
+    profile: opts.profile,
     serviceId: opts.service,
     out: opts.out,
     endpoint: opts.endpoint,
@@ -117,6 +123,7 @@ function reportAir(
   const warnings = air.diagnostics.filter((d) => d.level === "warning");
   const approved = air.operations.filter((o) => o.state === "approved").length;
   const review = air.operations.filter((o) => o.state === "review_required").length;
+  const profile = air.service.source.profile;
   if (opts.json) {
     io.out(
       JSON.stringify(
@@ -130,6 +137,17 @@ function reportAir(
           outDir: success.outDir,
           files: success.written.length,
           operations: { total: air.operations.length, approved, review_required: review },
+          ...(profile
+            ? {
+                profile: {
+                  id: profile.id,
+                  digest: profile.digest,
+                  unexposed: profile.unexposed,
+                  sourceOperations: profile.sourceOperations,
+                  exposed: profile.exposedOperations.length,
+                },
+              }
+            : {}),
           diagnostics: air.diagnostics,
         },
         null,
@@ -142,6 +160,11 @@ function reportAir(
   io.out(
     `Compiled ${air.operations.length} operations from ${success.snapshotId} (${air.service.source.kind}) → ${success.outDir} (${success.written.length} files).`,
   );
+  if (profile) {
+    io.out(
+      `  profile ${profile.id} (${profile.digest.slice(0, 19)}): ${profile.exposedOperations.length} of ${profile.sourceOperations} source operations exposed; the rest ${profile.unexposed === "skip" ? "skipped" : "compiled but unexposed"}.`,
+    );
+  }
   io.out(`  approved: ${approved}  review_required: ${review}`);
   io.out(`  diagnostics: ${errors.length} error(s), ${warnings.length} warning(s)`);
   if (review > 0)

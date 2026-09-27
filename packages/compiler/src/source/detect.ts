@@ -1,11 +1,13 @@
 /**
  * Decoding and format detection for Layer 0. Bytes are decoded strictly
- * (invalid UTF-8 is a diagnostic, not a crash) and parsed through one YAML
- * path — JSON is valid YAML, so there is no first-character dialect branch —
- * with structured errors that carry line/column positions.
+ * (invalid UTF-8 is a diagnostic, not a crash). A well-formed document is
+ * read on the fast path (`JSON.parse`, or js-yaml under the YAML 1.2 core
+ * schema); anything the fast path declines goes through the `yaml` document
+ * parser, whose structured errors carry line/column positions.
  */
 import { extname } from "node:path";
 import { parseDocument } from "yaml";
+import { fastParseSpecText } from "./fast-parse.js";
 import type { EntrypointFormat, SourceDiagnostic, SpecSyntax } from "./model.js";
 
 /** Strict UTF-8 decode: verbatim bytes in, text or a structured failure out. */
@@ -25,11 +27,14 @@ export interface ParsedSourceText {
 }
 
 /**
- * Parse a source document with the YAML parser only. JSON parses on the same
- * path (it is a YAML subset), so every syntax error — either dialect — comes
- * back with the parser's line/column instead of a JSON.parse guess.
+ * Parse a source document. The fast path reads a well-formed document (see
+ * `fast-parse.ts`); when it declines, the `yaml` document parser runs, so
+ * every syntax error in either dialect comes back with the parser's
+ * line/column instead of a JSON.parse guess.
  */
 export function parseSourceText(text: string): ParsedSourceText {
+  const fast = fastParseSpecText(text);
+  if (fast.ok) return { doc: fast.value, errors: [] };
   const doc = parseDocument(text, { prettyErrors: true, strict: true });
   if (doc.errors.length > 0) {
     return {
