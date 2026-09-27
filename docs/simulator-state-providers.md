@@ -148,6 +148,10 @@ compile costs for five vendor specs are in
   the link, since the token covers it). A response declared as a bare array is served as
   one, with the continuation in a `Link: <...>; rel="next"` header whose
   target is the same kind of URL, carrying the cursor parameter.
+- A page marker the response declares as a boolean, at its top level or
+  beside a nested items array, is written from whether another page follows:
+  `isLast` or `is_last` is true on the last page (Jira), and `has_more` or
+  `hasMore` is true while another page follows (Slack).
 - Other successes return the provider's `result` as the body, with a status
   the contract declares for an HTTP+JSON operation: `204` with no body when
   it declares 204 and the provider returns no `result` (or it declares no

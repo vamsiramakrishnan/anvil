@@ -69,6 +69,27 @@ paths:
                 properties:
                   results: { type: array, items: { type: object } }
                   _links: { type: object, properties: { next: { type: string } } }
+  /conversations.history:
+    get:
+      operationId: conversations_history
+      parameters:
+        - { name: channel, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages, has_more]
+                properties:
+                  has_more: { type: boolean }
+                  messages: { type: array, items: { type: object } }
+                  response_metadata:
+                    type: object
+                    properties: { next_cursor: { type: string } }
   /users:
     get:
       operationId: users.user.ListUser
@@ -146,7 +167,13 @@ describe("a continuation token carried in the request body", () => {
       });
       expect(first.status).toBe(200);
       const page1 = await first.json();
-      expect(page1).toEqual({ issues: [{ id: "1" }, { id: "2" }], nextPageToken: "2" });
+      // The response declares `isLast`, so a client that loops on it stops
+      // on the last page rather than asking for a token that never comes.
+      expect(page1).toEqual({
+        isLast: false,
+        issues: [{ id: "1" }, { id: "2" }],
+        nextPageToken: "2",
+      });
       expect(s.provider.seen[0]?.page).toEqual({ cursor: null, size: 2 });
 
       const second = await fetch(`${s.url}/rest/api/3/search/jql`, {
@@ -154,7 +181,7 @@ describe("a continuation token carried in the request body", () => {
         headers: json,
         body: JSON.stringify({ jql: "project = K", maxResults: 2, nextPageToken: "4" }),
       });
-      expect(await second.json()).toEqual({ issues: [{ id: "5" }] });
+      expect(await second.json()).toEqual({ isLast: true, issues: [{ id: "5" }] });
       expect(s.provider.seen[1]?.page).toEqual({ cursor: "4", size: 2 });
       expect(s.provider.seen[1]?.body).toMatchObject({ nextPageToken: "4" });
     } finally {
@@ -171,6 +198,24 @@ describe("a continuation token carried in the request body", () => {
         body: JSON.stringify({ jql: "x", maxResults: 500 }),
       });
       expect(s.provider.seen[0]?.page?.size).toBe(100);
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+describe("page markers the envelope declares", () => {
+  it("writes has_more true while a page follows and false on the last", async () => {
+    const s = await serving();
+    try {
+      const first = await fetch(`${s.url}/conversations.history?channel=C1&limit=3`);
+      expect(await first.json()).toEqual({
+        has_more: true,
+        messages: [{ id: "1" }, { id: "2" }, { id: "3" }],
+        response_metadata: { next_cursor: "3" },
+      });
+      const last = await fetch(`${s.url}/conversations.history?channel=C1&limit=3&cursor=3`);
+      expect(await last.json()).toEqual({ has_more: false, messages: [{ id: "4" }, { id: "5" }] });
     } finally {
       await s.close();
     }
