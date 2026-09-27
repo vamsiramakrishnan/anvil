@@ -152,6 +152,13 @@ compile costs for five vendor specs are in
   beside a nested items array, is written from whether another page follows:
   `isLast` or `is_last` is true on the last page (Jira), and `has_more` or
   `hasMore` is true while another page follows (Slack).
+- A page envelope also carries every top-level field its declared response
+  fixes to one value: a `const`, an `enum` with one member (Slack's
+  `ok: true`), or a scalar `default` (Google Drive's
+  `kind: "drive#fileList"`). A field the contract does not fix, such as
+  Drive's `incompleteSearch`, is not invented. A provider's object `result`
+  gains its missing `const` and one-member `enum` fields, but not defaults,
+  and a value the provider set is never replaced.
 - Other successes return the provider's `result` as the body, with a status
   the contract declares for an HTTP+JSON operation: `204` with no body when
   it declares 204 and the provider returns no `result` (or it declares no

@@ -90,6 +90,42 @@ paths:
                   response_metadata:
                     type: object
                     properties: { next_cursor: { type: string } }
+  /drive/v3/files:
+    get:
+      operationId: drive.files.list
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: pageToken, in: query, schema: { type: string } }
+        - { name: pageSize, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files: { type: array, items: { type: object } }
+                  nextPageToken: { type: string }
+                  incompleteSearch: { type: boolean }
+                  kind: { type: string, default: "drive#fileList" }
+  /users.info:
+    get:
+      operationId: users_info
+      parameters:
+        - { name: user, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, user]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  user: { type: object, properties: { id: { type: string } } }
+                  cache_ts: { type: integer, default: 0 }
   /users:
     get:
       operationId: users.user.ListUser
@@ -127,7 +163,7 @@ const pagingProvider = (): StateProvider & { seen: ProviderRequest[] } => {
           nextCursor: end < ROWS.length ? String(end) : null,
         };
       }
-      return { ok: true, result: null };
+      return { ok: true, result: req.kind === "read" ? { user: { id: "U1" } } : null };
     },
   };
 };
@@ -216,6 +252,35 @@ describe("page markers the envelope declares", () => {
       });
       const last = await fetch(`${s.url}/conversations.history?channel=C1&limit=3&cursor=3`);
       expect(await last.json()).toEqual({ has_more: false, messages: [{ id: "4" }, { id: "5" }] });
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+describe("fields the contract fixes to one value", () => {
+  it("fills a page envelope's const, single-member enum, and scalar default fields", async () => {
+    const s = await serving();
+    try {
+      const page = await (await fetch(`${s.url}/drive/v3/files?pageSize=2`)).json();
+      // `incompleteSearch` has no fixed value, so it is left to the provider
+      // rather than invented.
+      expect(page).toEqual({
+        kind: "drive#fileList",
+        files: [{ id: "1" }, { id: "2" }],
+        nextPageToken: "2",
+      });
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("fills a provider result's fixed fields, never its defaults or its own values", async () => {
+    const s = await serving();
+    try {
+      const res = await fetch(`${s.url}/users.info?user=U1`);
+      expect(s.provider.seen[0]?.kind).toBe("read");
+      expect(await res.json()).toEqual({ ok: true, user: { id: "U1" } });
     } finally {
       await s.close();
     }

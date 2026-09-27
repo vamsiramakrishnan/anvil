@@ -61,6 +61,44 @@ function firstArrayField(schema: JsonSchema | undefined): string | undefined {
   return undefined;
 }
 
+/**
+ * The one value a declared field can hold: its `const`, or the sole member of
+ * its `enum` (Slack's `ok: {enum: [true]}`). With `defaults`, also a scalar
+ * `default`, which JSON Schema reads as the value an absent field stands for
+ * (Google Drive's `kind: {default: "drive#fileList"}`).
+ */
+function fixedValue(
+  prop: JsonSchema | undefined,
+  defaults: boolean,
+): { value: unknown } | undefined {
+  if (!isRecord(prop)) return undefined;
+  if (prop.const !== undefined) return { value: prop.const };
+  if (Array.isArray(prop.enum) && prop.enum.length === 1) return { value: prop.enum[0] };
+  const dflt = prop.default;
+  const scalar = typeof dflt === "string" || typeof dflt === "number" || typeof dflt === "boolean";
+  return defaults && scalar ? { value: dflt } : undefined;
+}
+
+/**
+ * Fill the top-level fields a declared object response fixes to one value and
+ * the answer left out. Nothing is invented: a field whose value the contract
+ * does not fix (Drive's `incompleteSearch`) stays absent, and a value already
+ * present is never replaced. A page envelope also takes declared scalar
+ * defaults, since the envelope is Anvil's to write; a provider's own `result`
+ * gets only the fixed values, the ones no other value would satisfy.
+ */
+export function fillFixedFields(
+  target: Record<string, unknown>,
+  declared: JsonSchema | undefined,
+  options: { defaults: boolean },
+): void {
+  for (const [name, prop] of Object.entries(propertiesOf(declared))) {
+    if (target[name] !== undefined) continue;
+    const fixed = fixedValue(prop, options.defaults);
+    if (fixed) target[name] = fixed.value;
+  }
+}
+
 /** Boolean fields that are true on the final page, and ones that are true while more follow. */
 const LAST_PAGE_FIELDS = new Set(["isLast", "is_last"]);
 const MORE_PAGES_FIELDS = new Set(["has_more", "hasMore"]);
@@ -124,6 +162,7 @@ export function pageEnvelope(
     return { body: items, headers: next ? { link: `<${next}>; rel="next"` } : {} };
   }
   const body: Record<string, unknown> = {};
+  fillFixedFields(body, declared, { defaults: true });
   const itemsField = pagination?.itemsField ?? firstArrayField(declared) ?? "items";
   writePageMarkers(body, declared, responseFieldPath(itemsField), next !== undefined);
   setPath(body, itemsField, items);

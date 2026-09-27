@@ -32,9 +32,9 @@ import {
   wireProtocolFor,
 } from "@anvil/air";
 import { coerceWireValues, decodeRequestBody, decodeUndeclared } from "./body-decoding.js";
-import { pageEnvelope } from "./page-envelope.js";
+import { fillFixedFields, pageEnvelope } from "./page-envelope.js";
 import { servesItems } from "./provider.js";
-import type { InvokeContext, SimError, Simulator } from "./runtime.js";
+import { declaredResponse, type InvokeContext, type SimError, type Simulator } from "./runtime.js";
 import { TRACE_SCHEMA, type TraceSink, writeTrace } from "./trace.js";
 
 export interface SimulatorHttpOptions {
@@ -461,6 +461,14 @@ export async function serveSimulatorHttp(
         ));
       } else {
         responseBody = output ?? null;
+        if (call.operation && isRecord(responseBody) && !graphql) {
+          responseBody = { ...responseBody };
+          fillFixedFields(
+            responseBody as Record<string, unknown>,
+            declaredResponse(air, call.operation),
+            { defaults: false },
+          );
+        }
       }
     } else {
       responseBody = sim.wireError(call.operation, call.result.error).body;
