@@ -1,3 +1,4 @@
+import type { Operation } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import { classifyEffect } from "./classify.js";
 import { compile } from "./compile.js";
@@ -377,5 +378,115 @@ describe("reads with no path id that return one object or a stream", () => {
       air.operations.find((o) => o.sourceRef.path === path)?.effect.action;
     expect(action("/drives/{drive-id}/items/{driveItem-id}/content")).toBe("get");
     expect(action("/reports/{id}/pdf")).toBe("get");
+  });
+});
+
+describe("a continuation nested in a response", () => {
+  // Slack declares response_metadata as an untyped union: the paging style,
+  // a deprecation warning, or both (each branch an object).
+  const responseMetadata = {
+    items: [
+      { type: "object", properties: { next_cursor: { type: "string" } } },
+      {
+        type: "object",
+        properties: { messages: { type: "array", items: { type: "string" } } },
+      },
+      {
+        type: "object",
+        properties: {
+          messages: { type: "array", items: { type: "string" } },
+          next_cursor: { type: "string" },
+        },
+      },
+    ],
+  };
+  const slack = JSON.stringify({
+    swagger: "2.0",
+    info: { title: "Slack", version: "1" },
+    host: "slack.com",
+    produces: ["application/json"],
+    definitions: { objs_response_metadata: responseMetadata },
+    paths: {
+      "/users.list": {
+        get: {
+          operationId: "users_list",
+          parameters: [
+            { name: "cursor", in: "query", type: "string" },
+            { name: "limit", in: "query", type: "integer" },
+          ],
+          responses: {
+            "200": {
+              description: "ok",
+              schema: {
+                type: "object",
+                properties: {
+                  ok: { type: "boolean", enum: [true] },
+                  members: { type: "array", items: { type: "object" } },
+                  response_metadata: { $ref: "#/definitions/objs_response_metadata" },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/conversations.history": {
+        get: {
+          operationId: "conversations_history",
+          parameters: [
+            { name: "channel", in: "query", type: "string" },
+            { name: "cursor", in: "query", type: "string" },
+            { name: "limit", in: "query", type: "integer" },
+          ],
+          responses: {
+            "200": {
+              description: "ok",
+              schema: {
+                type: "object",
+                properties: {
+                  ok: { type: "boolean", enum: [true] },
+                  has_more: { type: "boolean" },
+                  messages: { type: "array", items: { type: "object" } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  const pagination = (air: { operations: Operation[] }, path: string) =>
+    air.operations.find((o) => o.sourceRef.path === path)?.pagination;
+
+  it("finds Slack's response_metadata.next_cursor through its union, and the items beside it", async () => {
+    const air = await compile({ spec: slack, serviceId: "slack" });
+    expect(pagination(air, "/users.list")).toMatchObject({
+      style: "cursor",
+      cursorParam: "cursor",
+      itemsField: "members",
+      nextField: "response_metadata.next_cursor",
+    });
+    // Nothing declares history's continuation, so nothing is guessed.
+    expect(pagination(air, "/conversations.history")?.nextField).toBeUndefined();
+  });
+
+  it("takes a nested next field a manifest declares", async () => {
+    const air = await compile({
+      spec: slack,
+      serviceId: "slack",
+      manifest: [
+        "operations:",
+        "  conversations_history:",
+        "    pagination:",
+        "      style: cursor",
+        "      cursor_param: cursor",
+        "      page_size_param: limit",
+        "      items_field: messages",
+        "      next_field: response_metadata.next_cursor",
+      ].join("\n"),
+    });
+    expect(pagination(air, "/conversations.history")).toMatchObject({
+      itemsField: "messages",
+      nextField: "response_metadata.next_cursor",
+    });
   });
 });

@@ -62,26 +62,43 @@ export function inferPaginationResponseFields(outputSchema: Record<string, unkno
   nextField?: string;
   nextLinkField?: string;
 } {
-  const paths: Array<{ path: string; schema: Record<string, unknown> }> = [];
-  const visit = (schema: Record<string, unknown> | undefined, prefix: string[] = []): void => {
+  // `alternative`: reached through one branch of a union, so an array there is
+  // not the envelope's collection, while a continuation is still where the
+  // service puts it (Slack's `response_metadata.next_cursor`).
+  const paths: Array<{ path: string; schema: Record<string, unknown>; alternative: boolean }> = [];
+  const visit = (
+    schema: Record<string, unknown> | undefined,
+    prefix: string[] = [],
+    alternative = false,
+  ): void => {
     if (!schema || prefix.length > 5) return;
+    const branches = untypedItemsUnion(schema);
+    if (branches) {
+      for (const branch of branches) visit(branch, prefix, true);
+      return;
+    }
     const properties = schema.properties;
     if (!properties || typeof properties !== "object" || Array.isArray(properties)) return;
     for (const [name, child] of Object.entries(properties as Record<string, unknown>)) {
       if (!child || typeof child !== "object" || Array.isArray(child)) continue;
       const childPath = [...prefix, name];
       const childSchema = child as Record<string, unknown>;
-      paths.push({ path: childPath.join("."), schema: childSchema });
+      paths.push({ path: childPath.join("."), schema: childSchema, alternative });
       // Row-level markers do not paginate the collection itself.
-      if (childSchema.type !== "array") visit(childSchema, childPath);
+      if (childSchema.type !== "array") visit(childSchema, childPath, alternative);
     }
   };
   visit(outputSchema);
 
-  const arrays = paths.filter(({ schema }) => schema.type === "array");
-  const continuations = paths.filter(({ path }) =>
-    NEXT_FIELD_NAMES.has(path.split(".").at(-1)?.toLowerCase() ?? ""),
-  );
+  const arrays = paths.filter(({ schema, alternative }) => !alternative && schema.type === "array");
+  // One field reached through several union branches is still one field.
+  const continuations = [
+    ...new Set(
+      paths
+        .filter(({ path }) => NEXT_FIELD_NAMES.has(path.split(".").at(-1)?.toLowerCase() ?? ""))
+        .map(({ path }) => path),
+    ),
+  ].map((path) => ({ path }));
   const links = paths.filter(({ path, schema }) => {
     const segments = path.split(".");
     return (

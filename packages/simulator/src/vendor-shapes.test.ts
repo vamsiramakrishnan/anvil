@@ -126,6 +126,27 @@ paths:
                   ok: { type: boolean, enum: [true] }
                   user: { type: object, properties: { id: { type: string } } }
                   cache_ts: { type: integer, default: 0 }
+  /conversations.list:
+    get:
+      operationId: conversations_list
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, channels]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  channels: { type: array, items: { type: object } }
+                  response_metadata:
+                    type: object
+                    required: [next_cursor]
+                    properties: { next_cursor: { type: string } }
   /users:
     get:
       operationId: users.user.ListUser
@@ -252,6 +273,28 @@ describe("page markers the envelope declares", () => {
       });
       const last = await fetch(`${s.url}/conversations.history?channel=C1&limit=3&cursor=3`);
       expect(await last.json()).toEqual({ has_more: false, messages: [{ id: "4" }, { id: "5" }] });
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+describe("a continuation nested in the envelope", () => {
+  it("serves Slack's ok and response_metadata.next_cursor, empty on the last page", async () => {
+    const s = await serving();
+    try {
+      const first = await (await fetch(`${s.url}/conversations.list?limit=3`)).json();
+      expect(first).toEqual({
+        ok: true,
+        channels: [{ id: "1" }, { id: "2" }, { id: "3" }],
+        response_metadata: { next_cursor: "3" },
+      });
+      const last = await (await fetch(`${s.url}/conversations.list?limit=3&cursor=3`)).json();
+      expect(last).toEqual({
+        ok: true,
+        channels: [{ id: "4" }, { id: "5" }],
+        response_metadata: { next_cursor: "" },
+      });
     } finally {
       await s.close();
     }

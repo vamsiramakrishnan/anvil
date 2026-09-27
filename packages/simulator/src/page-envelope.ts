@@ -167,5 +167,20 @@ export function pageEnvelope(
   writePageMarkers(body, declared, responseFieldPath(itemsField), next !== undefined);
   setPath(body, itemsField, items);
   if (next !== undefined) setPath(body, pagination?.nextField ?? "next_cursor", next);
+  else if (pagination?.nextField && requiredString(declared, pagination.nextField)) {
+    // A continuation the contract requires is present on the last page too,
+    // empty: Slack's `response_metadata.next_cursor` is `""` when no page
+    // follows, and that is what its clients stop on.
+    setPath(body, pagination.nextField, "");
+  }
   return { body, headers: {} };
+}
+
+/** Whether a declared response requires a string at this field path, within its declared parent. */
+function requiredString(declared: JsonSchema | undefined, field: string): boolean {
+  const path = responseFieldPath(field);
+  const name = path[path.length - 1] as string;
+  const parent = path.length === 1 ? declared : schemaAt(declared, path.slice(0, -1));
+  const required = isRecord(parent) && Array.isArray(parent.required) ? parent.required : [];
+  return required.includes(name) && propertiesOf(parent)[name]?.type === "string";
 }

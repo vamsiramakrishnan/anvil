@@ -140,7 +140,12 @@ compile costs for five vendor specs are in
 
 - A paged operation's items go under the declared `itemsField` (or the first
   array property of the declared response), and a continuation under the
-  declared `nextField` (default `next_cursor`). A `link` style continuation is
+  declared `nextField` (default `next_cursor`). Either may be a nested path:
+  Slack's cursor methods continue at `response_metadata.next_cursor`, which
+  the compiler finds in the response schema or a manifest declares
+  (`pagination.next_field`), and search.messages lists at
+  `messages.matches`. A continuation the response requires as a string is
+  written empty on the last page, as Slack does. A `link` style continuation is
   a URL on the server's own origin carrying the cursor, which the same client
   can follow: `_links.next` for a contract that declares it (Confluence v2),
   or `@odata.nextLink` with `$skiptoken` for an OData collection declaring
