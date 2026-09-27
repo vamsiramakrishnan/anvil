@@ -21,7 +21,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-export function setPath(target: Record<string, unknown>, path: string, value: unknown): void {
+function setPath(target: Record<string, unknown>, path: string, value: unknown): void {
   const keys = responseFieldPath(path);
   let cursor = target;
   for (const key of keys.slice(0, -1)) {

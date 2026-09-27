@@ -19,7 +19,7 @@ const NEXT_FIELD_NAMES = new Set([
  * only an array, and the service answers with one of the objects, so the
  * field is read as that union rather than as a list.
  */
-export function untypedItemsUnion(schema: unknown): Record<string, unknown>[] | undefined {
+function untypedItemsUnion(schema: unknown): Record<string, unknown>[] | undefined {
   if (!isObject(schema) || schema.type !== undefined || schema.properties !== undefined) {
     return undefined;
   }
