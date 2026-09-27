@@ -42,6 +42,16 @@ operations:
     idempotency: { strategy: none }
     confirmation: { required: true, reason: Forwards mail; a retry may send it twice. }
     retries: { enabled: false }
+  # Moving a message gives it a new id in the destination folder, and copying
+  # makes another; a retry of either acts on what the first call left.
+  me.messages.message.move:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Moves a message; its id changes. }
+    retries: { enabled: false }
+  me.messages.message.copy:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Copies a message; a retry may copy it twice. }
+    retries: { enabled: false }
   me.CreateMessages:
     idempotency: { strategy: none }
     confirmation: { required: true, reason: Creates a draft; a retry may create a second one. }

@@ -122,7 +122,11 @@ compile costs for five vendor specs are in
   by its schema and a repeated key read as an array; or `multipart/form-data`,
   where a file part (or a field declared as binary) becomes a base64 string,
   a JSON part is parsed, and a text part is typed by its schema. A body that
-  does not decode is a `400` with `validation_error`.
+  does not decode is a `400` with `validation_error`. Top-level body fields
+  match their declared names exactly, except in an OData action body from
+  Microsoft's converter (`x-ms-docs-operation-type: action`), which Microsoft
+  Graph binds in any case: `destinationId`, as Graph's documentation sends
+  it, reaches the provider as the declared `DestinationId`.
 - **Cookies.** Declared cookie parameters are read from the `Cookie` header.
 - **Faults.** `X-Anvil-Fault: throttle | outage | conflict | slow` activates a
   named fault scenario for that request.
@@ -140,7 +144,12 @@ compile costs for five vendor specs are in
 
 - A paged operation's items go under the declared `itemsField` (or the first
   array property of the declared response), and a continuation under the
-  declared `nextField` (default `next_cursor`). A `link` style continuation is
+  declared `nextField` (default `next_cursor`). Either may be a nested path:
+  Slack's cursor methods continue at `response_metadata.next_cursor`, which
+  the compiler finds in the response schema or a manifest declares
+  (`pagination.next_field`), and search.messages lists at
+  `messages.matches`. A continuation the response requires as a string is
+  written empty on the last page, as Slack does. A `link` style continuation is
   a URL on the server's own origin carrying the cursor, which the same client
   can follow: `_links.next` for a contract that declares it (Confluence v2),
   or `@odata.nextLink` with `$skiptoken` for an OData collection declaring
@@ -148,6 +157,26 @@ compile costs for five vendor specs are in
   the link, since the token covers it). A response declared as a bare array is served as
   one, with the continuation in a `Link: <...>; rel="next"` header whose
   target is the same kind of URL, carrying the cursor parameter.
+- A page-numbered operation with a `pagingField` (Slack's `paging`, found in
+  the response schema, or `pagination.paging_field` in a manifest, as
+  `messages.paging` for search.messages) gets a position block there:
+  `page` (the requested page number, default 1), `count` (the page size),
+  and `pages` and `total` when they are known. They are known on every page
+  when the provider reports `total`, and otherwise only on the last page,
+  where they follow from the items served. A declared block gets only its
+  declared keys. No continuation token is written for such an operation
+  unless the contract names a `nextField`.
+- A page marker the response declares as a boolean, at its top level or
+  beside a nested items array, is written from whether another page follows:
+  `isLast` or `is_last` is true on the last page (Jira), and `has_more` or
+  `hasMore` is true while another page follows (Slack).
+- A page envelope also carries every top-level field its declared response
+  fixes to one value: a `const`, an `enum` with one member (Slack's
+  `ok: true`), or a scalar `default` (Google Drive's
+  `kind: "drive#fileList"`). A field the contract does not fix, such as
+  Drive's `incompleteSearch`, is not invented. A provider's object `result`
+  gains its missing `const` and one-member `enum` fields, but not defaults,
+  and a value the provider set is never replaced.
 - Other successes return the provider's `result` as the body, with a status
   the contract declares for an HTTP+JSON operation: `204` with no body when
   it declares 204 and the provider returns no `result` (or it declares no
@@ -161,7 +190,8 @@ compile costs for five vendor specs are in
 - Errors use the contract's declared status for that error, and the body
   `{"error": {"code": "<vendor code or Anvil code>", "message": "..."}}`
   unless the provider supplied its own body.
-- Every response carries `X-Request-Id`, the deterministic request id.
+- Every response carries `X-Request-Id`, the deterministic request id, and
+  any declared response header the provider set (see `invoke`).
 
 ## Wire protocol (stdio JSON-RPC 2.0)
 
@@ -271,7 +301,10 @@ The provider answers with one of three shapes in `result`:
 - A paged request (`page` not null) needs `items`, at most `page.size` of
   them, and `nextCursor` (a string, or `null` on the last page). More items
   than `page.size` is refused with `schema_mismatch`: trimming them would
-  lose records the cursor could not reach.
+  lose records the cursor could not reach. It may also carry `total`, the
+  whole query's item count (a non-negative integer), which fills a
+  page-numbered position block. `total` was added without changing
+  `protocolVersion`, like `meta` below.
 - Any other success returns `result` (any JSON value).
 - An error names `code`, one of Anvil's error codes: `validation_error`,
   `auth_required`, `permission_denied`, `not_found`, `conflict`,
@@ -295,6 +328,24 @@ serves it: it reaches no response body, header, or status, and no
 in-process result. `meta` was added without changing `protocolVersion`, like
 `params.cookie`: a version 1 provider that never sends it is unaffected, and
 a version 1 simulator from before this release ignores it.
+
+A success may also carry `headers`, the response headers to serve, by name:
+
+```json
+{"ok": true, "items": [{"sys_id": "a1"}], "nextCursor": "1",
+ "headers": {"X-Total-Count": 57, "Link": "<https://.../incident?sysparm_offset=1>;rel=\"next\""}}
+```
+
+Anvil sets a header only when the operation declares it on a success
+response (ServiceNow's Table API declares `Link` and `X-Total-Count`),
+matching its name in any case and spelling it as declared. A string or
+number value is served; an undeclared header, a value of another type or
+with a line break, and a header the simulator writes itself (`X-Request-Id`,
+the body's framing, or a bare array's continuation `Link`) are dropped, each
+with a line in the trace entry's `warnings`. The headers served are recorded
+in the entry's `headers`. `headers` was added without changing
+`protocolVersion`, like `meta`: a version 1 provider that never sends it is
+unaffected, and a version 1 simulator from before this release ignores it.
 
 Anvil maps an error onto the operation's declared errors: an entry whose
 vendor code equals `upstreamCode` wins, then an entry with the same Anvil
@@ -400,6 +451,8 @@ failure is reported on stderr, and the response carries an
 | `provider` | What the provider answered, including its `meta`; `{"transportError": "..."}` when it could not answer; or `null` |
 | `result` | Anvil's result before wire encoding |
 | `status`, `response` | The final HTTP status and body |
+| `headers` | The response headers the provider set and Anvil served, when there were any |
+| `warnings` | What Anvil dropped from the provider's answer and why (an undeclared header), when anything was |
 
 ## In process (TypeScript)
 

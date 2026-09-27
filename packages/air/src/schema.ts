@@ -587,6 +587,16 @@ export const RequestBody = z.object({
   projection: z.enum(["fields", "whole"]).default("whole"),
   /** Top-level fields when `projection === "fields"`; empty for `whole`. */
   fields: z.array(BodyField).default([]),
+  /**
+   * How the service matches the body's top-level field names. Absent: exactly,
+   * as JSON does. `case_insensitive`: in any case, as Microsoft Graph binds an
+   * OData action's parameters. Its contract spells them as its CSDL declares
+   * (`DestinationId` for `message.move`, `Message` and `SaveToSentItems` for
+   * `sendMail`) while its documentation and clients send camelCase
+   * (`destinationId`), and the service accepts both. Names stay as declared;
+   * this only says what else the service accepts.
+   */
+  fieldNameMatch: z.enum(["case_insensitive"]).optional(),
 });
 export type RequestBody = z.infer<typeof RequestBody>;
 
@@ -1059,6 +1069,13 @@ export const Operation = z.object({
        * none (or only a `2XX` range).
        */
       successStatuses: z.array(z.number().int().min(200).max(299)).optional(),
+      /**
+       * The response headers a success declares, by name as declared, across
+       * every declared 2xx response (ServiceNow's `Link` and `X-Total-Count`).
+       * A server that answers for the contract sets only these. Absent when
+       * none is declared.
+       */
+      headers: z.array(z.string()).optional(),
       /** Safe default view returned to agents; raw wire names stay in `schema`. */
       agentProjection: AgentProjection.optional(),
     })

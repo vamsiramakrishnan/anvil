@@ -48,9 +48,9 @@ revision is refused until the difference is reviewed.
 | --- | --- | --- | --- |
 | `profiles/jira/` | Jira Cloud platform REST API v3 | 39 of 619 | JQL search, issue read, create, edit, transition, assign, comments, and their lookups |
 | `profiles/confluence/` | Confluence Cloud REST API v2 | 37 of 218 | Pages, spaces, blog posts, footer and inline comments, labels |
-| `profiles/slack/` | Slack Web API | 33 of 174 | Conversation history and threads, posting and updating messages, message search, people |
+| `profiles/slack/` | Slack Web API | 34 of 174 | Conversation history and threads, posting, updating, and deleting messages, message search, people |
 | `profiles/google-drive/` | Google Drive API v3 | 27 of 64 | File search with `q`, read, create, update, export, sharing, revisions, comments |
-| `profiles/microsoft-graph/` | Microsoft Graph v1.0 | 39 of 17,870 | SharePoint drive items and search, Outlook mail, Teams channel messages, people, Microsoft Search (KQL) |
+| `profiles/microsoft-graph/` | Microsoft Graph v1.0 | 42 of 17,870 | SharePoint drive items, their content, and search, Outlook mail (including move and copy), Teams channel messages, people, Microsoft Search (KQL) |
 
 ```bash
 curl -fsSL -o jira.json https://developer.atlassian.com/cloud/jira/platform/swagger-v3.v3.json

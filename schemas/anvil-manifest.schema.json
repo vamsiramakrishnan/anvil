@@ -926,6 +926,9 @@
               "items_field": {
                 "type": "string"
               },
+              "paging_field": {
+                "type": "string"
+              },
               "page_size_param": {
                 "type": "string"
               },
@@ -944,6 +947,36 @@
               "style"
             ],
             "additionalProperties": false
+          },
+          "params": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "string",
+                    "number",
+                    "integer",
+                    "boolean"
+                  ]
+                },
+                "format": {
+                  "type": "string"
+                },
+                "pattern": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "additionalProperties": false
+            }
           },
           "stream": {
             "type": "object",

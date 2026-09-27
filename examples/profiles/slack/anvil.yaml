@@ -21,6 +21,19 @@ operations:
     idempotency: { strategy: none }
     confirmation: { required: true, reason: Schedules a message; a retry may schedule it twice. }
     retries: { enabled: false }
+    params:
+      thread_ts: { type: string, pattern: '^\d{10}\.\d{6}$' }
+  # Deleting a message cannot be undone. Its ts is the message's id, which
+  # the contract types as a number: carried as one it becomes a float and
+  # loses its trailing zeros (1700000000.123400 -> 1700000000.1234), naming a
+  # different message or none. Every message timestamp travels as a string.
+  chat_delete:
+    action: delete
+    risk: destructive
+    reversible: false
+    confirmation: { required: true, reason: Deletes a message permanently. }
+    params:
+      ts: { type: string, pattern: '^\d{10}\.\d{6}$' }
   # Setting the same text, topic, or purpose again, or joining a channel
   # already joined, leaves it as the first call did.
   chat_update:
@@ -41,6 +54,9 @@ operations:
   # History and replies page with response_metadata.next_cursor, as the list
   # methods do, but the published schema leaves that field out.
   conversations_history:
+    params:
+      latest: { type: string }
+      oldest: { type: string }
     pagination:
       style: cursor
       cursor_param: cursor
@@ -48,6 +64,10 @@ operations:
       items_field: messages
       next_field: response_metadata.next_cursor
   conversations_replies:
+    params:
+      ts: { type: string, pattern: '^\d{10}\.\d{6}$' }
+      latest: { type: string }
+      oldest: { type: string }
     pagination:
       style: cursor
       cursor_param: cursor
@@ -55,10 +75,12 @@ operations:
       items_field: messages
       next_field: response_metadata.next_cursor
   # search.messages pages by page number and returns its matches under
-  # messages.matches, which the published schema also leaves out.
+  # messages.matches, with its position in messages.paging; the published
+  # schema leaves both out.
   search_messages:
     pagination:
       style: page
       cursor_param: page
       page_size_param: count
       items_field: messages.matches
+      paging_field: messages.paging

@@ -30,6 +30,10 @@ export interface TraceEntry {
   status: number;
   /** The final HTTP body, in HTTP mode. */
   response?: unknown;
+  /** The response headers a provider set, in HTTP mode, when it set any. */
+  headers?: Record<string, string>;
+  /** What Anvil dropped from the provider's answer, and why; absent when nothing was. */
+  warnings?: string[];
 }
 
 /** Where trace entries go. */

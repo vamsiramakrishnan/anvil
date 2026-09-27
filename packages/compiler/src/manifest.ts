@@ -20,6 +20,12 @@ import { analyzeTemplate, lexicalFamily } from "@anvil/grammar";
 import { z } from "zod";
 import { decideAuthorizationCodeApproval, manifestReviewAnnotation } from "./auth-approval.js";
 import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
+import {
+  applyPaginationPatch,
+  applyParamsPatch,
+  ManifestPagination,
+  ManifestParams,
+} from "./manifest-inputs.js";
 import { projectRoutingNames, singularize } from "./naming.js";
 import { analyzeSqlTemplate, supportedSqlDialects } from "./sql-grammar.js";
 
@@ -411,24 +417,10 @@ export const OperationManifest = z.strictObject({
    * (see `applyOperationManifest`).
    */
   async_contract: ManifestAsyncContract.optional(),
-  /**
-   * Declare how a paginated read is paged, when the spec did not make it
-   * inferable (`classifyPagination`) and the refinement loop has not proposed
-   * it. Style is required; the parameter names are validated against the
-   * operation's real inputs, because a pagination contract bound to a phantom
-   * parameter would teach every surface to pass an argument the wire ignores.
-   */
-  pagination: z
-    .strictObject({
-      style: z.enum(["cursor", "page", "offset", "link"]),
-      cursor_param: z.string().optional(),
-      next_field: z.string().optional(),
-      items_field: z.string().optional(),
-      page_size_param: z.string().optional(),
-      max_page_size: z.number().int().positive().optional(),
-      default_page_size: z.number().int().positive().optional(),
-    })
-    .optional(),
+  /** How a paginated read is paged; see `ManifestPagination`. */
+  pagination: ManifestPagination.optional(),
+  /** Retype inputs the source types wrongly, by wire name; see `ManifestParams`. */
+  params: ManifestParams.optional(),
   /**
    * Resize a subscription's observation window. Only the ceilings are
    * manifest-writable: the transport, the delivery semantics, and the
@@ -1117,52 +1109,8 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
     }
   }
 
-  // Pagination is a fact about how a READ hands back a large result. On a
-  // mutation it is meaningless, and a carrier parameter that names no real
-  // input would teach every surface to pass an argument the wire ignores —
-  // both decline with the reason, in the async_contract pattern, rather than
-  // half-applying.
-  if (m.pagination) {
-    const inputNames = new Set(op.input.params.map((p) => p.name));
-    const phantom = [m.pagination.cursor_param, m.pagination.page_size_param].filter(
-      (name): name is string => name !== undefined && !inputNames.has(name),
-    );
-    if (op.effect.kind !== "read") {
-      const note =
-        "pagination manifest patch left unset: the operation is a mutation, and pagination " +
-        "is a contract about how a read hands back a large result.";
-      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
-    } else if (phantom.length > 0) {
-      const note =
-        `pagination manifest patch left unset: parameter(s) ${phantom.map((n) => `'${n}'`).join(", ")} ` +
-        `do not exist on this operation, and a pagination contract bound to a phantom parameter ` +
-        `would teach every surface to pass an argument the wire ignores.`;
-      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
-    } else {
-      op.pagination = {
-        style: m.pagination.style,
-        ...(m.pagination.cursor_param !== undefined
-          ? { cursorParam: m.pagination.cursor_param }
-          : {}),
-        ...(m.pagination.next_field !== undefined ? { nextField: m.pagination.next_field } : {}),
-        ...(m.pagination.items_field !== undefined ? { itemsField: m.pagination.items_field } : {}),
-        ...(m.pagination.page_size_param !== undefined
-          ? { pageSizeParam: m.pagination.page_size_param }
-          : {}),
-        ...(m.pagination.max_page_size !== undefined
-          ? { maxPageSize: m.pagination.max_page_size }
-          : {}),
-        ...(m.pagination.default_page_size !== undefined
-          ? { defaultPageSize: m.pagination.default_page_size }
-          : {}),
-      };
-      const note =
-        `Pagination declared by manifest: ${m.pagination.style}` +
-        (m.pagination.cursor_param ? ` via '${m.pagination.cursor_param}'` : "") +
-        ".";
-      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
-    }
-  }
+  if (m.pagination) applyPaginationPatch(op, m.pagination);
+  if (m.params) applyParamsPatch(op, m.params);
 
   // Resize the observation window of an operation that already streams. The
   // window's existence is what makes a subscription a call, and the compiler

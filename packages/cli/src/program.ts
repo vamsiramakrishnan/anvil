@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { buildIdentity } from "./build-identity.js";
 import { registerAdopt } from "./commands/adopt.js";
 import { registerAgentify } from "./commands/agentify.js";
 import { registerApprove } from "./commands/approve.js";
@@ -68,7 +69,11 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   const program = new Command("anvil");
   program
     .description("anvil — an agent toolchain compiler")
-    .version(VERSION)
+    .version(
+      VERSION,
+      "-V, --version",
+      "output the version number (with --json: the version, build commit, and content digest)",
+    )
     // Positional options let `anvil run` pass its tool flags through untouched.
     .enablePositionalOptions()
     .exitOverride()
@@ -149,8 +154,9 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   program
     .command("version", { hidden: true })
     .summary("Print the anvil version.")
-    .action(() => {
-      io.out(VERSION);
+    .option("--json", "print the version, build commit, and content digest as JSON")
+    .action((opts: { json?: boolean }) => {
+      io.out(opts.json ? JSON.stringify(buildIdentity(VERSION), null, 2) : VERSION);
     });
 
   CONTEXTS.set(program, ctx);

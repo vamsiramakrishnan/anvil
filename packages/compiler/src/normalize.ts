@@ -43,7 +43,11 @@ import {
   webhookPathItems,
 } from "./protocols/webhooks.js";
 import { DEFAULT_SCHEMA_BOUNDS, materializeWithin, type SchemaBounds } from "./schema-bounds.js";
-import { declaredSuccessStatuses, isSubResourceAction } from "./success-statuses.js";
+import {
+  declaredSuccessHeaders,
+  declaredSuccessStatuses,
+  isSubResourceAction,
+} from "./success-statuses.js";
 
 const HTTP_METHODS = HttpMethod.options;
 
@@ -89,6 +93,8 @@ interface RawOperation {
   security?: Array<Record<string, string[]>>;
   /** Vendor extension: the spec author declares a repeat call is a no-op. */
   "x-idempotent"?: unknown;
+  /** Microsoft's CSDL converter: `action`, `function`, or `operation`. */
+  "x-ms-docs-operation-type"?: unknown;
   /**
    * Vendor extension: a protocol adapter's explicit effect assertion. The
    * adapters lower everything to the one truthful wire method (SOAP, GraphQL
@@ -541,6 +547,13 @@ export function normalize(
         params,
         bounds,
       );
+      // Microsoft's CSDL-to-OpenAPI converter marks an OData action's body
+      // with `x-ms-docs-operation-type: action`, and spells its parameters as
+      // the CSDL does. Microsoft Graph binds them in any case (see
+      // `RequestBody.fieldNameMatch`), so the contract records that.
+      if (body && raw["x-ms-docs-operation-type"] === "action") {
+        body.fieldNameMatch = "case_insensitive";
+      }
 
       // Parsed rather than trusted, like the wire binding beside it: the
       // extension arrives as `unknown` off a lowered document. Its presence is
@@ -558,10 +571,13 @@ export function normalize(
         raw.responses?.["2xx"] ??
         undefined;
       const outputSchema = jsonSchemaOf(successRes?.content, namedSchemas, bounds);
+      const successHeaders = declaredSuccessHeaders(raw.responses);
       const pagination = classifyPagination(effect, effect.action, params, outputSchema, body);
       // A read with no trailing id defaults to `list`; an unpaged one whose
-      // declared response is not a collection (`GET /me`) reads one resource.
-      if (!pagination && isSingletonRead(effect, outputSchema)) effect.action = "get";
+      // declared response is not a collection (`GET /me`, a file's content
+      // stream) reads one resource.
+      const contentTypes = Object.keys(successRes?.content ?? {});
+      if (!pagination && isSingletonRead(effect, outputSchema, contentTypes)) effect.action = "get";
 
       const archetype = classifyArchetype(
         effect,
@@ -608,6 +624,7 @@ export function normalize(
           schema: outputSchema,
           description: successRes?.description,
           ...(successStatuses.length > 0 ? { successStatuses } : {}),
+          ...(successHeaders.length > 0 ? { headers: successHeaders } : {}),
         },
         errors: errorSpecs(raw.responses),
         idempotency,

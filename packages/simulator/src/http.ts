@@ -24,18 +24,18 @@ import {
   agentPropKey,
   type GraphqlWireBinding,
   isODataPaging,
-  type JsonSchema,
   type Operation,
   type Param,
   protocolFacadeApplies,
   resolveIdempotencyCarrier,
-  responseFieldPath,
   wireExecutability,
   wireProtocolFor,
 } from "@anvil/air";
 import { coerceWireValues, decodeRequestBody, decodeUndeclared } from "./body-decoding.js";
+import { declaredResponse } from "./declared-shape.js";
+import { fillFixedFields, pageEnvelope } from "./page-envelope.js";
 import { servesItems } from "./provider.js";
-import { declaredResponse, type InvokeContext, type SimError, type Simulator } from "./runtime.js";
+import type { InvokeContext, SimError, Simulator } from "./runtime.js";
 import { TRACE_SCHEMA, type TraceSink, writeTrace } from "./trace.js";
 
 export interface SimulatorHttpOptions {
@@ -69,6 +69,16 @@ export interface SimulatorHttpServer {
 }
 
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
+
+/** Headers the server writes on every response; a provider never sets them. */
+const ANVIL_HEADERS = [
+  "x-request-id",
+  "x-anvil-trace-error",
+  "content-type",
+  "content-length",
+  "transfer-encoding",
+  "connection",
+];
 
 interface Route {
   op: Operation;
@@ -107,17 +117,6 @@ function compileRoute(op: Operation): Route | undefined {
   };
 }
 
-function setPath(target: Record<string, unknown>, path: string, value: unknown): void {
-  const keys = responseFieldPath(path);
-  let cursor = target;
-  for (const key of keys.slice(0, -1)) {
-    const next = cursor[key];
-    if (typeof next !== "object" || next === null || Array.isArray(next)) cursor[key] = {};
-    cursor = cursor[key] as Record<string, unknown>;
-  }
-  cursor[keys[keys.length - 1] as string] = value;
-}
-
 function getPath(source: unknown, path: string[]): unknown {
   let cursor = source;
   for (const key of path) {
@@ -125,56 +124,6 @@ function getPath(source: unknown, path: string[]): unknown {
     cursor = (cursor as Record<string, unknown>)[key];
   }
   return cursor;
-}
-
-/** The first array-valued property of a declared envelope, in declared order. */
-function firstArrayField(schema: JsonSchema | undefined): string | undefined {
-  const props = schema?.properties;
-  if (typeof props !== "object" || props === null) return undefined;
-  for (const [name, prop] of Object.entries(props as Record<string, JsonSchema>)) {
-    if (prop && (prop.type === "array" || typeof prop.items === "object")) return name;
-  }
-  return undefined;
-}
-
-/**
- * Write a page of items in the envelope the contract declares: a bare array
- * when the response is an array, else the items at `itemsField` (or the first
- * declared array property) and the continuation at `nextField`. A `link`
- * pagination style gets a URL carrying the cursor, as such APIs serve.
- */
-function envelope(
-  air: AirDocument,
-  op: Operation,
-  items: unknown[],
-  nextCursor: string | undefined,
-  url: URL,
-): { body: unknown; headers: Record<string, string> } {
-  const declared = declaredResponse(air, op);
-  const pagination = op.pagination;
-  const bare = declared?.type === "array";
-  const nextUrl = (cursor: string, cursorParam: string): string => {
-    const link = new URL(url.toString());
-    // The token names the whole continuation; an OData `$skip` the caller
-    // sent is already folded into it and must not be applied twice.
-    if (isODataPaging(pagination)) link.searchParams.delete("$skip");
-    link.searchParams.set(cursorParam, cursor);
-    return link.toString();
-  };
-  let next: string | undefined = nextCursor;
-  // A `link` continuation is a URL; so is any continuation that can only
-  // travel in a `Link` header (RFC 8288), which is where a bare array puts it.
-  const asUrl = pagination?.style === "link" || (bare && pagination?.in !== "body");
-  if (nextCursor !== undefined && asUrl && pagination?.cursorParam) {
-    next = nextUrl(nextCursor, pagination.cursorParam);
-  }
-  if (bare) {
-    return { body: items, headers: next ? { link: `<${next}>; rel="next"` } : {} };
-  }
-  const body: Record<string, unknown> = {};
-  setPath(body, pagination?.itemsField ?? firstArrayField(declared) ?? "items", items);
-  if (next !== undefined) setPath(body, pagination?.nextField ?? "next_cursor", next);
-  return { body, headers: {} };
 }
 
 function readBody(req: IncomingMessage): Promise<Buffer> {
@@ -514,19 +463,46 @@ export async function serveSimulatorHttp(
     if (call.result.ok) {
       const output = call.result.output;
       if (call.operation && servesItems(call.operation) && isItems(output)) {
-        ({ body: responseBody, headers } = envelope(
+        ({ body: responseBody, headers } = pageEnvelope(
           air,
           call.operation,
           output.items,
           call.result.nextCursor,
           url,
+          {
+            ...(ctx.cursor !== undefined ? { cursor: ctx.cursor } : {}),
+            ...(call.normalized?.page ? { size: call.normalized.page.size } : {}),
+            ...(call.result.total !== undefined ? { total: call.result.total } : {}),
+          },
         ));
       } else {
         responseBody = output ?? null;
+        if (call.operation && isRecord(responseBody) && !graphql) {
+          responseBody = { ...responseBody };
+          fillFixedFields(
+            responseBody as Record<string, unknown>,
+            declaredResponse(air, call.operation),
+            { defaults: false },
+          );
+        }
       }
     } else {
       responseBody = sim.wireError(call.operation, call.result.error).body;
     }
+    // A provider's declared headers are served unless Anvil writes that
+    // header itself: the request id, the body's framing, or a bare array's
+    // continuation `Link`, which must point at this server.
+    const warnings = [...(call.warnings ?? [])];
+    const providerSet: Record<string, string> = {};
+    const owned = new Set([...ANVIL_HEADERS, ...Object.keys(headers).map((h) => h.toLowerCase())]);
+    for (const [name, value] of Object.entries(call.result.ok ? (call.result.headers ?? {}) : {})) {
+      if (owned.has(name.toLowerCase())) {
+        warnings.push(`Provider header '${name}' dropped: the simulator writes it.`);
+      } else {
+        providerSet[name] = value;
+      }
+    }
+    headers = { ...providerSet, ...headers };
     if (status === 204) responseBody = null;
     if (graphql) {
       // GraphQL over HTTP answers a well-formed request with 200 and reports
@@ -558,6 +534,8 @@ export async function serveSimulatorHttp(
         result: call.result,
         status,
         response: responseBody,
+        ...(Object.keys(providerSet).length > 0 ? { headers: providerSet } : {}),
+        ...(warnings.length > 0 ? { warnings } : {}),
       },
       options.onTraceError,
     );
@@ -700,15 +678,43 @@ function liftInput(
     input[sizeParam] = Number(query[sizeParam].at(-1));
   }
   const declared = op.input.body;
-  if (declared?.projection === "fields" && typeof body === "object" && body !== null) {
+  const anyCase = declared?.fieldNameMatch === "case_insensitive";
+  if (declared?.projection === "fields" && isRecord(body)) {
     for (const f of declared.fields) {
-      const value = (body as Record<string, unknown>)[f.name];
+      const value = anyCase ? fieldInAnyCase(body, f.name) : body[f.name];
       if (value !== undefined) input[agentPropKey(f)] = value;
     }
   } else if (declared && body !== undefined) {
-    input.body = body;
+    input.body = anyCase && isRecord(body) ? declaredSpelling(body, declared.schema) : body;
   }
   return { input, headers };
+}
+
+/** A field's value under its declared name, else under the one key that differs only in case. */
+function fieldInAnyCase(body: Record<string, unknown>, name: string): unknown {
+  if (body[name] !== undefined) return body[name];
+  const lower = name.toLowerCase();
+  const matches = Object.keys(body).filter((key) => key.toLowerCase() === lower);
+  return matches.length === 1 ? body[matches[0] as string] : undefined;
+}
+
+/**
+ * A whole body with each top-level key that matches a declared property in
+ * another case respelled as declared, so a provider reads the names the
+ * contract gives. Keys that match nothing declared are kept as sent.
+ */
+function declaredSpelling(
+  body: Record<string, unknown>,
+  schema: Record<string, unknown>,
+): Record<string, unknown> {
+  const declared = isRecord(schema.properties) ? Object.keys(schema.properties) : [];
+  const byLower = new Map(declared.map((name) => [name.toLowerCase(), name]));
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    const name = declared.includes(key) ? key : (byLower.get(key.toLowerCase()) ?? key);
+    if (out[name] === undefined || name === key) out[name] = value;
+  }
+  return out;
 }
 
 /** The idempotency key from wherever the contract says it travels. */

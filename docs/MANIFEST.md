@@ -107,7 +107,8 @@ Prefer the source operation id when it is stable and unique.
 | `confirmation` | Require explicit intent and optionally human approval | `human_approval: true` implies confirmation |
 | `auth` | Define principal, carrier, profile, issuer, audience, and source | Store identifiers and variable names only, never credential values |
 | `retries` | Bound attempts and retryable conditions | Runtime still disables retries when idempotency does not make them safe |
-| `pagination` | Declare how a paginated read is paged (`style`, `cursor_param`, `items_field`, …) when the spec did not make it inferable | Carrier parameters are validated against the operation's real inputs; a phantom parameter or a mutation declines with a review note |
+| `pagination` | Declare how a paginated read is paged (`style`, `cursor_param`, `items_field`, `next_field`, `paging_field`, …) when the spec did not make it inferable; the field names may be nested paths such as `response_metadata.next_cursor` | Carrier parameters are validated against the operation's real inputs; a phantom parameter or a mutation declines with a review note |
+| `params` | Retype an input the source types wrongly, by wire name: `ts: { type: string, pattern: ... }` carries Slack's message timestamp as the string it is instead of a number | Applies to a parameter in any location and a top-level body field; the old type's constraints are dropped and descriptions kept. A name nothing carries declines with a review note |
 | `query_policy` | Constrain a raw query passthrough | A policy moves the operation out of `blocked`, not directly to `approved` |
 | `query_schema` | Add catalog-grounded tables, columns, sensitivity, and examples | Documentation input; runtime does not treat it as enforcement |
 | `stream` | Resize a subscription's observation window (`max_events`, `max_seconds`) | Capped at 10,000 events / 300 seconds by AIR's schema; resizes an existing window, never creates one |

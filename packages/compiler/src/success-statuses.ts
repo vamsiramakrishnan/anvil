@@ -1,6 +1,7 @@
 /**
- * What an operation's declared success responses say. Only the exact 2xx
- * codes count: a range (`2XX`) or `default` names no status a server sends.
+ * What an operation's declared success responses say: their statuses, where
+ * only the exact 2xx codes count (a range, `2XX`, or `default` names no status
+ * a server sends), and their headers.
  */
 
 /** The exact 2xx codes a `responses` map declares, ascending. */
@@ -9,6 +10,25 @@ export function declaredSuccessStatuses(responses: Record<string, unknown> | und
     .filter((code) => /^2\d\d$/.test(code))
     .map(Number)
     .sort((a, b) => a - b);
+}
+
+/**
+ * The response headers any 2xx response declares (an exact code or the `2XX`
+ * range), first spelling kept, in declared order. `Content-Type` belongs to
+ * the body, not to a header a server chooses, and OpenAPI says to ignore it.
+ */
+export function declaredSuccessHeaders(
+  responses: Record<string, { headers?: Record<string, unknown> } | undefined> | undefined,
+): string[] {
+  const seen = new Map<string, string>();
+  for (const [status, response] of Object.entries(responses ?? {})) {
+    if (!/^2(\d\d|XX)$/i.test(status)) continue;
+    for (const name of Object.keys(response?.headers ?? {})) {
+      const key = name.toLowerCase();
+      if (key !== "content-type" && !seen.has(key)) seen.set(key, name);
+    }
+  }
+  return [...seen.values()];
 }
 
 /**

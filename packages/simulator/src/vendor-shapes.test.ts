@@ -69,6 +69,123 @@ paths:
                 properties:
                   results: { type: array, items: { type: object } }
                   _links: { type: object, properties: { next: { type: string } } }
+  /conversations.history:
+    get:
+      operationId: conversations_history
+      parameters:
+        - { name: channel, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [messages, has_more]
+                properties:
+                  has_more: { type: boolean }
+                  messages: { type: array, items: { type: object } }
+                  response_metadata:
+                    type: object
+                    properties: { next_cursor: { type: string } }
+  /drive/v3/files:
+    get:
+      operationId: drive.files.list
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: pageToken, in: query, schema: { type: string } }
+        - { name: pageSize, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  files: { type: array, items: { type: object } }
+                  nextPageToken: { type: string }
+                  incompleteSearch: { type: boolean }
+                  kind: { type: string, default: "drive#fileList" }
+  /users.info:
+    get:
+      operationId: users_info
+      parameters:
+        - { name: user, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, user]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  user: { type: object, properties: { id: { type: string } } }
+                  cache_ts: { type: integer, default: 0 }
+  /conversations.list:
+    get:
+      operationId: conversations_list
+      parameters:
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, channels]
+                properties:
+                  ok: { type: boolean, enum: [true] }
+                  channels: { type: array, items: { type: object } }
+                  response_metadata:
+                    type: object
+                    required: [next_cursor]
+                    properties: { next_cursor: { type: string } }
+  /me/messages/{message-id}/move:
+    post:
+      operationId: me.messages.message.move
+      x-ms-docs-operation-type: action
+      parameters:
+        - { name: message-id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { DestinationId: { type: string } } }
+      responses:
+        2XX: { description: ok, content: { application/json: { schema: { type: object } } } }
+  /me/sendMail:
+    post:
+      operationId: me.sendMail
+      x-ms-docs-operation-type: action
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Message: { type: object, properties: { subject: { type: string } } }
+                SaveToSentItems: { type: boolean }
+      responses:
+        "204": { description: sent }
+  /rest/api/3/issue/{key}/watchers:
+    post:
+      operationId: addWatcher
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { accountId: { type: string } } }
+      responses:
+        "204": { description: added }
   /users:
     get:
       operationId: users.user.ListUser
@@ -106,7 +223,7 @@ const pagingProvider = (): StateProvider & { seen: ProviderRequest[] } => {
           nextCursor: end < ROWS.length ? String(end) : null,
         };
       }
-      return { ok: true, result: null };
+      return { ok: true, result: req.kind === "read" ? { user: { id: "U1" } } : null };
     },
   };
 };
@@ -146,7 +263,13 @@ describe("a continuation token carried in the request body", () => {
       });
       expect(first.status).toBe(200);
       const page1 = await first.json();
-      expect(page1).toEqual({ issues: [{ id: "1" }, { id: "2" }], nextPageToken: "2" });
+      // The response declares `isLast`, so a client that loops on it stops
+      // on the last page rather than asking for a token that never comes.
+      expect(page1).toEqual({
+        isLast: false,
+        issues: [{ id: "1" }, { id: "2" }],
+        nextPageToken: "2",
+      });
       expect(s.provider.seen[0]?.page).toEqual({ cursor: null, size: 2 });
 
       const second = await fetch(`${s.url}/rest/api/3/search/jql`, {
@@ -154,7 +277,7 @@ describe("a continuation token carried in the request body", () => {
         headers: json,
         body: JSON.stringify({ jql: "project = K", maxResults: 2, nextPageToken: "4" }),
       });
-      expect(await second.json()).toEqual({ issues: [{ id: "5" }] });
+      expect(await second.json()).toEqual({ isLast: true, issues: [{ id: "5" }] });
       expect(s.provider.seen[1]?.page).toEqual({ cursor: "4", size: 2 });
       expect(s.provider.seen[1]?.body).toMatchObject({ nextPageToken: "4" });
     } finally {
@@ -171,6 +294,125 @@ describe("a continuation token carried in the request body", () => {
         body: JSON.stringify({ jql: "x", maxResults: 500 }),
       });
       expect(s.provider.seen[0]?.page?.size).toBe(100);
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+describe("page markers the envelope declares", () => {
+  it("writes has_more true while a page follows and false on the last", async () => {
+    const s = await serving();
+    try {
+      const first = await fetch(`${s.url}/conversations.history?channel=C1&limit=3`);
+      expect(await first.json()).toEqual({
+        has_more: true,
+        messages: [{ id: "1" }, { id: "2" }, { id: "3" }],
+        response_metadata: { next_cursor: "3" },
+      });
+      const last = await fetch(`${s.url}/conversations.history?channel=C1&limit=3&cursor=3`);
+      expect(await last.json()).toEqual({ has_more: false, messages: [{ id: "4" }, { id: "5" }] });
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+describe("a continuation nested in the envelope", () => {
+  it("serves Slack's ok and response_metadata.next_cursor, empty on the last page", async () => {
+    const s = await serving();
+    try {
+      const first = await (await fetch(`${s.url}/conversations.list?limit=3`)).json();
+      expect(first).toEqual({
+        ok: true,
+        channels: [{ id: "1" }, { id: "2" }, { id: "3" }],
+        response_metadata: { next_cursor: "3" },
+      });
+      const last = await (await fetch(`${s.url}/conversations.list?limit=3&cursor=3`)).json();
+      expect(last).toEqual({
+        ok: true,
+        channels: [{ id: "4" }, { id: "5" }],
+        response_metadata: { next_cursor: "" },
+      });
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+describe("fields the contract fixes to one value", () => {
+  it("fills a page envelope's const, single-member enum, and scalar default fields", async () => {
+    const s = await serving();
+    try {
+      const page = await (await fetch(`${s.url}/drive/v3/files?pageSize=2`)).json();
+      // `incompleteSearch` has no fixed value, so it is left to the provider
+      // rather than invented.
+      expect(page).toEqual({
+        kind: "drive#fileList",
+        files: [{ id: "1" }, { id: "2" }],
+        nextPageToken: "2",
+      });
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("fills a provider result's fixed fields, never its defaults or its own values", async () => {
+    const s = await serving();
+    try {
+      const res = await fetch(`${s.url}/users.info?user=U1`);
+      expect(s.provider.seen[0]?.kind).toBe("read");
+      expect(await res.json()).toEqual({ ok: true, user: { id: "U1" } });
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+describe("an OData action's parameters in any case", () => {
+  // Graph's contract spells action parameters as its CSDL declares them
+  // (PascalCase); its documentation and clients send camelCase, and the
+  // service binds either.
+  it("reads Graph's camelCase and PascalCase action bodies under the declared names", async () => {
+    const s = await serving();
+    try {
+      for (const body of [{ destinationId: "deleteditems" }, { DestinationId: "deleteditems" }]) {
+        const res = await fetch(`${s.url}/me/messages/M1/move`, {
+          method: "POST",
+          headers: json,
+          body: JSON.stringify(body),
+        });
+        expect(res.status).toBe(200);
+      }
+      expect(s.provider.seen.map((r) => r.body)).toEqual([
+        { DestinationId: "deleteditems" },
+        { DestinationId: "deleteditems" },
+      ]);
+
+      await fetch(`${s.url}/me/sendMail`, {
+        method: "POST",
+        headers: json,
+        body: JSON.stringify({ message: { subject: "Hi" }, saveToSentItems: false, extra: 1 }),
+      });
+      expect(s.provider.seen[2]?.body).toEqual({
+        Message: { subject: "Hi" },
+        SaveToSentItems: false,
+        extra: 1,
+      });
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("matches a body that is not an OData action exactly, as JSON does", async () => {
+    const s = await serving();
+    try {
+      await fetch(`${s.url}/rest/api/3/issue/K-1/watchers`, {
+        method: "POST",
+        headers: json,
+        body: JSON.stringify({ AccountId: "a1" }),
+      });
+      expect(s.provider.seen[0]?.body).toBeNull();
     } finally {
       await s.close();
     }
@@ -256,6 +498,222 @@ describe("a response declared as a bare array", () => {
       expect(await (await fetch(next)).json()).toEqual([{ id: "3" }, { id: "4" }]);
     } finally {
       await s.close();
+    }
+  });
+});
+
+describe("page-numbered paging with a position block", () => {
+  // Slack's search.messages: the spec declares only `ok`; the manifest names
+  // where the matches and the paging block go, as the shipped example does.
+  const searchSpec = `openapi: "3.0.3"
+info: { title: Slack search, version: "1.0.0" }
+paths:
+  /search.messages:
+    get:
+      operationId: search_messages
+      parameters:
+        - { name: query, in: query, required: true, schema: { type: string } }
+        - { name: page, in: query, schema: { type: integer } }
+        - { name: count, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties: { ok: { type: boolean, enum: [true] } }
+`;
+  const manifest = `operations:
+  search_messages:
+    pagination:
+      style: page
+      cursor_param: page
+      page_size_param: count
+      items_field: messages.matches
+      paging_field: messages.paging
+`;
+  const MATCHES = Array.from({ length: 5 }, (_, i) => ({ ts: `17000000${i}0.000100` }));
+
+  async function searching(reportTotal: boolean) {
+    const compiled = await compile({ spec: searchSpec, serviceId: "slack", manifest });
+    const searchAir = approveOperations(
+      compiled,
+      compiled.operations.map((o) => o.id),
+    );
+    for (const op of searchAir.operations) op.auth = { ...op.auth, type: "none", scopes: [] };
+    const provider: StateProvider = {
+      invoke: (req): ProviderResponse => {
+        const number = Number(req.page?.cursor ?? 1);
+        const size = req.page?.size ?? 1;
+        const start = (number - 1) * size;
+        return {
+          ok: true,
+          items: MATCHES.slice(start, start + size),
+          nextCursor: start + size < MATCHES.length ? String(number + 1) : null,
+          ...(reportTotal ? { total: MATCHES.length } : {}),
+        };
+      },
+    };
+    const sim = new Simulator(searchAir, simulatorDefinitionFor(searchAir), { provider });
+    return serveSimulatorHttp(sim, searchAir);
+  }
+
+  it("serves the matches and the paging block the manifest names, with the provider's total", async () => {
+    const http = await searching(true);
+    try {
+      const first = await (await fetch(`${http.url}/search.messages?query=q&count=2`)).json();
+      expect(first).toEqual({
+        ok: true,
+        messages: {
+          matches: MATCHES.slice(0, 2),
+          paging: { count: 2, page: 1, pages: 3, total: 5 },
+        },
+      });
+      const third = (await (
+        await fetch(`${http.url}/search.messages?query=q&count=2&page=3`)
+      ).json()) as { messages: unknown };
+      expect(third.messages).toEqual({
+        matches: MATCHES.slice(4),
+        paging: { count: 2, page: 3, pages: 3, total: 5 },
+      });
+    } finally {
+      await http.close();
+    }
+  });
+
+  it("reports a total and page count only where the data supports them", async () => {
+    const http = await searching(false);
+    try {
+      type Paged = { messages: { paging: unknown } };
+      const first = (await (
+        await fetch(`${http.url}/search.messages?query=q&count=2`)
+      ).json()) as Paged;
+      expect(first.messages.paging).toEqual({ count: 2, page: 1 });
+      const lastRes = await fetch(`${http.url}/search.messages?query=q&count=2&page=3`);
+      const last = (await lastRes.json()) as Paged;
+      expect(last.messages.paging).toEqual({ count: 2, page: 3, pages: 3, total: 5 });
+    } finally {
+      await http.close();
+    }
+  });
+});
+
+describe("a timestamp id retyped as a string", () => {
+  const slack = JSON.stringify({
+    swagger: "2.0",
+    info: { title: "Slack", version: "1" },
+    host: "slack.com",
+    paths: {
+      "/chat.delete": {
+        post: {
+          operationId: "chat_delete",
+          consumes: ["application/x-www-form-urlencoded", "application/json"],
+          parameters: [
+            { name: "ts", in: "formData", type: "number" },
+            { name: "channel", in: "formData", type: "string" },
+          ],
+          responses: { "200": { description: "ok", schema: { type: "object" } } },
+        },
+      },
+    },
+  });
+
+  async function deleting(manifest?: string) {
+    const compiled = await compile({ spec: slack, serviceId: "slack", manifest });
+    const slackAir = approveOperations(
+      compiled,
+      compiled.operations.map((o) => o.id),
+    );
+    for (const op of slackAir.operations) {
+      op.auth = { ...op.auth, type: "none", scopes: [] };
+      op.idempotency = { mode: "none", mechanism: "none", keyDerivation: "none" };
+    }
+    const seen: ProviderRequest[] = [];
+    const provider: StateProvider = {
+      invoke: (req) => {
+        seen.push(req);
+        return { ok: true, result: { ok: true } };
+      },
+    };
+    const sim = new Simulator(slackAir, simulatorDefinitionFor(slackAir), { provider });
+    const http = await serveSimulatorHttp(sim, slackAir);
+    await fetch(`${http.url}/chat.delete`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "channel=C1&ts=1700000000.123400",
+    });
+    await http.close();
+    return (seen[0]?.body as Record<string, unknown> | null)?.ts;
+  }
+
+  it("loses the trailing zeros as the contract's number, and keeps them as a retyped string", async () => {
+    expect(await deleting()).toBe(1700000000.1234);
+    expect(
+      await deleting("operations:\n  chat_delete:\n    params:\n      ts: { type: string }\n"),
+    ).toBe("1700000000.123400");
+  });
+});
+
+describe("response headers a provider sets", () => {
+  // ServiceNow's Table API declares Link and X-Total-Count on a list.
+  const serviceNow = `openapi: "3.0.3"
+info: { title: ServiceNow Table API, version: "1.0.0" }
+paths:
+  /api/now/table/{tableName}:
+    get:
+      operationId: getRecords
+      parameters:
+        - { name: tableName, in: path, required: true, schema: { type: string } }
+        - { name: sysparm_offset, in: query, schema: { type: integer } }
+        - { name: sysparm_limit, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: ok
+          headers:
+            Link: { schema: { type: string } }
+            X-Total-Count: { schema: { type: integer } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { result: { type: array, items: { type: object } } }
+`;
+
+  it("serves the declared ones, drops the rest with a warning, and traces both", async () => {
+    const compiled = await compile({ spec: serviceNow, serviceId: "servicenow" });
+    const snAir = approveOperations(
+      compiled,
+      compiled.operations.map((o) => o.id),
+    );
+    for (const op of snAir.operations) op.auth = { ...op.auth, type: "none", scopes: [] };
+    expect(snAir.operations[0]?.output.headers).toEqual(["Link", "X-Total-Count"]);
+    const link = '<https://instance.example/api/now/table/incident?sysparm_offset=1>;rel="next"';
+    const provider: StateProvider = {
+      invoke: (): ProviderResponse => ({
+        ok: true,
+        result: { result: [{ sys_id: "a" }] },
+        headers: { link, "x-total-count": 57, "X-Secret": "s", "X-Request-Id": "mine" },
+      }),
+    };
+    const trace: TraceEntry[] = [];
+    const sim = new Simulator(snAir, simulatorDefinitionFor(snAir), { provider });
+    const http = await serveSimulatorHttp(sim, snAir, { trace: { write: (e) => trace.push(e) } });
+    try {
+      const res = await fetch(`${http.url}/api/now/table/incident?sysparm_limit=1`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("link")).toBe(link);
+      expect(res.headers.get("x-total-count")).toBe("57");
+      expect(res.headers.get("x-secret")).toBeNull();
+      expect(res.headers.get("x-request-id")).toBe("r1");
+      expect(trace[0]?.headers).toEqual({ Link: link, "X-Total-Count": "57" });
+      expect(trace[0]?.warnings).toEqual([
+        "Provider header 'X-Secret' dropped: servicenow.table.get declares no such response header.",
+        "Provider header 'X-Request-Id' dropped: servicenow.table.get declares no such response header.",
+      ]);
+    } finally {
+      await http.close();
     }
   });
 });

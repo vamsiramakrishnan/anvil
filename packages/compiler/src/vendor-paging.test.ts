@@ -1,3 +1,4 @@
+import type { Operation } from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import { classifyEffect } from "./classify.js";
 import { compile } from "./compile.js";
@@ -266,5 +267,321 @@ describe("reads that return one resource", () => {
     expect(action("/tags")).toBe("list");
     // Nothing declared: no evidence either way, so the default stands.
     expect(action("/ping")).toBe("list");
+  });
+});
+
+describe("reads with no path id that return one object or a stream", () => {
+  // Slack declares a field that is one of several objects as a draft-04 tuple
+  // with no type; the Swagger 2.0 converter makes it an untyped items union.
+  const union = (...branches: unknown[]) => ({ items: branches });
+  const user = union(
+    { type: "object", properties: { id: { type: "string" }, name: { type: "string" } } },
+    { type: "object", properties: { id: { type: "string" }, is_bot: { type: "boolean" } } },
+  );
+
+  it("reads Slack's users.info and conversations.info as get", async () => {
+    const swagger = JSON.stringify({
+      swagger: "2.0",
+      info: { title: "Slack", version: "1" },
+      host: "slack.com",
+      basePath: "/api",
+      produces: ["application/json"],
+      paths: {
+        "/users.info": {
+          get: {
+            operationId: "users_info",
+            parameters: [{ name: "user", in: "query", type: "string" }],
+            responses: {
+              "200": {
+                description: "ok",
+                schema: {
+                  type: "object",
+                  properties: { ok: { type: "boolean", enum: [true] }, user },
+                },
+              },
+            },
+          },
+        },
+        "/conversations.info": {
+          get: {
+            operationId: "conversations_info",
+            parameters: [{ name: "channel", in: "query", type: "string" }],
+            responses: {
+              "200": {
+                description: "ok",
+                schema: {
+                  type: "object",
+                  properties: { ok: { type: "boolean", enum: [true] }, channel: user },
+                },
+              },
+            },
+          },
+        },
+        "/users.list": {
+          get: {
+            operationId: "users_list",
+            responses: {
+              "200": {
+                description: "ok",
+                schema: {
+                  type: "object",
+                  properties: { ok: { type: "boolean" }, members: { type: "array", items: user } },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const air = await compile({ spec: swagger, serviceId: "slack" });
+    const action = (path: string) =>
+      air.operations.find((o) => o.sourceRef.path === path)?.effect.action;
+    expect(action("/users.info")).toBe("get");
+    expect(action("/conversations.info")).toBe("get");
+    expect(action("/users.list")).toBe("list");
+  });
+
+  it("reads a content stream as get", async () => {
+    const air = await compile({
+      spec: JSON.stringify({
+        openapi: "3.0.1",
+        info: { title: "Drive items", version: "1" },
+        servers: [{ url: "https://graph.example.test" }],
+        paths: {
+          "/drives/{drive-id}/items/{driveItem-id}/content": {
+            parameters: [
+              { name: "drive-id", in: "path", required: true, schema: { type: "string" } },
+              { name: "driveItem-id", in: "path", required: true, schema: { type: "string" } },
+            ],
+            get: {
+              responses: {
+                "2XX": {
+                  description: "Retrieved media content",
+                  content: {
+                    "application/octet-stream": { schema: { type: "string", format: "binary" } },
+                  },
+                },
+              },
+            },
+          },
+          "/reports/{id}/pdf": {
+            get: {
+              parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+              responses: { "200": { description: "ok", content: { "application/pdf": {} } } },
+            },
+          },
+        },
+      }),
+      serviceId: "files",
+    });
+    const action = (path: string) =>
+      air.operations.find((o) => o.sourceRef.path === path)?.effect.action;
+    expect(action("/drives/{drive-id}/items/{driveItem-id}/content")).toBe("get");
+    expect(action("/reports/{id}/pdf")).toBe("get");
+  });
+});
+
+describe("a continuation nested in a response", () => {
+  // Slack declares response_metadata as an untyped union: the paging style,
+  // a deprecation warning, or both (each branch an object).
+  const responseMetadata = {
+    items: [
+      { type: "object", properties: { next_cursor: { type: "string" } } },
+      {
+        type: "object",
+        properties: { messages: { type: "array", items: { type: "string" } } },
+      },
+      {
+        type: "object",
+        properties: {
+          messages: { type: "array", items: { type: "string" } },
+          next_cursor: { type: "string" },
+        },
+      },
+    ],
+  };
+  const slack = JSON.stringify({
+    swagger: "2.0",
+    info: { title: "Slack", version: "1" },
+    host: "slack.com",
+    produces: ["application/json"],
+    definitions: { objs_response_metadata: responseMetadata },
+    paths: {
+      "/users.list": {
+        get: {
+          operationId: "users_list",
+          parameters: [
+            { name: "cursor", in: "query", type: "string" },
+            { name: "limit", in: "query", type: "integer" },
+          ],
+          responses: {
+            "200": {
+              description: "ok",
+              schema: {
+                type: "object",
+                properties: {
+                  ok: { type: "boolean", enum: [true] },
+                  members: { type: "array", items: { type: "object" } },
+                  response_metadata: { $ref: "#/definitions/objs_response_metadata" },
+                },
+              },
+            },
+          },
+        },
+      },
+      "/conversations.history": {
+        get: {
+          operationId: "conversations_history",
+          parameters: [
+            { name: "channel", in: "query", type: "string" },
+            { name: "cursor", in: "query", type: "string" },
+            { name: "limit", in: "query", type: "integer" },
+          ],
+          responses: {
+            "200": {
+              description: "ok",
+              schema: {
+                type: "object",
+                properties: {
+                  ok: { type: "boolean", enum: [true] },
+                  has_more: { type: "boolean" },
+                  messages: { type: "array", items: { type: "object" } },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+  });
+  const pagination = (air: { operations: Operation[] }, path: string) =>
+    air.operations.find((o) => o.sourceRef.path === path)?.pagination;
+
+  it("finds Slack's response_metadata.next_cursor through its union, and the items beside it", async () => {
+    const air = await compile({ spec: slack, serviceId: "slack" });
+    expect(pagination(air, "/users.list")).toMatchObject({
+      style: "cursor",
+      cursorParam: "cursor",
+      itemsField: "members",
+      nextField: "response_metadata.next_cursor",
+    });
+    // Nothing declares history's continuation, so nothing is guessed.
+    expect(pagination(air, "/conversations.history")?.nextField).toBeUndefined();
+  });
+
+  it("takes a nested next field a manifest declares", async () => {
+    const air = await compile({
+      spec: slack,
+      serviceId: "slack",
+      manifest: [
+        "operations:",
+        "  conversations_history:",
+        "    pagination:",
+        "      style: cursor",
+        "      cursor_param: cursor",
+        "      page_size_param: limit",
+        "      items_field: messages",
+        "      next_field: response_metadata.next_cursor",
+      ].join("\n"),
+    });
+    expect(pagination(air, "/conversations.history")).toMatchObject({
+      itemsField: "messages",
+      nextField: "response_metadata.next_cursor",
+    });
+  });
+});
+
+describe("a page-numbered position block", () => {
+  it("finds Slack's paging block for a page-numbered read, and only for one", async () => {
+    const paging = {
+      type: "object",
+      properties: {
+        count: { type: "integer" },
+        page: { type: "integer" },
+        pages: { type: "integer" },
+        total: { type: "integer" },
+      },
+    };
+    const read = (params: string[]) => ({
+      get: {
+        parameters: params.map((name) => ({ name, in: "query", schema: { type: "string" } })),
+        responses: {
+          "200": {
+            description: "ok",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: { files: { type: "array", items: { type: "object" } }, paging },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const air = await compile({
+      spec: JSON.stringify({
+        openapi: "3.0.1",
+        info: { title: "Files", version: "1" },
+        servers: [{ url: "https://slack.example.test/api" }],
+        paths: { "/files.list": read(["page", "count"]), "/files.cursor": read(["cursor"]) },
+      }),
+      serviceId: "files",
+    });
+    const pagination = (path: string) =>
+      air.operations.find((o) => o.sourceRef.path === path)?.pagination;
+    expect(pagination("/files.list")).toMatchObject({
+      style: "page",
+      cursorParam: "page",
+      itemsField: "files",
+      pagingField: "paging",
+    });
+    expect(pagination("/files.cursor")?.pagingField).toBeUndefined();
+  });
+});
+
+describe("OData action bodies", () => {
+  it("records that Graph binds an action's parameters in any case, and nothing else", async () => {
+    const action = (extension: Record<string, unknown>) => ({
+      post: {
+        ...extension,
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { type: "object", properties: { DestinationId: { type: "string" } } },
+            },
+          },
+        },
+        responses: { "2XX": { description: "ok" } },
+      },
+    });
+    const air = await compile({
+      spec: JSON.stringify({
+        openapi: "3.0.1",
+        info: { title: "Graph", version: "1" },
+        servers: [{ url: "https://graph.example.test/v1.0" }],
+        paths: {
+          "/me/messages/{message-id}/move": {
+            parameters: [
+              { name: "message-id", in: "path", required: true, schema: { type: "string" } },
+            ],
+            ...action({ "x-ms-docs-operation-type": "action" }),
+          },
+          "/me/messages": action({ "x-ms-docs-operation-type": "operation" }),
+          "/plain": action({}),
+        },
+      }),
+      serviceId: "graph",
+    });
+    const body = (path: string) =>
+      air.operations.find((o) => o.sourceRef.path === path)?.input.body;
+    expect(body("/me/messages/{message-id}/move")).toMatchObject({
+      fields: [{ name: "DestinationId" }],
+      fieldNameMatch: "case_insensitive",
+    });
+    expect(body("/me/messages")?.fieldNameMatch).toBeUndefined();
+    expect(body("/plain")?.fieldNameMatch).toBeUndefined();
   });
 });
