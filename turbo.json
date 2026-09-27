@@ -28,6 +28,16 @@
       "dependsOn": ["^build", "build", "@anvil/cli#build"],
       "env": ["ANVIL_FUZZ_REQUIRE_SDKS"]
     },
+    // The docs site's compile playground aliases @anvil/air and
+    // @anvil/compiler to their dist bundles (astro.config's `local(...)`),
+    // not through a workspace dependency, so `^build` never orders those
+    // builds ahead of it. Under `pnpm test` a compiler rebuild could clean
+    // its dist while the docs build read it (ENOENT on dist/index.js).
+    // Naming the builds here is what makes the ordering real.
+    "@anvil/docs#build": {
+      "dependsOn": ["^build", "@anvil/air#build", "@anvil/compiler#build"],
+      "outputs": ["dist/**"]
+    },
     "clean": {
       "cache": false
     },
