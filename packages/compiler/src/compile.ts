@@ -191,7 +191,11 @@ function applyServiceAuthDefaults(
           message: note,
           operationId: operation.id,
         });
-      } else if (alternativesUnmodeled.has(operation.id) && config.type !== undefined) {
+      } else if (
+        alternativesUnmodeled.has(operation.id) &&
+        config.type !== undefined &&
+        config.type !== "oauth2"
+      ) {
         // The source offers OR'd security alternatives the compiler would not
         // pick between (auth/alternatives_unmodeled). A service-level manifest
         // auth type IS the explicit choice that diagnostic asks for: apply it,
