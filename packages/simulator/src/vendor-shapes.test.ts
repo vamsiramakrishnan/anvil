@@ -40,6 +40,19 @@ paths:
                   isLast: { type: boolean }
                   issues: { type: array, items: { type: object } }
                   nextPageToken: { type: string }
+  /rest/api/3/user/search:
+    get:
+      operationId: findUsers
+      parameters:
+        - { name: query, in: query, schema: { type: string } }
+        - { name: startAt, in: query, schema: { type: integer } }
+        - { name: maxResults, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: ok
+          content:
+            application/json:
+              schema: { type: array, items: { type: object } }
   /wiki/api/v2/pages:
     get:
       operationId: getPages
@@ -223,6 +236,24 @@ describe("a next-page URL in the response", () => {
       expect(next.searchParams.get("cursor")).toBe("2");
       const followed = (await (await fetch(next)).json()) as { results: unknown[] };
       expect(followed.results).toEqual([{ id: "3" }, { id: "4" }]);
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+describe("a response declared as a bare array", () => {
+  it("puts the continuation in a Link header as a URL carrying the cursor", async () => {
+    const s = await serving();
+    try {
+      const res = await fetch(`${s.url}/rest/api/3/user/search?query=a&maxResults=2`);
+      expect(await res.json()).toEqual([{ id: "1" }, { id: "2" }]);
+      const link = /^<([^>]+)>; rel="next"$/.exec(res.headers.get("link") ?? "");
+      const next = new URL(link?.[1] ?? "");
+      expect(next.origin).toBe(s.url);
+      expect(next.searchParams.get("startAt")).toBe("2");
+      expect(next.searchParams.get("query")).toBe("a");
+      expect(await (await fetch(next)).json()).toEqual([{ id: "3" }, { id: "4" }]);
     } finally {
       await s.close();
     }

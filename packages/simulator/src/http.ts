@@ -152,16 +152,23 @@ function envelope(
 ): { body: unknown; headers: Record<string, string> } {
   const declared = declaredResponse(air, op);
   const pagination = op.pagination;
-  let next: string | undefined = nextCursor;
-  if (nextCursor !== undefined && pagination?.style === "link" && pagination.cursorParam) {
+  const bare = declared?.type === "array";
+  const nextUrl = (cursor: string, cursorParam: string): string => {
     const link = new URL(url.toString());
     // The token names the whole continuation; an OData `$skip` the caller
     // sent is already folded into it and must not be applied twice.
     if (isODataPaging(pagination)) link.searchParams.delete("$skip");
-    link.searchParams.set(pagination.cursorParam, nextCursor);
-    next = link.toString();
+    link.searchParams.set(cursorParam, cursor);
+    return link.toString();
+  };
+  let next: string | undefined = nextCursor;
+  // A `link` continuation is a URL; so is any continuation that can only
+  // travel in a `Link` header (RFC 8288), which is where a bare array puts it.
+  const asUrl = pagination?.style === "link" || (bare && pagination?.in !== "body");
+  if (nextCursor !== undefined && asUrl && pagination?.cursorParam) {
+    next = nextUrl(nextCursor, pagination.cursorParam);
   }
-  if (declared?.type === "array") {
+  if (bare) {
     return { body: items, headers: next ? { link: `<${next}>; rel="next"` } : {} };
   }
   const body: Record<string, unknown> = {};

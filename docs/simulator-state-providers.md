@@ -146,7 +146,8 @@ compile costs for five vendor specs are in
   or `@odata.nextLink` with `$skiptoken` for an OData collection declaring
   `$top`, `$skip`, or `$skiptoken` (a `$skip` in the request is dropped from
   the link, since the token covers it). A response declared as a bare array is served as
-  one, with the continuation in a `Link: <...>; rel="next"` header.
+  one, with the continuation in a `Link: <...>; rel="next"` header whose
+  target is the same kind of URL, carrying the cursor parameter.
 - Other successes return the provider's `result` as the body, with a status
   the contract declares for an HTTP+JSON operation: `204` with no body when
   it declares 204 and the provider returns no `result` (or it declares no
