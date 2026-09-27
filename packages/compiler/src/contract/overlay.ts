@@ -113,6 +113,9 @@ export const CONTRACT_SAFETY_PREDICATES: ReadonlySet<SemanticPredicate> =
     // Same contested-only footing: how long a connection may be held open is a
     // resource-safety fact two overlays must not settle by array order.
     "stream",
+    // What type an input travels as is a wire fact; two overlays that retype
+    // it differently must not be settled by array order either.
+    "params",
   ]);
 
 type ManifestStrategy = NonNullable<NonNullable<OperationManifest["idempotency"]>["strategy"]>;
@@ -243,6 +246,9 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
     // owns the "resize, never create" rule against the compiled contract.
     if (m.pagination) assertions.push(set(ref, "pagination", m.pagination));
     if (m.stream) assertions.push(set(ref, "stream", m.stream));
+    // Input retypes, carried verbatim — `applyOperationManifest` owns matching
+    // each wire name against the compiled inputs.
+    if (m.params) assertions.push(set(ref, "params", m.params));
 
     if (m.state) assertions.push(set(ref, "state", m.state));
     if (m.reviewed_by) assertions.push(set(ref, "reviewedBy", m.reviewed_by));
@@ -363,6 +369,9 @@ export function projectOperationManifest(
 
   const stream = v<OperationManifest["stream"]>("stream");
   if (stream) m.stream = stream;
+
+  const params = v<OperationManifest["params"]>("params");
+  if (params) m.params = params;
 
   const intentExamples = v<string[]>("intentExamples");
   if (intentExamples) m.intent_examples = intentExamples;

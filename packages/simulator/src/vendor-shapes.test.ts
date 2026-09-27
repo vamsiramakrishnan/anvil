@@ -599,3 +599,59 @@ paths:
     }
   });
 });
+
+describe("a timestamp id retyped as a string", () => {
+  const slack = JSON.stringify({
+    swagger: "2.0",
+    info: { title: "Slack", version: "1" },
+    host: "slack.com",
+    paths: {
+      "/chat.delete": {
+        post: {
+          operationId: "chat_delete",
+          consumes: ["application/x-www-form-urlencoded", "application/json"],
+          parameters: [
+            { name: "ts", in: "formData", type: "number" },
+            { name: "channel", in: "formData", type: "string" },
+          ],
+          responses: { "200": { description: "ok", schema: { type: "object" } } },
+        },
+      },
+    },
+  });
+
+  async function deleting(manifest?: string) {
+    const compiled = await compile({ spec: slack, serviceId: "slack", manifest });
+    const slackAir = approveOperations(
+      compiled,
+      compiled.operations.map((o) => o.id),
+    );
+    for (const op of slackAir.operations) {
+      op.auth = { ...op.auth, type: "none", scopes: [] };
+      op.idempotency = { mode: "none", mechanism: "none", keyDerivation: "none" };
+    }
+    const seen: ProviderRequest[] = [];
+    const provider: StateProvider = {
+      invoke: (req) => {
+        seen.push(req);
+        return { ok: true, result: { ok: true } };
+      },
+    };
+    const sim = new Simulator(slackAir, simulatorDefinitionFor(slackAir), { provider });
+    const http = await serveSimulatorHttp(sim, slackAir);
+    await fetch(`${http.url}/chat.delete`, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "channel=C1&ts=1700000000.123400",
+    });
+    await http.close();
+    return (seen[0]?.body as Record<string, unknown> | null)?.ts;
+  }
+
+  it("loses the trailing zeros as the contract's number, and keeps them as a retyped string", async () => {
+    expect(await deleting()).toBe(1700000000.1234);
+    expect(
+      await deleting("operations:\n  chat_delete:\n    params:\n      ts: { type: string }\n"),
+    ).toBe("1700000000.123400");
+  });
+});

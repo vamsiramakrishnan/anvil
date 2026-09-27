@@ -432,6 +432,25 @@ export const OperationManifest = z.strictObject({
     })
     .optional(),
   /**
+   * Retype an input the source types wrongly, by its wire name: a query,
+   * path, header, or cookie parameter, or a top-level body field. Slack's
+   * contract types a message timestamp (`chat.delete`'s `ts`,
+   * `"1700000000.123400"`) as a number, so it would travel as a float and
+   * lose its trailing zeros; the timestamp is an id and must be carried as
+   * the string it is. The new type replaces the old one with its
+   * type-specific constraints; descriptions are kept.
+   */
+  params: z
+    .record(
+      z.string(),
+      z.strictObject({
+        type: z.enum(["string", "number", "integer", "boolean"]),
+        format: z.string().optional(),
+        pattern: z.string().optional(),
+      }),
+    )
+    .optional(),
+  /**
    * Resize a subscription's observation window. Only the ceilings are
    * manifest-writable: the transport, the delivery semantics, and the
    * existence of a bound are compiler-owned facts, so a manifest can widen or
@@ -1169,6 +1188,19 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
     }
   }
 
+  // Retype inputs by wire name. A name that matches nothing declines with the
+  // reason rather than inventing an input the wire never carries.
+  if (m.params) {
+    for (const [name, retype] of Object.entries(m.params)) {
+      const retyped = retypeInput(op, name, retype);
+      const note = retyped
+        ? `Input '${name}' retyped by manifest: ${retyped} → ${retype.type}.`
+        : `params manifest patch for '${name}' left unset: the operation has no parameter ` +
+          "or top-level body field of that name.";
+      if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+    }
+  }
+
   // Resize the observation window of an operation that already streams. The
   // window's existence is what makes a subscription a call, and the compiler
   // owns that fact — so a `stream` patch on an operation with no stream
@@ -1594,3 +1626,70 @@ const titleCase = (s: string): string =>
     .filter(Boolean)
     .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
     .join(" ");
+
+/** Keywords that describe a value without constraining its type; they survive a retype. */
+const TYPE_NEUTRAL_KEYWORDS = new Set([
+  "title",
+  "description",
+  "deprecated",
+  "nullable",
+  "readOnly",
+  "writeOnly",
+]);
+
+function retypedSchema(
+  schema: Record<string, unknown>,
+  retype: { type: string; format?: string; pattern?: string },
+): Record<string, unknown> {
+  const kept = Object.fromEntries(
+    Object.entries(schema).filter(
+      ([key]) => TYPE_NEUTRAL_KEYWORDS.has(key) || key.startsWith("x-"),
+    ),
+  );
+  return {
+    ...kept,
+    type: retype.type,
+    ...(retype.format !== undefined ? { format: retype.format } : {}),
+    ...(retype.pattern !== undefined ? { pattern: retype.pattern } : {}),
+  };
+}
+
+/**
+ * Retype every input named `name`: parameters in any location, a projected
+ * body field, and the body schema's property. Returns the type it had (or
+ * `untyped`), or `undefined` when nothing carries that name.
+ */
+function retypeInput(
+  op: Operation,
+  name: string,
+  retype: { type: string; format?: string; pattern?: string },
+): string | undefined {
+  let previous: string | undefined;
+  const typeOf = (schema: Record<string, unknown> | undefined) =>
+    typeof schema?.type === "string" ? schema.type : "untyped";
+  for (const param of op.input.params) {
+    if (param.name !== name) continue;
+    previous ??= typeOf(param.schema);
+    param.schema = retypedSchema(param.schema ?? {}, retype);
+  }
+  const body = op.input.body;
+  if (body) {
+    for (const field of body.fields) {
+      if (field.name !== name) continue;
+      previous ??= typeOf(field.schema);
+      field.schema = retypedSchema(field.schema ?? {}, retype);
+    }
+    const props = body.schema.properties;
+    if (props && typeof props === "object" && !Array.isArray(props)) {
+      const prop = (props as Record<string, unknown>)[name];
+      if (prop && typeof prop === "object" && !Array.isArray(prop)) {
+        previous ??= typeOf(prop as Record<string, unknown>);
+        (props as Record<string, unknown>)[name] = retypedSchema(
+          prop as Record<string, unknown>,
+          retype,
+        );
+      }
+    }
+  }
+  return previous;
+}

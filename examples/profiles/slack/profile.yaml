@@ -5,7 +5,7 @@
 profile: slack-messaging
 description: >-
   Read channel history and threads, find channels and people, post, update,
-  and schedule messages, search messages, and react to and pin them.
+  delete, and schedule messages, search messages, and react to and pin them.
 source:
   url: https://raw.githubusercontent.com/slackapi/slack-api-specs/master/web-api/slack_web_openapi_v2.json
   sha256: sha256:742a5c977180a829df8767cf57bc417d99b3713583aee83741efb9c08ca731e7
@@ -25,6 +25,7 @@ select:
   - path:
       - /chat.postMessage
       - /chat.update
+      - /chat.delete
       - /chat.postEphemeral
       - /chat.scheduleMessage
       - /chat.scheduledMessages.list
