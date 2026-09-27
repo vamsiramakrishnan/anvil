@@ -560,8 +560,10 @@ export function normalize(
       const outputSchema = jsonSchemaOf(successRes?.content, namedSchemas, bounds);
       const pagination = classifyPagination(effect, effect.action, params, outputSchema, body);
       // A read with no trailing id defaults to `list`; an unpaged one whose
-      // declared response is not a collection (`GET /me`) reads one resource.
-      if (!pagination && isSingletonRead(effect, outputSchema)) effect.action = "get";
+      // declared response is not a collection (`GET /me`, a file's content
+      // stream) reads one resource.
+      const contentTypes = Object.keys(successRes?.content ?? {});
+      if (!pagination && isSingletonRead(effect, outputSchema, contentTypes)) effect.action = "get";
 
       const archetype = classifyArchetype(
         effect,

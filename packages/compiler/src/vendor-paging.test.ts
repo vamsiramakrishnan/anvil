@@ -268,3 +268,114 @@ describe("reads that return one resource", () => {
     expect(action("/ping")).toBe("list");
   });
 });
+
+describe("reads with no path id that return one object or a stream", () => {
+  // Slack declares a field that is one of several objects as a draft-04 tuple
+  // with no type; the Swagger 2.0 converter makes it an untyped items union.
+  const union = (...branches: unknown[]) => ({ items: branches });
+  const user = union(
+    { type: "object", properties: { id: { type: "string" }, name: { type: "string" } } },
+    { type: "object", properties: { id: { type: "string" }, is_bot: { type: "boolean" } } },
+  );
+
+  it("reads Slack's users.info and conversations.info as get", async () => {
+    const swagger = JSON.stringify({
+      swagger: "2.0",
+      info: { title: "Slack", version: "1" },
+      host: "slack.com",
+      basePath: "/api",
+      produces: ["application/json"],
+      paths: {
+        "/users.info": {
+          get: {
+            operationId: "users_info",
+            parameters: [{ name: "user", in: "query", type: "string" }],
+            responses: {
+              "200": {
+                description: "ok",
+                schema: {
+                  type: "object",
+                  properties: { ok: { type: "boolean", enum: [true] }, user },
+                },
+              },
+            },
+          },
+        },
+        "/conversations.info": {
+          get: {
+            operationId: "conversations_info",
+            parameters: [{ name: "channel", in: "query", type: "string" }],
+            responses: {
+              "200": {
+                description: "ok",
+                schema: {
+                  type: "object",
+                  properties: { ok: { type: "boolean", enum: [true] }, channel: user },
+                },
+              },
+            },
+          },
+        },
+        "/users.list": {
+          get: {
+            operationId: "users_list",
+            responses: {
+              "200": {
+                description: "ok",
+                schema: {
+                  type: "object",
+                  properties: { ok: { type: "boolean" }, members: { type: "array", items: user } },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+    const air = await compile({ spec: swagger, serviceId: "slack" });
+    const action = (path: string) =>
+      air.operations.find((o) => o.sourceRef.path === path)?.effect.action;
+    expect(action("/users.info")).toBe("get");
+    expect(action("/conversations.info")).toBe("get");
+    expect(action("/users.list")).toBe("list");
+  });
+
+  it("reads a content stream as get", async () => {
+    const air = await compile({
+      spec: JSON.stringify({
+        openapi: "3.0.1",
+        info: { title: "Drive items", version: "1" },
+        servers: [{ url: "https://graph.example.test" }],
+        paths: {
+          "/drives/{drive-id}/items/{driveItem-id}/content": {
+            parameters: [
+              { name: "drive-id", in: "path", required: true, schema: { type: "string" } },
+              { name: "driveItem-id", in: "path", required: true, schema: { type: "string" } },
+            ],
+            get: {
+              responses: {
+                "2XX": {
+                  description: "Retrieved media content",
+                  content: {
+                    "application/octet-stream": { schema: { type: "string", format: "binary" } },
+                  },
+                },
+              },
+            },
+          },
+          "/reports/{id}/pdf": {
+            get: {
+              parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+              responses: { "200": { description: "ok", content: { "application/pdf": {} } } },
+            },
+          },
+        },
+      }),
+      serviceId: "files",
+    });
+    const action = (path: string) =>
+      air.operations.find((o) => o.sourceRef.path === path)?.effect.action;
+    expect(action("/drives/{drive-id}/items/{driveItem-id}/content")).toBe("get");
+    expect(action("/reports/{id}/pdf")).toBe("get");
+  });
+});

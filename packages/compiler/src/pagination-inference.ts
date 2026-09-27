@@ -1,5 +1,5 @@
 import type { Effect, JsonSchema, OperationAction, Param, RequestBody } from "@anvil/air";
-import { inferPaginationResponseFields } from "./pagination-response.js";
+import { inferPaginationResponseFields, isDeclaredArray } from "./pagination-response.js";
 
 /**
  * Pagination inference: which parameters (or request-body fields) continue a
@@ -333,18 +333,31 @@ function odataPagination(
 }
 
 /**
- * An unpaged `list` read (the default for a GET without a trailing id) whose
- * declared response is an object that is not a collection envelope: it has
- * no array at its top level (Slack's `users.info`), or several, none of them
- * singled out as the items (Microsoft Graph's `GET /me`, a user with its
- * list-valued attributes). A collection envelope holds exactly one array; a
- * read that declares no response, or a bare array, is left a list.
+ * An unpaged `list` read (the default for a GET without a trailing id) that
+ * returns one thing rather than a collection:
+ *
+ *  - a declared object that is not a collection envelope: it has no array at
+ *    its top level (Slack's `users.info`), or several, none of them singled
+ *    out as the items (Microsoft Graph's `GET /me`, a user with its
+ *    list-valued attributes). A collection envelope holds exactly one array.
+ *  - a scalar or binary body, or only byte-stream content (Graph's
+ *    `GET /drives/{drive-id}/items/{driveItem-id}/content`, a stream).
+ *
+ * A read that declares no response, or a bare array, is left a list. A field
+ * whose only array evidence is an untyped `items` union of objects (Slack's
+ * `user` and `channel`, see `untypedItemsUnion`) is an object, not an array.
  */
 export function isSingletonRead(
   effect: Effect,
   outputSchema: Record<string, unknown> | undefined,
+  contentTypes: readonly string[] = [],
 ): boolean {
-  if (effect.kind !== "read" || effect.action !== "list" || !outputSchema) return false;
+  if (effect.kind !== "read" || effect.action !== "list") return false;
+  if (contentTypes.length > 0 && contentTypes.every((type) => STREAM_CONTENT.test(type))) {
+    return true;
+  }
+  if (!outputSchema) return false;
+  if (typeof outputSchema.type === "string" && SCALAR_TYPES.has(outputSchema.type)) return true;
   if (outputSchema.type === "array" || outputSchema.items !== undefined) return false;
   // Inherited fields sit in `allOf` members when a bound kept the chain.
   const props: Record<string, unknown> = {};
@@ -356,11 +369,10 @@ export function isSingletonRead(
     if (own && typeof own === "object") Object.assign(props, own);
   }
   if (Object.keys(props).length === 0) return false;
-  const arrays = Object.values(props).filter(
-    (prop) =>
-      typeof prop === "object" &&
-      prop !== null &&
-      ((prop as JsonSchema).type === "array" || (prop as JsonSchema).items !== undefined),
-  );
+  const arrays = Object.values(props).filter(isDeclaredArray);
   return arrays.length !== 1;
 }
+
+const SCALAR_TYPES = new Set(["string", "number", "integer", "boolean"]);
+/** Content that is a byte stream, never a collection of records. */
+const STREAM_CONTENT = /^(application\/(octet-stream|pdf|zip)|image\/|audio\/|video\/)/i;

@@ -9,6 +9,46 @@ const NEXT_FIELD_NAMES = new Set([
   "nexttoken",
 ]);
 
+/**
+ * The object branches of an untyped `items` union: a schema with no `type` and
+ * no properties whose `items` is an `anyOf`/`oneOf` of objects. Slack's
+ * published spec writes a field that is one of several objects as a draft-04
+ * tuple, `{items: [A, B]}` with no `type` (its `user`, `channel`, and
+ * `response_metadata`), which the Swagger 2.0 converter turns into
+ * `{items: {anyOf: [A, B]}}`. Without `type: array` the keyword constrains
+ * only an array, and the service answers with one of the objects, so the
+ * field is read as that union rather than as a list.
+ */
+export function untypedItemsUnion(schema: unknown): Record<string, unknown>[] | undefined {
+  if (!isObject(schema) || schema.type !== undefined || schema.properties !== undefined) {
+    return undefined;
+  }
+  const items = schema.items;
+  if (!isObject(items)) return undefined;
+  const branches = Array.isArray(items.anyOf)
+    ? items.anyOf
+    : Array.isArray(items.oneOf)
+      ? items.oneOf
+      : undefined;
+  if (!branches || branches.length === 0) return undefined;
+  const objects = branches.filter(
+    (branch): branch is Record<string, unknown> =>
+      isObject(branch) && (branch.type === "object" || isObject(branch.properties)),
+  );
+  return objects.length === branches.length ? objects : undefined;
+}
+
+/** Whether a declared field is an array: typed as one, or an untyped `items` that is not a union. */
+export function isDeclaredArray(schema: unknown): boolean {
+  if (!isObject(schema)) return false;
+  if (schema.type === "array") return true;
+  return schema.items !== undefined && untypedItemsUnion(schema) === undefined;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /** Parents of a `next` link: HAL-style `_links.next` (Confluence v2) and JSON:API `links.next`. */
 const LINK_PARENTS = new Set(["_links", "links"]);
 
