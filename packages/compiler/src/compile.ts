@@ -36,6 +36,7 @@ import { critiqueNames, resolveNameCollisions, servicePrefixStutterDiagnostic } 
 import { normalize } from "./normalize.js";
 import { type ParsedSpec, parseSource } from "./parse.js";
 import {
+  assertProfileSource,
   type ExposureProfile,
   profileApproves,
   profileDigest,
@@ -133,12 +134,11 @@ export async function compileSourceEffective(
   source: CompilerSource,
   options: EffectiveCompileOptions = {},
 ): Promise<EffectiveCompileResult> {
-  const pinned = options.profile?.source?.digest;
-  if (pinned !== undefined && pinned !== source.sourceHash) {
-    throw new Error(
-      `Exposure profile '${options.profile?.profile}' is pinned to source ${pinned}, but the snapshot being compiled is ${source.sourceHash}. Review the profile against this source and update source.digest.`,
-    );
-  }
+  assertProfileSource(options.profile, {
+    sourceHash: source.sourceHash,
+    entrypointPath: source.entrypoint.path,
+    entrypointBytes: source.files.get(source.entrypoint.path),
+  });
   const parsed = await parseSource(source, options.profile ? { profile: options.profile } : {});
   return buildAir(parsed, { ...options, provenance: source });
 }

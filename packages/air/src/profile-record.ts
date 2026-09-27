@@ -16,6 +16,14 @@ export const ExposureProfileRecord = z.object({
   digest: z.string(),
   /** The source digest (`service.source.sourceHash`) the profile was applied to. */
   sourceHash: z.string().optional(),
+  /** Where the reviewed contract is published, and its file and content digests, as the profile pins them. */
+  source: z
+    .object({
+      url: z.string().optional(),
+      sha256: z.string().optional(),
+      contentSha256: z.string().optional(),
+    })
+    .optional(),
   unexposed: z.enum(["skip", "compile"]),
   /** Operations the full source contract declares, before selection. */
   sourceOperations: z.number().int().nonnegative(),
