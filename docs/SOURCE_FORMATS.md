@@ -145,6 +145,10 @@ it with a `profile/approval_outside_profile` warning). Generated artifacts and
 the simulator expose approved operations only, so the exposed surface is
 always a subset of the profile.
 
+Reviewed profiles and manifests for Jira, Confluence, Slack, Google Drive,
+and Microsoft Graph are in [`examples/profiles/`](../examples/profiles/),
+each pinned to its vendor spec by URL and sha256.
+
 Some vendor contracts need a manifest before any operation can be approved.
 Jira and Confluence declare basic auth or OAuth as alternatives, which blocks
 every operation until a service-level `auth.type` chooses one (see

@@ -1,0 +1,64 @@
+# Manifest for the Slack profile. Slack's contract declares its OAuth 2.0
+# authorization-code scopes on every method, so each operation acts with the
+# authority of the user or bot that installed the app; approval names who
+# granted it (`anvil approve --profile --reviewer <id>`).
+service:
+  name: slack
+  display_name: Slack Web API
+
+operations:
+  # Posting has no client-supplied idempotency key: a retry after a timeout
+  # posts again, so each is confirmed and never retried.
+  chat_postMessage:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Posts a message; a retry may post it twice. }
+    retries: { enabled: false }
+  chat_postEphemeral:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Posts a message; a retry may post it twice. }
+    retries: { enabled: false }
+  chat_scheduleMessage:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Schedules a message; a retry may schedule it twice. }
+    retries: { enabled: false }
+  # Setting the same text, topic, or purpose again, or joining a channel
+  # already joined, leaves it as the first call did.
+  chat_update:
+    idempotency: { strategy: natural }
+  conversations_setTopic:
+    idempotency: { strategy: natural }
+  conversations_setPurpose:
+    idempotency: { strategy: natural }
+  conversations_join:
+    idempotency: { strategy: natural }
+  conversations_open:
+    idempotency: { strategy: natural }
+  # Slack answers already_reacted / already_pinned to a repeat.
+  reactions_add:
+    idempotency: { strategy: natural }
+  pins_add:
+    idempotency: { strategy: natural }
+  # History and replies page with response_metadata.next_cursor, as the list
+  # methods do, but the published schema leaves that field out.
+  conversations_history:
+    pagination:
+      style: cursor
+      cursor_param: cursor
+      page_size_param: limit
+      items_field: messages
+      next_field: response_metadata.next_cursor
+  conversations_replies:
+    pagination:
+      style: cursor
+      cursor_param: cursor
+      page_size_param: limit
+      items_field: messages
+      next_field: response_metadata.next_cursor
+  # search.messages pages by page number and returns its matches under
+  # messages.matches, which the published schema also leaves out.
+  search_messages:
+    pagination:
+      style: page
+      cursor_param: page
+      page_size_param: count
+      items_field: messages.matches

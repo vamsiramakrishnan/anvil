@@ -1,0 +1,55 @@
+# Google Drive API v3 (a Google Discovery document), files and their sharing
+# and discussion for a document agent.
+# Compile the vendor's whole published contract under this profile:
+#   curl -fsSL -o drive-v3.json https://www.googleapis.com/discovery/v1/apis/drive/v3/rest
+#   anvil compile drive-v3.json --profile profile.yaml --manifest anvil.yaml --service drive --out drive
+#
+# Google serves this document with its keys in a different order on every
+# request, so its bytes never match twice; the pin is on its content
+# (canonical JSON). Google also republishes it as the API changes (its
+# `revision` field, 20260923 here): a new revision is refused until the
+# difference is reviewed and the pin updated.
+profile: drive-files
+description: >-
+  Search files with a q query, read their metadata, export Google Docs,
+  create, copy, and update files, and read sharing, revisions, comments, and
+  replies.
+source:
+  url: https://www.googleapis.com/discovery/v1/apis/drive/v3/rest
+  content_sha256: sha256:9d03ef1af8a16ddfae290b465876a5f74936c76bf33c4cb0b0925ceffb6a5505
+select:
+  # Files.
+  - operation_id:
+      - drive.files.list
+      - drive.files.get
+      - drive.files.create
+      - drive.files.update
+      - drive.files.copy
+      - drive.files.export
+      - drive.files.listLabels
+  # Sharing.
+  - operation_id:
+      - drive.permissions.list
+      - drive.permissions.get
+      - drive.permissions.create
+      - drive.permissions.update
+  # Revisions.
+  - operation_id: [drive.revisions.list, drive.revisions.get, drive.revisions.update]
+  # Comments and replies.
+  - operation_id:
+      - drive.comments.list
+      - drive.comments.get
+      - drive.comments.create
+      - drive.comments.update
+      - drive.replies.list
+      - drive.replies.get
+      - drive.replies.create
+      - drive.replies.update
+  # Shared drives, changes, and the account.
+  - operation_id:
+      - drive.drives.list
+      - drive.drives.get
+      - drive.changes.getStartPageToken
+      - drive.changes.list
+      - drive.about.get
+unexposed: skip

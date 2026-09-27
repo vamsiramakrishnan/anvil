@@ -1,0 +1,63 @@
+# Confluence Cloud REST API v2, pages and their discussion for a knowledge agent.
+# Compile the vendor's whole published contract under this profile:
+#   curl -fsSL -o openapi-v2.v3.json https://dac-static.atlassian.com/cloud/confluence/openapi-v2.v3.json
+#   anvil compile openapi-v2.v3.json --profile profile.yaml --manifest anvil.yaml --service confluence --out confluence
+#
+# CQL search is not part of the v2 contract: Confluence serves it from the v1
+# API (GET /wiki/rest/api/search?cql=...), which this spec does not declare.
+# Titles, spaces, statuses, and labels filter the v2 list operations instead.
+profile: confluence-knowledge
+description: >-
+  Find and read pages, blog posts, and spaces; create and edit pages; read,
+  create, and edit footer and inline comments; and read labels.
+source:
+  url: https://dac-static.atlassian.com/cloud/confluence/openapi-v2.v3.json
+  sha256: sha256:fd741c62ef1fa7f34c7e8548444bab557ce39909443ed84c6fbde2f6fb597c3c
+select:
+  # Pages: find, read, create, edit, and walk the page tree.
+  - operation_id:
+      - getPages
+      - getPageById
+      - createPage
+      - updatePage
+      - updatePageTitle
+      - getChildPages
+      - getPageDirectChildren
+      - getPageAncestors
+      - getPageDescendants
+      - getPageVersions
+      - getPageVersionDetails
+      - getPageAttachments
+  # Spaces and blog posts.
+  - operation_id:
+      - getSpaces
+      - getSpaceById
+      - getPagesInSpace
+      - getBlogPostsInSpace
+      - getBlogPosts
+      - getBlogPostById
+  # Comments.
+  - operation_id:
+      - getPageFooterComments
+      - getPageInlineComments
+      - getFooterComments
+      - getFooterCommentById
+      - getFooterCommentChildren
+      - createFooterComment
+      - updateFooterComment
+      - getInlineComments
+      - getInlineCommentById
+      - getInlineCommentChildren
+      - createInlineComment
+      - updateInlineComment
+  # Labels.
+  - operation_id:
+      - getLabels
+      - getLabelPages
+      - getPageLabels
+      - getSpaceLabels
+      - getSpaceContentLabels
+      - getBlogPostLabels
+  # People named on pages and comments.
+  - operation_id: createBulkUserLookup
+unexposed: skip

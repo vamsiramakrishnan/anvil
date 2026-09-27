@@ -1,0 +1,47 @@
+# Manifest for the Confluence profile. Confluence Cloud accepts basic auth
+# (account email and API token) or OAuth 2.0 (3LO) on every operation; the
+# compiler does not choose between alternatives with different authority, so
+# this does.
+service:
+  name: confluence
+  display_name: Confluence Cloud REST API v2
+auth:
+  type: basic
+  scopes:
+    - read:page:confluence
+    - write:page:confluence
+    - read:space:confluence
+    - read:comment:confluence
+    - write:comment:confluence
+    - read:label:confluence
+    - read:user:confluence
+
+operations:
+  # No client-supplied idempotency key exists on these creates; a retry after
+  # a timeout can duplicate the page or comment, so each is confirmed and never
+  # retried.
+  createPage:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Creates a page; a retry may create a duplicate. }
+    retries: { enabled: false }
+  createFooterComment:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Posts a comment; a retry may post it twice. }
+    retries: { enabled: false }
+  createInlineComment:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Posts a comment; a retry may post it twice. }
+    retries: { enabled: false }
+  # Updates carry the version number they replace, and Confluence refuses a
+  # stale one, so a repeat cannot apply twice.
+  updatePage:
+    idempotency: { strategy: natural }
+  updatePageTitle:
+    idempotency: { strategy: natural }
+  updateFooterComment:
+    idempotency: { strategy: natural }
+  updateInlineComment:
+    idempotency: { strategy: natural }
+  # POST only because the id list can be long: it reads users, changes nothing.
+  createBulkUserLookup:
+    side_effect: read
