@@ -63,7 +63,78 @@ export function airToYaml(air: AirDocument): string {
   // safety cap. This is what makes the serialize→parse round-trip robust on a
   // large bundle, not just the raised cap on the read side.
   const doc = AirDocument.parse(air);
-  const pretty = stringifyYaml(doc, { lineWidth: 100, aliasDuplicateObjects: false });
+  if (doc.operations.length > CHUNKED_YAML_MIN_OPERATIONS) {
+    return losslessYaml(doc as unknown as Record<string, unknown>, true);
+  }
+  return losslessYaml(doc as unknown as Record<string, unknown>, false);
+}
+
+/**
+ * Above this many operations the YAML is emitted one entry at a time (see
+ * `chunkedYaml`). Below it the whole document is emitted at once, exactly as
+ * before, so every existing bundle keeps its bytes.
+ */
+const CHUNKED_YAML_MIN_OPERATIONS = 500;
+
+const PRETTY = { lineWidth: 100, aliasDuplicateObjects: false } as const;
+const QUOTED = {
+  lineWidth: 0,
+  aliasDuplicateObjects: false,
+  blockQuote: false,
+  defaultStringType: "QUOTE_DOUBLE",
+  doubleQuotedAsJSON: true,
+} as const;
+
+/**
+ * Emit a document in pretty style, falling back to fully quoted style when
+ * the pretty form would not round-trip. Chunked, the check and the fallback
+ * apply per chunk, so one drifting description quotes only its own entry.
+ */
+function losslessYaml(doc: Record<string, unknown>, chunked: boolean): string {
+  if (!chunked) return losslessChunk(doc);
+  return chunkedYaml(doc, losslessChunk);
+}
+
+/**
+ * The `yaml` emitter holds a node per value of the whole document before it
+ * writes a byte; a Microsoft Graph whole-source AIR (17,870 operations) needed
+ * over 9GB for that. A block map or sequence entry's emitted text does not
+ * depend on its siblings, so each top-level key's array items and map entries
+ * are emitted one at a time inside a one-entry document of the same shape,
+ * and the key's header line is dropped from every chunk but the first.
+ */
+function chunkedYaml(
+  doc: Record<string, unknown>,
+  emit: (part: Record<string, unknown>) => string,
+): string {
+  let out = "";
+  for (const [key, value] of Object.entries(doc)) {
+    const header = `${key}:\n`;
+    const parts: Record<string, unknown>[] | undefined = Array.isArray(value)
+      ? value.map((item) => ({ [key]: [item] }))
+      : isPlainRecord(value) && key !== "service" && key !== "anvilVersion"
+        ? Object.entries(value).map(([k, v]) => ({ [key]: { [k]: v } }))
+        : undefined;
+    if (!parts || parts.length === 0) {
+      out += emit({ [key]: value });
+      continue;
+    }
+    out += header;
+    for (const part of parts) {
+      const text = emit(part);
+      if (!text.startsWith(header)) return emit(doc);
+      out += text.slice(header.length);
+    }
+  }
+  return out;
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function losslessChunk(doc: Record<string, unknown>): string {
+  const pretty = stringifyYaml(doc, PRETTY);
   // Round-trip law guard: `airFromYaml(airToYaml(x))` must equal `x` — the
   // certify/lint path re-reads air.yaml, so a lossy emission silently drifts
   // the contract hash. Block scalars cannot represent trailing whitespace on a
@@ -82,13 +153,7 @@ export function airToYaml(air: AirDocument): string {
     }
   };
   if (parsesBack(pretty)) return pretty;
-  const quoted = stringifyYaml(doc, {
-    lineWidth: 0,
-    aliasDuplicateObjects: false,
-    blockQuote: false,
-    defaultStringType: "QUOTE_DOUBLE",
-    doubleQuotedAsJSON: true,
-  });
+  const quoted = stringifyYaml(doc, QUOTED);
   if (parsesBack(quoted)) return quoted;
   throw new Error(
     "airToYaml: no lossless YAML representation found — refusing to emit a canonical artifact that would not round-trip.",

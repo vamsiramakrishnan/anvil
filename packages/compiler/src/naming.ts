@@ -6,6 +6,7 @@ import {
   actionVerbFor,
   isReadIntentWriteMethod,
 } from "./classify.js";
+import { FORMAT_SUFFIX, type GroupTokenIndex, groupTokenIndex, pairKey } from "./naming-groups.js";
 
 /**
  * The naming pass. Operation names are the agent-facing surface — a CLI that
@@ -311,8 +312,8 @@ export function actionFor(method: HttpMethod, endsWithParam: boolean): string {
 // given operation's path carries the suffix (Twilio `Messages.json` for
 // list/create vs `Messages` for fetch/delete, whose suffix sits on the id
 // segment). Only the derived NAME is cleaned; the wire path (`sourceRef.path`)
-// the runtime calls is untouched.
-const FORMAT_SUFFIX = /\.(json|xml|csv|ya?ml|txt|html?|proto)$/i;
+// the runtime calls is untouched. The pattern, FORMAT_SUFFIX, lives in
+// naming-groups.ts beside the collision tokenizer that also strips it.
 
 /**
  * The true action verb from an operationId when the HTTP method genuinely
@@ -701,8 +702,9 @@ function resolveSurfaceCollisions(
     if (group.length < 2) continue;
     changed = true;
     group.sort(byStableIdentity);
+    const index = groupTokenIndex(group);
     const usedTokens = new Set<string>();
-    for (const [index, op] of group.entries()) {
+    for (const [position, op] of group.entries()) {
       // A candidate the operation's own canonicalName already ends with would
       // stutter at the join (`count_activities` + `activities` →
       // `…_count_activities_activities`), so take the next candidate instead:
@@ -711,8 +713,8 @@ function resolveSurfaceCollisions(
       // free in this group). Only when EVERY meaningful token stutters is the
       // original stuttering choice kept — a doubled word still beats the
       // meaningless method/index fallbacks, and beats a numbered blank.
-      const candidates = distinguishingTokenCandidates(op, group);
-      const fallback = subsetFallbackToken(op, group);
+      const candidates = distinguishingTokenCandidates(op, index);
+      const fallback = subsetFallbackToken(op, index);
       const fallbackStutters = fallback !== undefined && suffixStutters(op, fallback);
       const elided =
         fallback !== undefined && fallbackStutters ? elideStutter(op, fallback) : undefined;
@@ -723,7 +725,7 @@ function resolveSurfaceCollisions(
         candidates[0] ??
         fallback ??
         op.sourceRef.method ??
-        String(index + 1);
+        String(position + 1);
       let candidate = token;
       let n = 2;
       while (usedTokens.has(candidate)) candidate = `${token}_${n++}`;
@@ -756,32 +758,18 @@ function resolveSurfaceCollisions(
  * `direct` at the group's root. Deterministic, and glanceable where the old
  * method fallback was noise.
  */
-function subsetFallbackToken(op: Operation, group: Operation[]): string | undefined {
+function subsetFallbackToken(op: Operation, index: GroupTokenIndex): string | undefined {
   const segments = (op.sourceRef.path ?? "").split("/").filter(Boolean);
   const last = segments[segments.length - 1];
   if (last?.startsWith("{") && last.endsWith("}")) {
     return `by_${snakeCase(last.slice(1, -1))}`;
   }
   // A token is distinctive when at least one group member's path lacks it — the
-  // complement of "shared by all". Testing membership directly avoids rebuilding
-  // an intersection Set per member, and avoids a reduce with no initial value
-  // (which would throw on an empty group rather than return a token).
-  const groupTokens = group.map((o) => new Set(cleanPathTokens(o.sourceRef.path)));
-  const distinctive = cleanPathTokens(op.sourceRef.path).filter((t) =>
-    groupTokens.some((tokens) => !tokens.has(t)),
+  // complement of "shared by all": fewer members contain it than the group has.
+  const distinctive = (index.clean.get(op) ?? []).filter(
+    (t) => (index.cleanCount.get(t) ?? 0) < index.size,
   );
   return distinctive.length > 0 ? `${distinctive.join("_")}_direct` : "direct";
-}
-
-/** Concrete path segments as cleaned word-tokens: format suffix stripped, RPC
- * dotted segments split into their parts. So a distinguishing token is always
- * a real word (`admin`, `local`), never a raw `Messages.json` or a whole
- * dotted method — the same cleaning the derived names already got. */
-function cleanPathTokens(path: string | undefined): string[] {
-  return (path ?? "")
-    .split("/")
-    .filter((s) => s && !s.startsWith("{"))
-    .flatMap((s) => s.replace(FORMAT_SUFFIX, "").split(".").filter(Boolean));
 }
 
 /**
@@ -796,26 +784,12 @@ function cleanPathTokens(path: string | undefined): string[] {
  * Returned as an ordered list so the caller can skip a candidate that would
  * stutter against the operation's own name (`suffixStutters`).
  */
-/** Path parameter names as `by_<name>` pseudo-tokens (`/refunds/{refund}` →
- * `by_refund`). Concrete tokens alone cannot distinguish routes that differ
- * only in their parameters — Stripe's `/application_fees/{fee}/refunds/{id}`
- * vs `/application_fees/{id}/refunds` clean to identical token lists — and the
- * old method+counter fallback produced the meaningless `post`/`post_2` names a
- * consuming agent cannot choose between. */
-function paramTokens(path: string | undefined): string[] {
-  return (path ?? "")
-    .split("/")
-    .filter((s) => s.startsWith("{") && s.endsWith("}"))
-    .map((s) => `by_${snakeCase(s.slice(1, -1))}`);
-}
 
-function distinguishingTokenCandidates(op: Operation, group: Operation[]): string[] {
-  const mine = [...cleanPathTokens(op.sourceRef.path), ...paramTokens(op.sourceRef.path)];
-  const others = group
-    .filter((o) => o !== op)
-    .map((o) => new Set([...cleanPathTokens(o.sourceRef.path), ...paramTokens(o.sourceRef.path)]));
-
-  const unique = [...new Set(mine.filter((seg) => others.every((set) => !set.has(seg))))];
+function distinguishingTokenCandidates(op: Operation, index: GroupTokenIndex): string[] {
+  const mine = index.full.get(op) ?? [];
+  // `op` contains each of its own tokens, so a count of one means no other
+  // member does.
+  const unique = [...new Set(mine.filter((seg) => index.fullCount.get(seg) === 1))];
 
   // Pairs of own tokens (in path order) that no other member's path contains in
   // full — the recourse when no single token distinguishes.
@@ -825,7 +799,7 @@ function distinguishingTokenCandidates(op: Operation, group: Operation[]): strin
       const a = mine[i] as string;
       const b = mine[j] as string;
       if (a === b) continue;
-      if (others.every((set) => !(set.has(a) && set.has(b)))) pairs.push(`${a}_${b}`);
+      if (index.pairCount.get(pairKey(a, b)) === 1) pairs.push(`${a}_${b}`);
     }
   }
   return [...unique.sort(byShortestThenLex), ...[...new Set(pairs)].sort(byShortestThenLex)];

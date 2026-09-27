@@ -23,6 +23,7 @@ import { generateKubernetesDeploy } from "./deploy-kubernetes.js";
 import { generateDocs } from "./docs.js";
 import { generateCliSource, runtimeServerBundle, webhookRoutesJson } from "./entrypoints.js";
 import { generateEvals } from "./evals.js";
+import { operationFileStem } from "./file-stem.js";
 import { generateMcpServerSource, generateMcpSseServerSource } from "./mcp.js";
 import {
   exampleInput,
@@ -148,7 +149,7 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
 
   // Per-operation input schemas.
   for (const op of air.operations) {
-    files[`schemas/${op.id}.schema.json`] = `${JSON.stringify(
+    files[`schemas/${operationFileStem(op.id)}.schema.json`] = `${JSON.stringify(
       op.input.schema ?? operationInputSchema(op),
       null,
       2,
@@ -187,7 +188,7 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
     // schemas via the standard JSON Schema title/description keywords,
     // examples via a small envelope naming the operation and both surfaces.
     const schema = (op.input.schema ?? operationInputSchema(op)) as Record<string, unknown>;
-    files[`skill/schemas/${op.canonicalName}.schema.json`] = `${JSON.stringify(
+    files[`skill/schemas/${operationFileStem(op.canonicalName)}.schema.json`] = `${JSON.stringify(
       {
         title: schema.title ?? `${op.canonicalName} input`,
         description:
@@ -198,7 +199,7 @@ export function generateBundle(air: AirDocument, options: ResourceOptions = {}):
       null,
       2,
     )}\n`;
-    files[`skill/examples/${op.canonicalName}.json`] = `${JSON.stringify(
+    files[`skill/examples/${operationFileStem(op.canonicalName)}.json`] = `${JSON.stringify(
       {
         description: `Worked example input for ${op.displayName || op.id}. Pass \`input\` as the MCP tool arguments for \`${op.mcp.toolName}\`, or map it onto \`${op.cli.command}\` flags.`,
         operation: op.id,
