@@ -18,9 +18,11 @@ import {
   type ErrorCode,
   ErrorCode as ErrorCodeEnum,
   isModeledIdempotencyCarrierInput,
+  isODataPaging,
   type Operation,
   type OperationAction,
   resolveIdempotencyCarrier,
+  wireProtocolFor,
 } from "@anvil/air";
 import type { SimResult } from "./runtime.js";
 import { isRecord } from "./synthesize.js";
@@ -98,9 +100,23 @@ export interface ProviderError {
   body?: unknown;
 }
 
+/**
+ * Provider metadata: anything a provider wants recorded about how it answered
+ * (the query it ran, rows scanned, a fixture id, timing). It is written to the
+ * trace, in the `provider` entry, and never reaches a response: not the body,
+ * not a header, not the status. Added within protocol version 1.
+ */
+export type ProviderMeta = Record<string, unknown>;
+
 export type ProviderResponse =
-  | { ok: true; result?: unknown; items?: unknown[]; nextCursor?: string | null }
-  | { ok: false; error: ProviderError };
+  | {
+      ok: true;
+      result?: unknown;
+      items?: unknown[];
+      nextCursor?: string | null;
+      meta?: ProviderMeta;
+    }
+  | { ok: false; error: ProviderError; meta?: ProviderMeta };
 
 /** An external owner of simulator state. */
 export interface StateProvider {
@@ -208,6 +224,23 @@ const STATUS_FOR: Record<ErrorCode, number> = {
   policy_denied: 403,
   unknown_upstream_error: 500,
 };
+
+/**
+ * The HTTP status of a success. The contract's declared codes win over any
+ * convention, but only where a vendor declared them: HTTP+JSON operations.
+ * `204` is served when it is declared and the call has no body to return (or
+ * nothing else is declared), else the first body-bearing declared code. With
+ * nothing declared, the convention: 201 for a create and 200 otherwise.
+ */
+export function successStatus(op: Operation | undefined, output: unknown): number {
+  const declared =
+    op && wireProtocolFor(op.sourceRef) === "http_json" ? (op.output.successStatuses ?? []) : [];
+  const withBody = declared.filter((status) => status !== 204);
+  const empty = output === undefined || output === null;
+  if (declared.includes(204) && (empty || withBody.length === 0)) return 204;
+  if (withBody[0] !== undefined) return withBody[0];
+  return op && operationKind(op) === "create" ? 201 : 200;
+}
 
 /** The HTTP projection of a simulator error: the status and vendor body the contract implies. */
 export interface WireError {
@@ -355,18 +388,40 @@ function providerPage(
   input: Record<string, unknown>,
   ctx: NormalizeContext,
 ): { cursor: string | null; size: number } {
-  const inputFor = (name: string | undefined) => {
-    if (name === undefined) return undefined;
-    const param = op.input.params.find((p) => p.name === name);
-    return input[param ? agentPropKey(param) : name];
-  };
-  const rawCursor = ctx.cursor ?? inputFor(op.pagination?.cursorParam);
+  const inputFor = (name: string | undefined) => pagingInput(op, input, name);
+  const rawCursor =
+    ctx.cursor ??
+    inputFor(op.pagination?.cursorParam) ??
+    (isODataPaging(op.pagination) ? inputFor("$skip") : undefined);
   const cursor = rawCursor === undefined || rawCursor === null ? null : String(rawCursor);
   const asked = Number(inputFor(op.pagination?.pageSizeParam));
   let size = Number.isInteger(asked) && asked > 0 ? asked : ctx.fallbackPageSize;
   const max = op.pagination?.maxPageSize;
   if (max !== undefined) size = Math.min(size, max);
   return { cursor, size };
+}
+
+/**
+ * The value an agent-keyed input holds for a paging control named by its wire
+ * name: a declared parameter by its agent key, a body field (projected, or
+ * inside a whole body) when the contract pages in the body, else the raw name.
+ */
+export function pagingInput(
+  op: Operation,
+  input: Record<string, unknown>,
+  name: string | undefined,
+): unknown {
+  if (name === undefined) return undefined;
+  if (op.pagination?.in === "body") {
+    const body = op.input.body;
+    if (body?.projection === "fields") {
+      const field = body.fields.find((f) => f.name === name);
+      return field ? input[agentPropKey(field)] : undefined;
+    }
+    return isRecord(input.body) ? input.body[name] : undefined;
+  }
+  const param = op.input.params.find((p) => p.name === name);
+  return input[param ? agentPropKey(param) : name];
 }
 
 /** Ask the provider, turning a transport failure into a surface error. */

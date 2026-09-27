@@ -36,6 +36,7 @@ import { critiqueNames, resolveNameCollisions, servicePrefixStutterDiagnostic } 
 import { normalize } from "./normalize.js";
 import { type ParsedSpec, parseSource } from "./parse.js";
 import {
+  assertProfileSource,
   type ExposureProfile,
   profileApproves,
   profileDigest,
@@ -133,12 +134,11 @@ export async function compileSourceEffective(
   source: CompilerSource,
   options: EffectiveCompileOptions = {},
 ): Promise<EffectiveCompileResult> {
-  const pinned = options.profile?.source?.digest;
-  if (pinned !== undefined && pinned !== source.sourceHash) {
-    throw new Error(
-      `Exposure profile '${options.profile?.profile}' is pinned to source ${pinned}, but the snapshot being compiled is ${source.sourceHash}. Review the profile against this source and update source.digest.`,
-    );
-  }
+  assertProfileSource(options.profile, {
+    sourceHash: source.sourceHash,
+    entrypointPath: source.entrypoint.path,
+    entrypointBytes: source.files.get(source.entrypoint.path),
+  });
   const parsed = await parseSource(source, options.profile ? { profile: options.profile } : {});
   return buildAir(parsed, { ...options, provenance: source });
 }
@@ -173,7 +173,25 @@ function applyServiceAuthDefaults(
   return {
     operations: operations.map((operation) => {
       let next = operation;
-      if (
+      if (alternativesUnmodeled.has(operation.id) && config.type === "oauth2") {
+        // The legacy scope-only `oauth2` names no grant, principal, or carrier,
+        // so it cannot be the choice auth/alternatives_unmodeled asks for. Say
+        // so on the operation and in an error: otherwise the only visible
+        // reason is the placeholder contract's missing carrier, which points
+        // the reviewer at the wrong fix.
+        const note =
+          "Legacy service auth type oauth2 does not choose among the source's alternative " +
+          "security requirements; set auth.type to the one the runtime should use (for " +
+          "example basic, jwt_bearer, oauth2_client_credentials, or oauth2_on_behalf_of).";
+        next = { ...operation, reviewNotes: [...operation.reviewNotes] };
+        if (!next.reviewNotes.includes(note)) next.reviewNotes.push(note);
+        diagnostics.push({
+          level: "error",
+          code: "auth/service_oauth2_ambiguous",
+          message: note,
+          operationId: operation.id,
+        });
+      } else if (
         alternativesUnmodeled.has(operation.id) &&
         config.type !== undefined &&
         config.type !== "oauth2"

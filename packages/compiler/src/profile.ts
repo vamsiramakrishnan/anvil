@@ -35,11 +35,13 @@
  *     select:
  *       - method: get
  */
+import { createHash } from "node:crypto";
 import { type ExposureProfileRecord, HttpMethod, hashCanonical, type Operation } from "@anvil/air";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import type { OpenApiDocument } from "./parse.js";
 import type { SchemaBounds } from "./schema-bounds.js";
+import { parseSourceText } from "./source/detect.js";
 
 const oneOrMany = <T extends z.ZodType>(item: T) =>
   z.union([item, z.array(item).min(1)]).transform((v) => (Array.isArray(v) ? v : [v]));
@@ -100,9 +102,44 @@ export const ExposureProfile = z.strictObject({
   description: z.string().optional(),
   source: z
     .strictObject({
+      /**
+       * Where the reviewed contract is published. Provenance only: a compile
+       * never fetches it, and a URL alone pins nothing, so it needs `sha256`
+       * or `digest` beside it.
+       */
+      url: z
+        .string()
+        .url()
+        .regex(/^https:\/\//, "url must be https")
+        .optional(),
+      /**
+       * sha256 of the entrypoint file's bytes (what `sha256sum` prints on the
+       * downloaded file), so the pin holds whatever the file is named.
+       */
+      sha256: z
+        .string()
+        .regex(/^sha256:[0-9a-f]{64}$/, "sha256 must be sha256:<64 hex>")
+        .optional(),
+      /**
+       * sha256 of the entrypoint's parsed document as canonical JSON (keys
+       * sorted, no whitespace), for a publisher whose bytes vary between
+       * downloads while the document does not (Google Discovery reorders its
+       * keys on every response). A refusal prints the value to pin.
+       */
+      content_sha256: z
+        .string()
+        .regex(/^sha256:[0-9a-f]{64}$/, "content_sha256 must be sha256:<64 hex>")
+        .optional(),
       /** The snapshot `sourceHash` this profile was reviewed against. */
-      digest: z.string().regex(/^sha256:[0-9a-f]{64}$/, "digest must be sha256:<64 hex>"),
+      digest: z
+        .string()
+        .regex(/^sha256:[0-9a-f]{64}$/, "digest must be sha256:<64 hex>")
+        .optional(),
     })
+    .refine(
+      (s) => s.sha256 !== undefined || s.content_sha256 !== undefined || s.digest !== undefined,
+      "source needs sha256, content_sha256, or digest to pin the contract (a url alone pins nothing)",
+    )
     .optional(),
   select: Selection,
   exclude: z.array(ProfileSelector).default([]),
@@ -446,6 +483,47 @@ function pruneComponents(document: OpenApiDocument): void {
  * compiled operations, not the document, so an operation reached through a
  * `$ref` path item is judged by what it resolved to.
  */
+/**
+ * Refuse a snapshot other than the one the profile was reviewed against: by
+ * the snapshot's `sourceHash` (`source.digest`), and by the sha256 of its
+ * entrypoint file's bytes (`source.sha256`).
+ */
+export function assertProfileSource(
+  profile: ExposureProfile | undefined,
+  source: { sourceHash: string; entrypointPath: string; entrypointBytes: Uint8Array | undefined },
+): void {
+  const pin = profile?.source;
+  if (!profile || !pin) return;
+  const review = (key: string) =>
+    `Review the profile against this source and update source.${key}` +
+    (pin.url ? `, or fetch ${pin.url} again.` : ".");
+  if (pin.digest !== undefined && pin.digest !== source.sourceHash) {
+    throw new Error(
+      `Exposure profile '${profile.profile}' is pinned to source ${pin.digest}, but the snapshot being compiled is ${source.sourceHash}. ${review("digest")}`,
+    );
+  }
+  const bytes = source.entrypointBytes;
+  if (pin.sha256 !== undefined) {
+    const actual = bytes
+      ? `sha256:${createHash("sha256").update(bytes).digest("hex")}`
+      : "unreadable";
+    if (actual !== pin.sha256) {
+      throw new Error(
+        `Exposure profile '${profile.profile}' is pinned to a contract file with ${pin.sha256}, but ${source.entrypointPath} is ${actual}. ${review("sha256")}`,
+      );
+    }
+  }
+  if (pin.content_sha256 !== undefined) {
+    const doc = bytes ? parseSourceText(new TextDecoder().decode(bytes)).doc : undefined;
+    const actual = doc === undefined ? "unparseable" : `sha256:${hashCanonical(doc)}`;
+    if (actual !== pin.content_sha256) {
+      throw new Error(
+        `Exposure profile '${profile.profile}' is pinned to a contract document with content ${pin.content_sha256}, but ${source.entrypointPath} has content ${actual}. ${review("content_sha256")}`,
+      );
+    }
+  }
+}
+
 export function profileRecord(
   profile: ExposureProfile,
   digest: string,
@@ -461,6 +539,17 @@ export function profileRecord(
     id: profile.profile,
     digest,
     ...(input.sourceHash ? { sourceHash: input.sourceHash } : {}),
+    ...(profile.source?.url || profile.source?.sha256 || profile.source?.content_sha256
+      ? {
+          source: {
+            ...(profile.source.url ? { url: profile.source.url } : {}),
+            ...(profile.source.sha256 ? { sha256: profile.source.sha256 } : {}),
+            ...(profile.source.content_sha256
+              ? { contentSha256: profile.source.content_sha256 }
+              : {}),
+          },
+        }
+      : {}),
     unexposed: profile.unexposed,
     sourceOperations: input.sourceOperations,
     exposedOperations: [...input.exposed].sort(),

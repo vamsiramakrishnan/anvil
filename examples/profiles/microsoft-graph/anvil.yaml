@@ -1,0 +1,66 @@
+# Manifest for the Microsoft Graph profile. The published v1.0 document
+# declares no security requirement on its operations, but every Graph call
+# needs a Microsoft Entra token, and /me paths only exist for a signed-in
+# user. The authority is that user's, exercised per caller: on-behalf-of.
+service:
+  name: graph
+  display_name: Microsoft Graph v1.0
+auth:
+  type: oauth2_on_behalf_of
+  scopes:
+    - Sites.Read.All
+    - Files.ReadWrite.All
+    - Mail.ReadWrite
+    - Mail.Send
+    - Team.ReadBasic.All
+    - Channel.ReadBasic.All
+    - ChannelMessage.Read.All
+    - ChannelMessage.Send
+    - User.Read.All
+
+operations:
+  # Sending mail and posting to a channel have no client-supplied idempotency
+  # key; a retry after a timeout sends again, so each is confirmed and never
+  # retried.
+  me.sendMail:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Sends mail; a retry may send it twice. }
+    retries: { enabled: false }
+  me.messages.message.send:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Sends a draft; a retry may fail or send twice. }
+    retries: { enabled: false }
+  me.messages.message.reply:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Sends a reply; a retry may send it twice. }
+    retries: { enabled: false }
+  me.messages.message.replyAll:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Sends a reply to all; a retry may send it twice. }
+    retries: { enabled: false }
+  me.messages.message.forward:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Forwards mail; a retry may send it twice. }
+    retries: { enabled: false }
+  me.CreateMessages:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Creates a draft; a retry may create a second one. }
+    retries: { enabled: false }
+  teams.channels.CreateMessages:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Posts to a channel; a retry may post twice. }
+    retries: { enabled: false }
+  teams.channels.messages.CreateReplies:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Posts a reply; a retry may post twice. }
+    retries: { enabled: false }
+  drives.items.CreateChildren:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Creates a drive item; a retry may create a duplicate. }
+    retries: { enabled: false }
+  # A sharing link widens who can reach the item.
+  drives.drive.items.driveItem.createLink:
+    risk: high
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: high, reason: Creates a sharing link to the item. }
+    retries: { enabled: false }

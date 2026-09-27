@@ -209,6 +209,21 @@ describe("detectSilentCap", () => {
     expect(detectSilentCap(op, { items: [1, 2, 3], next_page_token: "tok" })).toBeUndefined();
   });
 
+  it("reads OData's @odata.nextLink as one key, not a path", () => {
+    const op = createOperation({
+      pagination: {
+        style: "link",
+        cursorParam: "$skiptoken",
+        itemsField: "value",
+        nextField: "@odata.nextLink",
+        maxPageSize: 2,
+      },
+    });
+    const next = "https://graph.example.test/users?$skiptoken=2";
+    expect(detectSilentCap(op, { value: [1, 2], "@odata.nextLink": next })).toBeUndefined();
+    expect(detectSilentCap(op, { value: [1, 2] })).toMatchObject({ returned: 2 });
+  });
+
   it("resolves dotted item and continuation paths", () => {
     const op = createOperation({
       pagination: {

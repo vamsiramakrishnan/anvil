@@ -1,0 +1,48 @@
+# Manifest for the Google Drive profile. Drive declares OAuth 2.0
+# authorization-code scopes on every method, so each operation acts with the
+# signed-in user's authority; approval names who granted it
+# (`anvil approve --profile --reviewer <id>`).
+service:
+  name: drive
+  display_name: Google Drive API v3
+
+operations:
+  # No client-supplied idempotency key exists on these creates; a retry after
+  # a timeout can duplicate the file, comment, or reply, so each is confirmed
+  # and never retried.
+  drive.files.create:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Creates a file; a retry may create a duplicate. }
+    retries: { enabled: false }
+  drive.files.copy:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Copies a file; a retry may create a second copy. }
+    retries: { enabled: false }
+  drive.comments.create:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Posts a comment; a retry may post it twice. }
+    retries: { enabled: false }
+  drive.replies.create:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Posts a reply; a retry may post it twice. }
+    retries: { enabled: false }
+  # Sharing grants access to someone else, so it is always confirmed.
+  drive.permissions.create:
+    risk: high
+    idempotency: { strategy: none }
+    confirmation: { required: true, risk: high, reason: Shares the file with another principal. }
+    retries: { enabled: false }
+  drive.permissions.update:
+    risk: high
+    idempotency: { strategy: natural }
+    confirmation: { required: true, risk: high, reason: Changes who can reach the file and how. }
+  # A PATCH that sets the same fields again leaves the resource as the first
+  # call left it.
+  drive.files.update:
+    idempotency: { strategy: natural }
+  drive.comments.update:
+    idempotency: { strategy: natural }
+  drive.replies.update:
+    idempotency: { strategy: natural }
+  drive.revisions.update:
+    idempotency: { strategy: natural }

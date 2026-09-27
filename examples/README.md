@@ -36,6 +36,37 @@ document by the adapters in `packages/compiler/src/protocols/`, so effect,
 idempotency, retry-safety, confirmation, and every generated artifact behave
 identically regardless of the wire format.
 
+## Exposure profiles for real connectors
+
+`profiles/` holds reviewed [exposure profiles](../docs/SOURCE_FORMATS.md#full-vendor-specs-and-exposure-profiles)
+for five vendors' whole published contracts, each with the manifest its
+contract needs. The vendor specs are not in this repository: each profile
+names its spec's URL and pins it by sha256, so a compile against any other
+revision is refused until the difference is reviewed.
+
+| Profile | Contract | Operations | What it exposes |
+| --- | --- | --- | --- |
+| `profiles/jira/` | Jira Cloud platform REST API v3 | 39 of 619 | JQL search, issue read, create, edit, transition, assign, comments, and their lookups |
+| `profiles/confluence/` | Confluence Cloud REST API v2 | 37 of 218 | Pages, spaces, blog posts, footer and inline comments, labels |
+| `profiles/slack/` | Slack Web API | 33 of 174 | Conversation history and threads, posting and updating messages, message search, people |
+| `profiles/google-drive/` | Google Drive API v3 | 27 of 64 | File search with `q`, read, create, update, export, sharing, revisions, comments |
+| `profiles/microsoft-graph/` | Microsoft Graph v1.0 | 39 of 17,870 | SharePoint drive items and search, Outlook mail, Teams channel messages, people, Microsoft Search (KQL) |
+
+```bash
+curl -fsSL -o jira.json https://developer.atlassian.com/cloud/jira/platform/swagger-v3.v3.json
+anvil compile jira.json --profile examples/profiles/jira/profile.yaml \
+  --manifest examples/profiles/jira/anvil.yaml --service jira --out generated/jira
+anvil inspect generated/jira
+anvil approve generated/jira --profile --reviewer you@example.com
+anvil simulate serve --contract generated/jira --port 0
+```
+
+Every operation in each profile compiles unblocked, so `anvil approve
+--profile` can approve all of them once reviewed; none is approved by the
+profile itself. Confluence's CQL search is not in its v2 contract (it is a
+v1 endpoint), so that profile filters pages by title, space, status, and
+label instead.
+
 ## The end-to-end loop
 
 ```bash

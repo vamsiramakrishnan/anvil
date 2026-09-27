@@ -3,6 +3,7 @@ import {
   DEFAULT_RESPONSE_BUDGET_TOKENS,
   type Operation,
   type PageSizeBasis,
+  responseFieldPath,
   safePageSize,
 } from "@anvil/air";
 
@@ -159,7 +160,7 @@ function extractItems(data: unknown, itemsField?: string): unknown[] | undefined
 
 function valueAtDottedPath(value: unknown, path: string): unknown {
   let current = value;
-  for (const segment of path.split(".")) {
+  for (const segment of responseFieldPath(path)) {
     if (!isRecord(current)) return undefined;
     current = current[segment];
   }

@@ -27,12 +27,12 @@ import {
   mapDomainError,
   missingRequired,
   normalizeRequest,
-  operationKind,
   type ProviderInitializeParams,
   type ProviderRequest,
   type ProviderResponse,
   type StateProvider,
   servesItems,
+  successStatus,
   type WireError,
 } from "./provider.js";
 import { Rng } from "./rng.js";
@@ -592,11 +592,10 @@ export class Simulator {
     );
   }
 
-  /** The HTTP status of a call: 201 for a create, 200 for other successes, else the mapped error's. */
+  /** The HTTP status of a call: a declared success status, else the mapped error's. */
   statusFor(call: SimCall): number {
-    if (call.result.ok)
-      return call.operation && operationKind(call.operation) === "create" ? 201 : 200;
-    return this.wireError(call.operation, call.result.error).status;
+    if (!call.result.ok) return this.wireError(call.operation, call.result.error).status;
+    return successStatus(call.operation, call.result.output);
   }
 
   /** The wire form of an error: the provider's mapped form, or the contract's mapping of the code. */

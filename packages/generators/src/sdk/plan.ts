@@ -479,6 +479,14 @@ function paginationOf(op: Operation): SdkPagination | undefined {
   const page = op.pagination;
   const keyFor = (wire: string | undefined): string | undefined => {
     if (wire === undefined) return undefined;
+    if (page.in === "body") {
+      // A body-carried control is an argument only when the body is projected
+      // into fields; inside a whole body there is no key a pager could set.
+      const body = op.input.body;
+      const field =
+        body?.projection === "fields" ? body.fields.find((f) => f.name === wire) : undefined;
+      return field ? agentPropKey(field) : undefined;
+    }
     const param = op.input.params.find((p) => p.name === wire);
     return param ? agentPropKey(param) : snakeCase(wire);
   };

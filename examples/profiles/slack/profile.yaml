@@ -1,0 +1,54 @@
+# Slack Web API, conversations and messages for a messaging agent.
+# Compile the vendor's whole published contract under this profile:
+#   curl -fsSL -o slack_web_openapi_v2.json https://raw.githubusercontent.com/slackapi/slack-api-specs/master/web-api/slack_web_openapi_v2.json
+#   anvil compile slack_web_openapi_v2.json --profile profile.yaml --manifest anvil.yaml --service slack --out slack
+profile: slack-messaging
+description: >-
+  Read channel history and threads, find channels and people, post, update,
+  and schedule messages, search messages, and react to and pin them.
+source:
+  url: https://raw.githubusercontent.com/slackapi/slack-api-specs/master/web-api/slack_web_openapi_v2.json
+  sha256: sha256:742a5c977180a829df8767cf57bc417d99b3713583aee83741efb9c08ca731e7
+select:
+  # Conversations.
+  - path:
+      - /conversations.history
+      - /conversations.replies
+      - /conversations.list
+      - /conversations.info
+      - /conversations.members
+      - /conversations.open
+      - /conversations.join
+      - /conversations.setTopic
+      - /conversations.setPurpose
+  # Messages.
+  - path:
+      - /chat.postMessage
+      - /chat.update
+      - /chat.postEphemeral
+      - /chat.scheduleMessage
+      - /chat.scheduledMessages.list
+      - /chat.getPermalink
+      - /search.messages
+  # People and groups.
+  - path:
+      - /users.info
+      - /users.list
+      - /users.lookupByEmail
+      - /users.profile.get
+      - /users.getPresence
+      - /users.conversations
+      - /usergroups.list
+      - /usergroups.users.list
+  # Reactions, pins, files, and the workspace.
+  - path:
+      - /reactions.add
+      - /reactions.get
+      - /reactions.list
+      - /pins.add
+      - /pins.list
+      - /files.info
+      - /files.list
+      - /team.info
+      - /auth.test
+unexposed: skip

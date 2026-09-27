@@ -23,11 +23,13 @@ import {
   type AirDocument,
   agentPropKey,
   type GraphqlWireBinding,
+  isODataPaging,
   type JsonSchema,
   type Operation,
   type Param,
   protocolFacadeApplies,
   resolveIdempotencyCarrier,
+  responseFieldPath,
   wireExecutability,
   wireProtocolFor,
 } from "@anvil/air";
@@ -106,7 +108,7 @@ function compileRoute(op: Operation): Route | undefined {
 }
 
 function setPath(target: Record<string, unknown>, path: string, value: unknown): void {
-  const keys = path.split(".");
+  const keys = responseFieldPath(path);
   let cursor = target;
   for (const key of keys.slice(0, -1)) {
     const next = cursor[key];
@@ -150,13 +152,23 @@ function envelope(
 ): { body: unknown; headers: Record<string, string> } {
   const declared = declaredResponse(air, op);
   const pagination = op.pagination;
-  let next: string | undefined = nextCursor;
-  if (nextCursor !== undefined && pagination?.style === "link" && pagination.cursorParam) {
+  const bare = declared?.type === "array";
+  const nextUrl = (cursor: string, cursorParam: string): string => {
     const link = new URL(url.toString());
-    link.searchParams.set(pagination.cursorParam, nextCursor);
-    next = link.toString();
+    // The token names the whole continuation; an OData `$skip` the caller
+    // sent is already folded into it and must not be applied twice.
+    if (isODataPaging(pagination)) link.searchParams.delete("$skip");
+    link.searchParams.set(cursorParam, cursor);
+    return link.toString();
+  };
+  let next: string | undefined = nextCursor;
+  // A `link` continuation is a URL; so is any continuation that can only
+  // travel in a `Link` header (RFC 8288), which is where a bare array puts it.
+  const asUrl = pagination?.style === "link" || (bare && pagination?.in !== "body");
+  if (nextCursor !== undefined && asUrl && pagination?.cursorParam) {
+    next = nextUrl(nextCursor, pagination.cursorParam);
   }
-  if (declared?.type === "array") {
+  if (bare) {
     return { body: items, headers: next ? { link: `<${next}>; rel="next"` } : {} };
   }
   const body: Record<string, unknown> = {};
@@ -408,7 +420,9 @@ export async function serveSimulatorHttp(
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     const method = (req.method ?? "GET").toUpperCase();
-    const url = new URL(req.url ?? "/", "http://simulator.local");
+    // The origin the caller reached, so a continuation link (`Link`,
+    // `@odata.nextLink`) is a URL the same client can follow.
+    const url = new URL(req.url ?? "/", `http://${headerValue(req, "host") ?? "simulator.local"}`);
     let raw: Buffer;
     try {
       raw = await readBody(req);
@@ -464,8 +478,7 @@ export async function serveSimulatorHttp(
       ({ input, headers: traced } = liftInput(op, pathValue, query, req, body));
       const key = idempotencyKeyFor(op, pathValue, query, req, body);
       if (key !== undefined) ctx.idempotencyKey = key;
-      const cursorParam = op.pagination?.cursorParam;
-      const cursor = cursorParam ? query[cursorParam]?.at(-1) : undefined;
+      const cursor = wireCursor(op, query, body);
       if (cursor !== undefined) ctx.cursor = cursor;
     } else {
       body = decodeUndeclared(raw, contentType);
@@ -514,6 +527,7 @@ export async function serveSimulatorHttp(
     } else {
       responseBody = sim.wireError(call.operation, call.result.error).body;
     }
+    if (status === 204) responseBody = null;
     if (graphql) {
       // GraphQL over HTTP answers a well-formed request with 200 and reports
       // failure in `errors`, which is where the runtime's codec reads it
@@ -579,6 +593,28 @@ export async function serveSimulatorHttp(
   };
 }
 
+/**
+ * The continuation a request carries, from wherever the contract pages: the
+ * cursor parameter, the cursor field of the body, or for OData either
+ * `$skiptoken` or `$skip`.
+ */
+function wireCursor(
+  op: Operation,
+  query: Record<string, string[]>,
+  body: unknown,
+): string | undefined {
+  const pagination = op.pagination;
+  const cursorParam = pagination?.cursorParam;
+  if (!cursorParam) return undefined;
+  if (pagination.in === "body") {
+    const value = isRecord(body) ? body[cursorParam] : undefined;
+    return typeof value === "string" && value !== "" ? value : undefined;
+  }
+  return (
+    query[cursorParam]?.at(-1) ?? (isODataPaging(pagination) ? query.$skip?.at(-1) : undefined)
+  );
+}
+
 function isItems(output: unknown): output is { items: unknown[] } {
   return (
     typeof output === "object" &&
@@ -593,6 +629,12 @@ function send(
   body: unknown,
   headers: Record<string, string> = {},
 ): void {
+  // 204 and 304 carry no content (RFC 9110 sections 15.3.5 and 15.4.5).
+  if (status === 204 || status === 304) {
+    res.writeHead(status, headers);
+    res.end();
+    return;
+  }
   res.writeHead(status, { "content-type": "application/json", ...headers });
   res.end(JSON.stringify(body ?? null));
 }

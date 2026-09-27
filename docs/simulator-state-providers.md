@@ -130,18 +130,34 @@ compile costs for five vendor specs are in
   unconfirmed mutation before sending it, and the wire carries no confirm
   field.
 - **Cursor and page size.** From the contract's `cursorParam` and
-  `pageSizeParam`. A requested size is clamped to the declared
-  `maxPageSize`.
+  `pageSizeParam`, which are parameters, or request-body fields when the
+  contract pages in the body (`pagination.in: body`, as Jira's
+  `POST /rest/api/3/search/jql` sends `nextPageToken` and `maxResults`). An
+  OData collection (Microsoft Graph) continues with `$skiptoken`, or with
+  `$skip`. A requested size is clamped to the declared `maxPageSize`.
 
 ### How a response is written
 
 - A paged operation's items go under the declared `itemsField` (or the first
   array property of the declared response), and a continuation under the
   declared `nextField` (default `next_cursor`). A `link` style continuation is
-  a URL carrying the cursor. A response declared as a bare array is served as
-  one, with the continuation in a `Link: <...>; rel="next"` header.
-- Other successes return the provider's `result` as the body: 201 for a
-  create, 200 otherwise.
+  a URL on the server's own origin carrying the cursor, which the same client
+  can follow: `_links.next` for a contract that declares it (Confluence v2),
+  or `@odata.nextLink` with `$skiptoken` for an OData collection declaring
+  `$top`, `$skip`, or `$skiptoken` (a `$skip` in the request is dropped from
+  the link, since the token covers it). A response declared as a bare array is served as
+  one, with the continuation in a `Link: <...>; rel="next"` header whose
+  target is the same kind of URL, carrying the cursor parameter.
+- Other successes return the provider's `result` as the body, with a status
+  the contract declares for an HTTP+JSON operation: `204` with no body when
+  it declares 204 and the provider returns no `result` (or it declares no
+  other success), else its first declared body-bearing status. Jira's
+  `PUT /rest/api/3/issue/{issueIdOrKey}` declares 200 and 204, so it answers
+  204 unless the provider returns the issue. An operation that declares no
+  exact 2xx status gets 201 for a create and 200 otherwise.
+- A `POST` to a literal segment under an item whose only declared success is
+  204 (Jira's `POST /rest/api/3/issue/{issueIdOrKey}/transitions`) creates
+  nothing, so the provider sees it as `kind: "action"`, not `create`.
 - Errors use the contract's declared status for that error, and the body
   `{"error": {"code": "<vendor code or Anvil code>", "message": "..."}}`
   unless the provider supplied its own body.
@@ -266,6 +282,20 @@ The provider answers with one of three shapes in `result`:
   HTTP status that overrides the mapping), and `body` (a vendor error body
   served verbatim).
 
+Any of the three shapes may also carry `meta`, an object of provider
+metadata: the query it ran, the rows it scanned, the fixture it answered
+from, anything worth keeping about how it answered.
+
+```json
+{"ok": true, "result": {"id": "T-1"}, "meta": {"query": "id = 'T-1'", "rowsScanned": 1}}
+```
+
+Anvil writes `meta` to the call trace, inside the `provider` entry, and never
+serves it: it reaches no response body, header, or status, and no
+in-process result. `meta` was added without changing `protocolVersion`, like
+`params.cookie`: a version 1 provider that never sends it is unaffected, and
+a version 1 simulator from before this release ignores it.
+
 Anvil maps an error onto the operation's declared errors: an entry whose
 vendor code equals `upstreamCode` wins, then an entry with the same Anvil
 code. That entry supplies the HTTP status and the vendor code in the default
@@ -367,7 +397,7 @@ failure is reported on stderr, and the response carries an
 | `transport` | `http` or `in_process` |
 | `request` | What the agent sent: the HTTP method, path, query (each value an array), selected headers (declared header parameters and `X-Anvil-*`, never `Authorization`), and body. In process: the tool input and context. |
 | `normalized` | What the provider was asked, or `null` when a surface gate answered first (auth, confirmation, idempotency, fault, replay, unknown route) |
-| `provider` | What the provider answered, `{"transportError": "..."}` when it could not answer, or `null` |
+| `provider` | What the provider answered, including its `meta`; `{"transportError": "..."}` when it could not answer; or `null` |
 | `result` | Anvil's result before wire encoding |
 | `status`, `response` | The final HTTP status and body |
 

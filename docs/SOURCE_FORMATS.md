@@ -84,8 +84,9 @@ the compile records both digests in `service.source.profile`.
 # jira.profile.yaml
 profile: jira-issues                 # lowercase slug
 description: Issue tracking for a support agent.
-source:
-  digest: sha256:0fc9d1d0...         # optional: the snapshot sourceHash this was reviewed against
+source:                              # optional pin to the reviewed contract
+  url: https://developer.atlassian.com/cloud/jira/platform/swagger-v3.v3.json
+  sha256: sha256:6ecc461b...         # the downloaded file's bytes, as sha256sum prints them
 select:                              # or: select: all
   - operation_id: [getIssue, createIssue, editIssue, doTransition]
   - tag: [Issue comments, Issue worklogs]
@@ -114,7 +115,7 @@ approve:                             # optional declarative approval
 | `unexposed` | `skip` (default) leaves unselected operations out of the AIR and prunes every component schema only they reach, before `$ref` dereferencing. `compile` keeps them in the AIR, compiled, but never approvable. |
 | `schema_bounds` | How operation schemas are materialized; see [Schema bounds](#schema-bounds). |
 | `approve` | A named reviewer and reason approving some or all selected operations at compile time. It goes through the manifest's `state: approved` channel, so every gate a manifest approval meets still applies: an unresolvable idempotency carrier, a query-language passthrough, or an incoherent auth contract leaves the operation blocked. |
-| `source.digest` | Refuse to compile against any other snapshot. |
+| `source` | Pin the reviewed contract; a compile against any other is refused, and the pin is recorded in `service.source.profile.source`. `url` says where it is published (recorded, never fetched; it needs a digest beside it). `sha256` is the sha256 of the entrypoint file's bytes. `content_sha256` is the sha256 of its parsed document as canonical JSON, for a publisher whose bytes change between downloads while the document does not (Google Discovery reorders its keys on every response); the refusal prints the value to pin. `digest` is the snapshot's `sourceHash`, which also covers the file names. |
 
 Keys are strict. `anvil schema profile` prints the JSON Schema for editor
 validation. The profile digest is the sha256 of its parsed, key-sorted JSON,
@@ -143,6 +144,10 @@ by `anvil approve` and by a manifest `state: approved` (the compile withdraws
 it with a `profile/approval_outside_profile` warning). Generated artifacts and
 the simulator expose approved operations only, so the exposed surface is
 always a subset of the profile.
+
+Reviewed profiles and manifests for Jira, Confluence, Slack, Google Drive,
+and Microsoft Graph are in [`examples/profiles/`](../examples/profiles/),
+each pinned to its vendor spec by URL and sha256.
 
 Some vendor contracts need a manifest before any operation can be approved.
 Jira and Confluence declare basic auth or OAuth as alternatives, which blocks

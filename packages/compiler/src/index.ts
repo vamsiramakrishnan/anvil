@@ -24,6 +24,7 @@ export * from "./manifest-parse.js";
 export * from "./manifest-schema.js";
 export * from "./naming.js";
 export * from "./normalize.js";
+export * from "./pagination-inference.js";
 export * from "./parse.js";
 export * from "./path-grammar.js";
 export * from "./profile.js";

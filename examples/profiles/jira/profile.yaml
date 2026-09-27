@@ -1,0 +1,59 @@
+# Jira Cloud platform REST API v3, issue work for a support or engineering agent.
+# Compile the vendor's whole published contract under this profile:
+#   curl -fsSL -o swagger-v3.v3.json https://developer.atlassian.com/cloud/jira/platform/swagger-v3.v3.json
+#   anvil compile swagger-v3.v3.json --profile profile.yaml --manifest anvil.yaml --service jira --out jira
+profile: jira-issues
+description: >-
+  Search issues with JQL, read, create, edit, transition, assign, and comment on
+  them, with the project, field, user, link, watcher, and worklog lookups that
+  those calls need.
+source:
+  url: https://developer.atlassian.com/cloud/jira/platform/swagger-v3.v3.json
+  sha256: sha256:6ecc461bb85e92a46331a4316b6c63c91c16ed6baf5f06b03ab616da3f1ab3d7
+select:
+  # Search. The POST form carries JQL and the continuation token in its body;
+  # the GET form (a raw jql query parameter) stays out, since the POST form
+  # covers it.
+  - operation_id: [searchAndReconsileIssuesUsingJqlPost, getIssuePickerResource]
+  # Issues: read, create, edit, transition, assign.
+  - operation_id:
+      - getIssue
+      - createIssue
+      - editIssue
+      - getEditIssueMeta
+      - getCreateIssueMetaIssueTypes
+      - getCreateIssueMetaIssueTypeId
+      - getChangeLogs
+      - getTransitions
+      - doTransition
+      - assignIssue
+  # Comments.
+  - operation_id: [getComments, getComment, addComment, updateComment]
+  # Watchers, worklogs, links, remote links, votes.
+  - operation_id:
+      - getIssueWatchers
+      - addWatcher
+      - getIssueWorklog
+      - addWorklog
+      - linkIssues
+      - getIssueLink
+      - getIssueLinkTypes
+      - getRemoteIssueLinks
+      - getVotes
+  # Lookups an agent needs to fill those calls in.
+  - operation_id:
+      - searchProjects
+      - getProject
+      - getProjectComponents
+      - getProjectVersions
+      - getAllStatuses
+      - getIssueAllTypes
+      - getFields
+      - getPriorities
+      - getStatuses
+      - getAllLabels
+      - getCurrentUser
+      - getUser
+      - findUsers
+      - findAssignableUsers
+unexposed: skip

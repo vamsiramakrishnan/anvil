@@ -1,4 +1,11 @@
-import { type AirDocument, AirDocument as AirSchema, airFromYaml, airToYaml } from "@anvil/air";
+import { createHash } from "node:crypto";
+import {
+  type AirDocument,
+  AirDocument as AirSchema,
+  airFromYaml,
+  airToYaml,
+  hashCanonical,
+} from "@anvil/air";
 import { describe, expect, it } from "vitest";
 import { parseDocument, stringify } from "yaml";
 import { approveOperations, compileSource } from "./compile.js";
@@ -238,6 +245,46 @@ unexposed: compile
     ).rejects.toThrow(/pinned to source/);
   });
 
+  it("pins a source by its URL and its file's sha256, and records both", async () => {
+    const sha = createHash("sha256").update(JSON_TEXT).digest("hex");
+    const url = "https://example.test/openapi.json";
+    const pinned = profile(
+      `profile: pinned\nselect: all\nsource:\n  url: ${url}\n  sha256: sha256:${sha}\n`,
+    );
+    const air = await compileSource(ephemeralCompilerSource(JSON_TEXT), { profile: pinned });
+    expect(air.service.source.profile?.source).toEqual({ url, sha256: `sha256:${sha}` });
+
+    const stale = profile(
+      `profile: pinned\nselect: all\nsource:\n  url: ${url}\n  sha256: sha256:${"1".repeat(64)}\n`,
+    );
+    await expect(
+      compileSource(ephemeralCompilerSource(JSON_TEXT), { profile: stale }),
+    ).rejects.toThrow(/pinned to a contract file with sha256:1+.*fetch https:\/\/example\.test/);
+    expect(() => profile(`profile: unpinned\nselect: all\nsource:\n  url: ${url}\n`)).toThrow(
+      /url alone pins nothing/,
+    );
+  });
+
+  it("pins a document by its content when its bytes vary between downloads", async () => {
+    const content = `sha256:${hashCanonical(JSON.parse(JSON_TEXT))}`;
+    const reordered = JSON.stringify(
+      Object.fromEntries(Object.entries(JSON.parse(JSON_TEXT)).reverse()),
+      null,
+      2,
+    );
+    expect(reordered).not.toBe(JSON_TEXT);
+    const pinned = profile(`profile: pinned\nselect: all\nsource:\n  content_sha256: ${content}\n`);
+    for (const text of [JSON_TEXT, reordered]) {
+      const air = await compileSource(ephemeralCompilerSource(text), { profile: pinned });
+      expect(air.service.source.profile?.source).toEqual({ contentSha256: content });
+    }
+    const edited = JSON_TEXT.replace('"1.0.0"', '"1.0.1"');
+    expect(edited).not.toBe(JSON_TEXT);
+    await expect(
+      compileSource(ephemeralCompilerSource(edited), { profile: pinned }),
+    ).rejects.toThrow(/has content sha256:[0-9a-f]{64}\. Review the profile/);
+  });
+
   it("materializes an inherited entity's own fields and a collection's element type", async () => {
     const air = await compileSource(ephemeralCompilerSource(JSON_TEXT), { profile: SCOPED });
     const get = air.operations.find((op) => op.sourceRef.operationId === "r1.get");
@@ -315,5 +362,18 @@ describe("service auth over alternative security requirements", () => {
     expect(chosen.diagnostics.map((d) => d.code)).toContain(
       "auth/alternative_selected_by_manifest",
     );
+  });
+
+  it("names the legacy oauth2 type, not a missing carrier, as the reason it stays blocked", async () => {
+    const legacy = await compileSource(ephemeralCompilerSource(spec), {
+      manifest:
+        "auth:\n  type: oauth2\n  scopes: [read]\noperations:\n  listThings: { state: approved }\n",
+    });
+    const op = legacy.operations[0];
+    expect(op?.state).toBe("blocked");
+    expect(op?.reviewNotes.some((n) => n.includes("Legacy service auth type oauth2"))).toBe(true);
+    expect(legacy.diagnostics.filter((d) => d.code === "auth/service_oauth2_ambiguous")).toEqual([
+      expect.objectContaining({ level: "error", operationId: op?.id }),
+    ]);
   });
 });

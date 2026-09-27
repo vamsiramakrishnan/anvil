@@ -1,0 +1,47 @@
+# Manifest for the Jira profile. Jira Cloud accepts basic auth (account email
+# and API token) or OAuth 2.0 (3LO) on every operation; the compiler does not
+# choose between alternatives with different authority, so this does.
+service:
+  name: jira
+  display_name: Jira Cloud platform REST API
+auth:
+  type: basic
+  scopes:
+    - read:jira-work
+    - write:jira-work
+    - read:jira-user
+
+operations:
+  # No client-supplied idempotency key exists on any of these; a retry after a
+  # timeout can duplicate the effect, so each is confirmed and never retried.
+  createIssue:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Creates an issue; a retry may create a duplicate. }
+    retries: { enabled: false }
+  addComment:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Posts a comment; a retry may post it twice. }
+    retries: { enabled: false }
+  addWorklog:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Logs time; a retry may log it twice. }
+    retries: { enabled: false }
+  linkIssues:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Links two issues; a retry may add a duplicate link. }
+    retries: { enabled: false }
+  # Setting the same state twice leaves the issue as the first call left it.
+  editIssue:
+    idempotency: { strategy: natural }
+  assignIssue:
+    idempotency: { strategy: natural }
+  updateComment:
+    idempotency: { strategy: natural }
+  addWatcher:
+    idempotency: { strategy: natural }
+  # A transition is a state change the workflow refuses when the issue is no
+  # longer in the source state, so it is not repeated blindly either.
+  doTransition:
+    idempotency: { strategy: none }
+    confirmation: { required: true, reason: Moves the issue through its workflow. }
+    retries: { enabled: false }
