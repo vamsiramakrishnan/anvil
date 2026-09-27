@@ -281,6 +281,20 @@ The provider answers with one of three shapes in `result`:
   HTTP status that overrides the mapping), and `body` (a vendor error body
   served verbatim).
 
+Any of the three shapes may also carry `meta`, an object of provider
+metadata: the query it ran, the rows it scanned, the fixture it answered
+from, anything worth keeping about how it answered.
+
+```json
+{"ok": true, "result": {"id": "T-1"}, "meta": {"query": "id = 'T-1'", "rowsScanned": 1}}
+```
+
+Anvil writes `meta` to the call trace, inside the `provider` entry, and never
+serves it: it reaches no response body, header, or status, and no
+in-process result. `meta` was added without changing `protocolVersion`, like
+`params.cookie`: a version 1 provider that never sends it is unaffected, and
+a version 1 simulator from before this release ignores it.
+
 Anvil maps an error onto the operation's declared errors: an entry whose
 vendor code equals `upstreamCode` wins, then an entry with the same Anvil
 code. That entry supplies the HTTP status and the vendor code in the default
@@ -382,7 +396,7 @@ failure is reported on stderr, and the response carries an
 | `transport` | `http` or `in_process` |
 | `request` | What the agent sent: the HTTP method, path, query (each value an array), selected headers (declared header parameters and `X-Anvil-*`, never `Authorization`), and body. In process: the tool input and context. |
 | `normalized` | What the provider was asked, or `null` when a surface gate answered first (auth, confirmation, idempotency, fault, replay, unknown route) |
-| `provider` | What the provider answered, `{"transportError": "..."}` when it could not answer, or `null` |
+| `provider` | What the provider answered, including its `meta`; `{"transportError": "..."}` when it could not answer; or `null` |
 | `result` | Anvil's result before wire encoding |
 | `status`, `response` | The final HTTP status and body |
 

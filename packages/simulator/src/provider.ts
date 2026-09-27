@@ -100,9 +100,23 @@ export interface ProviderError {
   body?: unknown;
 }
 
+/**
+ * Provider metadata: anything a provider wants recorded about how it answered
+ * (the query it ran, rows scanned, a fixture id, timing). It is written to the
+ * trace, in the `provider` entry, and never reaches a response: not the body,
+ * not a header, not the status. Added within protocol version 1.
+ */
+export type ProviderMeta = Record<string, unknown>;
+
 export type ProviderResponse =
-  | { ok: true; result?: unknown; items?: unknown[]; nextCursor?: string | null }
-  | { ok: false; error: ProviderError };
+  | {
+      ok: true;
+      result?: unknown;
+      items?: unknown[];
+      nextCursor?: string | null;
+      meta?: ProviderMeta;
+    }
+  | { ok: false; error: ProviderError; meta?: ProviderMeta };
 
 /** An external owner of simulator state. */
 export interface StateProvider {
