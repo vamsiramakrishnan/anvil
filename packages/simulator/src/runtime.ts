@@ -36,7 +36,7 @@ import {
 } from "./provider.js";
 import { Rng } from "./rng.js";
 import { isRecord, nonEmpty, synthesizeBody } from "./synthesize.js";
-import { TRACE_SCHEMA, type TraceSink } from "./trace.js";
+import { TRACE_SCHEMA, type TraceSink, writeTrace } from "./trace.js";
 
 export interface InvokeContext {
   principalId?: string;
@@ -553,7 +553,7 @@ export class Simulator {
     ctx: InvokeContext = {},
   ): Promise<SimResult> {
     const call = await this.call(toolName, input, ctx);
-    this.options.trace?.write({
+    writeTrace(this.options.trace, {
       schema: TRACE_SCHEMA,
       seq: call.seq,
       requestId: call.requestId,

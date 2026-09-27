@@ -24,6 +24,7 @@ export interface SimulateServeOptions {
   principal?: string;
   pageSize?: string;
   trace?: string;
+  protocolFacade?: boolean;
 }
 
 /**
@@ -38,7 +39,7 @@ export function registerSimulateServe(simulate: Command, ctx: CommandContext): v
       .command("serve")
       .summary("Serve the simulator over HTTP at the contract's paths, optionally provider-backed.")
       .description(
-        "Serves a bundle's approved operations over HTTP at their declared paths and methods, so a generated SDK (base_url) or the generated MCP server (ANVIL_BASE_URL) can target the simulator. Anvil keeps the surface: auth scopes, required idempotency and replay, injected faults (X-Anvil-Fault), page envelopes, and the contract's error statuses. With --provider-cmd, state and query semantics come from a child process speaking JSON-RPC 2.0 over stdio (see docs/simulator-state-providers.md); without it, the built-in seeded store serves. Prints the bound URL on stdout's first line. With --trace, appends one JSON line per call.",
+        "Serves a bundle's approved operations over HTTP at their declared paths and methods, so a generated SDK (base_url) or the generated MCP server (ANVIL_BASE_URL) can target the simulator. Anvil keeps the surface: auth scopes, required idempotency and replay, injected faults (X-Anvil-Fault), page envelopes, and the contract's error statuses. With --provider-cmd, state and query semantics come from a child process speaking JSON-RPC 2.0 over stdio (see docs/simulator-state-providers.md); without it, the built-in seeded store serves. GraphQL operations are served at one endpoint (POST the query document, as the runtime's GraphQL codec does). An operation the server cannot reach over its native protocol is refused at startup. Prints the bound URL on stdout's first line. With --trace, appends one JSON line per call; the trace file is opened before serving, and a later write failure is reported on stderr and in an X-Anvil-Trace-Error header without changing the response.",
       )
       .requiredOption("--contract <path>", "generated bundle directory (or its air.yaml)")
       .option(
@@ -56,6 +57,10 @@ export function registerSimulateServe(simulate: Command, ctx: CommandContext): v
       )
       .option("--page-size <n>", "page size when the contract lets Anvil derive none")
       .option("--trace <file>", "append a JSONL call trace to this file")
+      .option(
+        "--protocol-facade",
+        "serve SOAP, transcoded gRPC and queue-bridged operations at their synthesized paths over HTTP+JSON, for clients that declare a protocol facade",
+      )
       .action(async (opts: SimulateServeOptions) => {
         ctx.code = await runSimulateServe(opts, ctx.io);
       }),
@@ -115,6 +120,16 @@ export async function startSimulateServe(
     return { ok: false };
   }
 
+  // Opened before anything is spawned or bound, so an unwritable trace path
+  // is a startup error rather than a failure on the first call served.
+  let trace: JsonlTrace | undefined;
+  try {
+    trace = opts.trace ? new JsonlTrace(resolve(opts.trace)) : undefined;
+  } catch (err) {
+    io.err(`anvil: ${err instanceof Error ? err.message : String(err)}`);
+    return { ok: false };
+  }
+
   let provider: StdioStateProvider | undefined;
   let exited: Promise<string> = new Promise(() => {});
   if (opts.providerCmd) {
@@ -131,7 +146,6 @@ export async function startSimulateServe(
     exited = new Promise((resolveExit) => started.onExit((e) => resolveExit(e.message)));
   }
 
-  const trace = opts.trace ? new JsonlTrace(resolve(opts.trace)) : undefined;
   const sim = new Simulator(air, def, {
     ...(provider ? { provider } : {}),
     ...(trace ? { trace } : {}),
@@ -150,6 +164,8 @@ export async function startSimulateServe(
       port,
       ...(principal ? { principal } : {}),
       ...(trace ? { trace } : {}),
+      ...(opts.protocolFacade ? { protocolFacade: true } : {}),
+      onTraceError: (message) => io.err(message),
     });
   } catch (err) {
     await provider?.close();

@@ -37,11 +37,49 @@ export interface TraceSink {
   write(entry: TraceEntry): void;
 }
 
-/** Appends each entry as one line to a file. Writes are synchronous so a crash loses nothing. */
+/**
+ * Appends each entry as one line to a file. Writes are synchronous so a crash
+ * loses nothing.
+ *
+ * The file is opened for append when the sink is constructed, so a path that
+ * cannot be written (a missing parent directory, a read-only file) fails when
+ * the simulator is set up rather than on the first call it serves.
+ */
 export class JsonlTrace implements TraceSink {
-  constructor(readonly path: string) {}
+  constructor(readonly path: string) {
+    try {
+      appendFileSync(path, "", "utf8");
+    } catch (err) {
+      const why = err instanceof Error ? err.message : String(err);
+      throw new Error(`Cannot write the call trace to '${path}': ${why}`);
+    }
+  }
 
   write(entry: TraceEntry): void {
     appendFileSync(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+  }
+}
+
+/**
+ * Write one entry, never letting a trace failure change the call it records.
+ * The call has already happened (a provider may have committed a mutation), so
+ * turning it into an error would tell the agent something false. The failure
+ * goes to `report` (stderr by default) and is returned, one line, for a caller
+ * that can also surface it on the response.
+ */
+export function writeTrace(
+  sink: TraceSink | undefined,
+  entry: TraceEntry,
+  report: (message: string) => void = (message) => process.stderr.write(`${message}\n`),
+): string | undefined {
+  if (!sink) return undefined;
+  try {
+    sink.write(entry);
+    return undefined;
+  } catch (err) {
+    const why = (err instanceof Error ? err.message : String(err)).replace(/[\r\n]+/g, " ");
+    const message = `anvil simulator: trace write failed for ${entry.requestId}: ${why}`;
+    report(message);
+    return message;
   }
 }

@@ -36,8 +36,8 @@ The first line on stdout is the bound URL, for example
 The server runs until SIGINT or SIGTERM; it exits with status 1 if the
 provider process dies.
 
-The server answers each approved operation at its declared path and method,
-so any HTTP client of the real API can target it:
+The server answers each approved operation where a real client of that
+protocol sends it, so any HTTP client of the real API can target it:
 
 - A generated SDK: pass the URL as `base_url`.
 - The generated MCP server or `anvil run`: set `ANVIL_BASE_URL` (or
@@ -56,6 +56,36 @@ so any HTTP client of the real API can target it:
 | `--principal <id>` | Principal for requests that name none (default: the profile holding every scope, `admin`) |
 | `--page-size <n>` | Page size when the contract lets Anvil derive none |
 | `--trace <file>` | Append one JSON line per call |
+| `--protocol-facade` | Serve SOAP, transcoded gRPC, and queue-bridged operations at their synthesized paths over HTTP+JSON (see below) |
+
+### Which protocols are served
+
+- **HTTP+JSON** operations (OpenAPI, Swagger, Discovery, Postman, OData, HAR,
+  and gRPC methods with a `google.api.http` rule) are served at their
+  declared path and method.
+- **GraphQL** queries and mutations are served at one endpoint, as the
+  runtime's GraphQL codec calls them: `POST` a GraphQL-over-HTTP body
+  (`{"query", "operationName", "variables"}`) to the server URL, or to any
+  path no other operation claims. The operation is found by `operationName`,
+  then by the exact compiled document, then by the root field the document
+  selects. Arguments are read from `variables`; inline literals are not
+  read. A success is `200 {"data": {"<root field or alias>": ...}}`. A
+  failure is `200 {"errors": [{"message": ..., "extensions": {"code": ...}}],
+  "data": null}`, where `code` is the vendor code the contract maps (else
+  Anvil's code). Each operation also answers at its synthesized
+  `/graphql/<Type>/<field>` path, for a client that declares a protocol
+  facade.
+- **SOAP**, gRPC methods behind a JSON transcoder, and queue request/reply
+  operations are not decoded natively. With `--protocol-facade`, the server
+  serves their synthesized coordinates over HTTP+JSON, as the facade a client
+  declares with `--protocol-facade` on the generated CLI or
+  `ANVIL_PROTOCOL_FACADE` on the generated servers. Without the flag, the
+  server refuses to start.
+- **GraphQL subscriptions** and adopted **MCP tools** have no HTTP
+  request/response form, and the server refuses to start with them.
+
+A refusal names every unreachable operation and why. Use `--capability` to
+serve a capability that leaves them out.
 
 ### How a request is read
 
@@ -65,7 +95,15 @@ so any HTTP client of the real API can target it:
 - **Tenant.** The `X-Anvil-Tenant` header. Replay is scoped to principal and
   tenant.
 - **Idempotency key.** From wherever the contract's idempotency carrier puts
-  it (header, query, path, or body field).
+  it (header, query, path, or body field; for GraphQL, a field of
+  `variables`).
+- **Body.** Read in the content type the operation declares, after the route
+  is chosen: JSON; `application/x-www-form-urlencoded`, with each field typed
+  by its schema and a repeated key read as an array; or `multipart/form-data`,
+  where a file part (or a field declared as binary) becomes a base64 string,
+  a JSON part is parsed, and a text part is typed by its schema. A body that
+  does not decode is a `400` with `validation_error`.
+- **Cookies.** Declared cookie parameters are read from the `Cookie` header.
 - **Faults.** `X-Anvil-Fault: throttle | outage | conflict | slow` activates a
   named fault scenario for that request.
 - **Confirmation.** Treated as given. The MCP server, CLI, and SDK refuse an
@@ -161,7 +199,7 @@ request:
   "resource": "ticket",
   "method": "GET",
   "pathTemplate": "/tickets",
-  "params": {"path": {}, "query": {"status": "open"}, "header": {}},
+  "params": {"path": {}, "query": {"status": "open"}, "header": {}, "cookie": {}},
   "body": null,
   "page": {"cursor": null, "size": 2},
   "principal": {"id": "admin", "role": "admin", "scopes": ["tickets:write"]},
@@ -175,11 +213,15 @@ request:
 | `requestId` | `r<n>`, where n is the call's position in the simulator run. Deterministic for a given call sequence. |
 | `kind` | `read`, `list`, `search`, `create`, `update`, `delete`, or `action`, from Anvil's effect classification (not the HTTP verb). |
 | `action` | Anvil's finer verb: `get`, `list`, `search`, `create`, `update`, `replace`, `delete`, `send`, `approve`, `cancel`, and others. |
-| `params` | Parameters by their wire names, split by location. Values are typed per the parameter schema. |
+| `params` | Parameters by their wire names, split by location: `path`, `query`, `header`, and `cookie`. Values are typed per the parameter schema. |
 | `body` | The request body with the contract's field names, or `null`. |
 | `page` | Present (not `null`) exactly when the operation is paged. `cursor` is the value the caller passed back, `size` is the most items to return. |
 | `principal` | The simulated caller, or `null` for an operation without auth. |
 | `idempotencyKey` | The caller's key for a mutation that carries one, else `null`. |
+
+`params.cookie` was added without changing `protocolVersion`: it is an extra
+key, so a version 1 provider that ignores unknown keys is unaffected, and a
+provider may rely on it being present (possibly empty) from this release on.
 
 The provider answers with one of three shapes in `result`:
 
@@ -277,6 +319,13 @@ server.wait()
 With `--trace <file>` (or `trace` on `SimulatorOptions`), every call appends
 one JSON line. The file is appended to, never truncated. No clock is
 recorded, so two runs of the same call sequence write the same trace.
+
+The file is opened when the server starts, so a path that cannot be written
+(for example, a missing parent directory) stops `anvil simulate serve` before
+it binds. If a later write fails, the call's response is served unchanged:
+the call has already happened, and a provider may have committed it. The
+failure is reported on stderr, and the response carries an
+`X-Anvil-Trace-Error` header describing it.
 
 ```json
 {"schema": "anvil.simulator.trace/v1", "seq": 3, "requestId": "r3",

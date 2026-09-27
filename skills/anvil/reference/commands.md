@@ -1238,7 +1238,7 @@ Options:
 
 Serve the simulator over HTTP at the contract's paths, optionally provider-backed.
 
-Serves a bundle's approved operations over HTTP at their declared paths and methods, so a generated SDK (base_url) or the generated MCP server (ANVIL_BASE_URL) can target the simulator. Anvil keeps the surface: auth scopes, required idempotency and replay, injected faults (X-Anvil-Fault), page envelopes, and the contract's error statuses. With --provider-cmd, state and query semantics come from a child process speaking JSON-RPC 2.0 over stdio (see docs/simulator-state-providers.md); without it, the built-in seeded store serves. Prints the bound URL on stdout's first line. With --trace, appends one JSON line per call.
+Serves a bundle's approved operations over HTTP at their declared paths and methods, so a generated SDK (base_url) or the generated MCP server (ANVIL_BASE_URL) can target the simulator. Anvil keeps the surface: auth scopes, required idempotency and replay, injected faults (X-Anvil-Fault), page envelopes, and the contract's error statuses. With --provider-cmd, state and query semantics come from a child process speaking JSON-RPC 2.0 over stdio (see docs/simulator-state-providers.md); without it, the built-in seeded store serves. GraphQL operations are served at one endpoint (POST the query document, as the runtime's GraphQL codec does). An operation the server cannot reach over its native protocol is refused at startup. Prints the bound URL on stdout's first line. With --trace, appends one JSON line per call; the trace file is opened before serving, and a later write failure is reported on stderr and in an X-Anvil-Trace-Error header without changing the response.
 
 Options:
 - `--contract <path>` — generated bundle directory (or its air.yaml)
@@ -1251,6 +1251,7 @@ Options:
 - `--principal <id>` — simulated principal for requests that name none (default: one holding every scope)
 - `--page-size <n>` — page size when the contract lets Anvil derive none
 - `--trace <file>` — append a JSONL call trace to this file
+- `--protocol-facade` — serve SOAP, transcoded gRPC and queue-bridged operations at their synthesized paths over HTTP+JSON, for clients that declare a protocol facade
 
 ### `anvil disclosure`
 `anvil disclosure [options] <dir>`
