@@ -514,6 +514,7 @@ export async function serveSimulatorHttp(
     } else {
       responseBody = sim.wireError(call.operation, call.result.error).body;
     }
+    if (status === 204) responseBody = null;
     if (graphql) {
       // GraphQL over HTTP answers a well-formed request with 200 and reports
       // failure in `errors`, which is where the runtime's codec reads it
@@ -593,6 +594,12 @@ function send(
   body: unknown,
   headers: Record<string, string> = {},
 ): void {
+  // 204 and 304 carry no content (RFC 9110 sections 15.3.5 and 15.4.5).
+  if (status === 204 || status === 304) {
+    res.writeHead(status, headers);
+    res.end();
+    return;
+  }
   res.writeHead(status, { "content-type": "application/json", ...headers });
   res.end(JSON.stringify(body ?? null));
 }

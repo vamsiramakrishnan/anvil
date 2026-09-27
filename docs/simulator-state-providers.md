@@ -140,8 +140,16 @@ compile costs for five vendor specs are in
   declared `nextField` (default `next_cursor`). A `link` style continuation is
   a URL carrying the cursor. A response declared as a bare array is served as
   one, with the continuation in a `Link: <...>; rel="next"` header.
-- Other successes return the provider's `result` as the body: 201 for a
-  create, 200 otherwise.
+- Other successes return the provider's `result` as the body, with a status
+  the contract declares for an HTTP+JSON operation: `204` with no body when
+  it declares 204 and the provider returns no `result` (or it declares no
+  other success), else its first declared body-bearing status. Jira's
+  `PUT /rest/api/3/issue/{issueIdOrKey}` declares 200 and 204, so it answers
+  204 unless the provider returns the issue. An operation that declares no
+  exact 2xx status gets 201 for a create and 200 otherwise.
+- A `POST` to a literal segment under an item whose only declared success is
+  204 (Jira's `POST /rest/api/3/issue/{issueIdOrKey}/transitions`) creates
+  nothing, so the provider sees it as `kind: "action"`, not `create`.
 - Errors use the contract's declared status for that error, and the body
   `{"error": {"code": "<vendor code or Anvil code>", "message": "..."}}`
   unless the provider supplied its own body.

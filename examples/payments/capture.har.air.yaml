@@ -92,6 +92,8 @@ operations:
           - id
         additionalProperties: true
       description: Observed response (2 samples).
+      successStatuses:
+        - 200
     errors:
       - code: not_found
         upstream:
@@ -230,6 +232,8 @@ operations:
           - status
         additionalProperties: true
       description: Observed response (2 samples).
+      successStatuses:
+        - 200
     errors: []
     idempotency:
       mode: natural
@@ -374,6 +378,8 @@ operations:
           - status
         additionalProperties: true
       description: Observed response (1 sample).
+      successStatuses:
+        - 200
     errors: []
     idempotency:
       mode: none
@@ -547,6 +553,8 @@ operations:
           - status
         additionalProperties: true
       description: Observed response (2 samples).
+      successStatuses:
+        - 201
     errors: []
     idempotency:
       mode: none

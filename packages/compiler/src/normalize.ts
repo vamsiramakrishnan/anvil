@@ -43,6 +43,7 @@ import {
   webhookPathItems,
 } from "./protocols/webhooks.js";
 import { DEFAULT_SCHEMA_BOUNDS, materializeWithin, type SchemaBounds } from "./schema-bounds.js";
+import { declaredSuccessStatuses, isSubResourceAction } from "./success-statuses.js";
 
 const HTTP_METHODS = HttpMethod.options;
 
@@ -495,6 +496,10 @@ export function normalize(
         declaredIntentSignals,
       );
       effect.resource = singularize(names.resource);
+      const successStatuses = declaredSuccessStatuses(raw.responses);
+      // A 204 POST under an item is an action on it (see success-statuses.ts).
+      if (isSubResourceAction(method, path, effect.action, successStatuses))
+        effect.action = "other";
       // `x-idempotent: true` is a spec-level declaration (Swagger 2.0 and 3.x
       // alike) that repeating the call is a no-op. Honor it as natural
       // idempotency so retries become provably safe — confirmation still
@@ -598,6 +603,7 @@ export function normalize(
         output: {
           schema: outputSchema,
           description: successRes?.description,
+          ...(successStatuses.length > 0 ? { successStatuses } : {}),
         },
         errors: errorSpecs(raw.responses),
         idempotency,

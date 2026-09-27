@@ -21,6 +21,7 @@ import {
   type Operation,
   type OperationAction,
   resolveIdempotencyCarrier,
+  wireProtocolFor,
 } from "@anvil/air";
 import type { SimResult } from "./runtime.js";
 import { isRecord } from "./synthesize.js";
@@ -208,6 +209,23 @@ const STATUS_FOR: Record<ErrorCode, number> = {
   policy_denied: 403,
   unknown_upstream_error: 500,
 };
+
+/**
+ * The HTTP status of a success. The contract's declared codes win over any
+ * convention, but only where a vendor declared them: HTTP+JSON operations.
+ * `204` is served when it is declared and the call has no body to return (or
+ * nothing else is declared), else the first body-bearing declared code. With
+ * nothing declared, the convention: 201 for a create and 200 otherwise.
+ */
+export function successStatus(op: Operation | undefined, output: unknown): number {
+  const declared =
+    op && wireProtocolFor(op.sourceRef) === "http_json" ? (op.output.successStatuses ?? []) : [];
+  const withBody = declared.filter((status) => status !== 204);
+  const empty = output === undefined || output === null;
+  if (declared.includes(204) && (empty || withBody.length === 0)) return 204;
+  if (withBody[0] !== undefined) return withBody[0];
+  return op && operationKind(op) === "create" ? 201 : 200;
+}
 
 /** The HTTP projection of a simulator error: the status and vendor body the contract implies. */
 export interface WireError {

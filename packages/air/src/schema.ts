@@ -26,6 +26,7 @@ import {
   SourceKind,
 } from "./enums.js";
 import { ErrorSpec } from "./error-spec.js";
+import { Pagination } from "./pagination.js";
 import { ExposureProfileRecord } from "./profile-record.js";
 import { ServiceId } from "./service-id.js";
 
@@ -926,33 +927,6 @@ export const AsyncContractSchema = z.object({
   webhook: WebhookContractSchema.optional(),
 });
 
-export const Pagination = z.object({
-  style: z.enum(["cursor", "page", "offset", "link"]),
-  cursorParam: z.string().optional(),
-  nextField: z.string().optional(),
-  itemsField: z.string().optional(),
-  /**
-   * The parameter that controls page *size* (`per_page`, `limit`, `maxResults`,
-   * `page_size`, `top`, …). Distinct from `cursorParam`, which only controls
-   * *continuation*. This is the single knob that lets a serving surface hold a
-   * response inside a token budget by asking for less, rather than fetching
-   * everything and cutting it afterwards — so without it, truncation is the
-   * only tool available and the upstream cost is paid regardless.
-   */
-  pageSizeParam: z.string().optional(),
-  /**
-   * The largest page the upstream will actually honor, when the contract states
-   * it. Recorded because exceeding it is *silent*: an agent that asks for 500
-   * and receives 100 has no way to tell a full page from a capped one, and will
-   * report a partial read as complete. A serving surface clamps to this and can
-   * treat `returned === maxPageSize && no continuation` as suspicious.
-   */
-  maxPageSize: z.number().int().positive().optional(),
-  /** The page size the upstream applies when the caller omits one. */
-  defaultPageSize: z.number().int().positive().optional(),
-});
-export type Pagination = z.infer<typeof Pagination>;
-
 /**
  * What this operation costs an agent *in context*, measured rather than guessed.
  *
@@ -1077,6 +1051,14 @@ export const Operation = z.object({
       schemaRef: z.string().optional(),
       schema: JsonSchema.optional(),
       description: z.string().optional(),
+      /**
+       * The exact 2xx status codes the source declares, ascending. A server
+       * that answers for the contract (the simulator) serves one of these
+       * rather than a method convention: `204` when the call returns no body,
+       * else the first body-bearing code. Absent when the source declares
+       * none (or only a `2XX` range).
+       */
+      successStatuses: z.array(z.number().int().min(200).max(299)).optional(),
       /** Safe default view returned to agents; raw wire names stay in `schema`. */
       agentProjection: AgentProjection.optional(),
     })
