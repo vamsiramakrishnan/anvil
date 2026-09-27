@@ -120,6 +120,13 @@ export type ProviderResponse =
        * `paging` block). Added within protocol version 1.
        */
       total?: number;
+      /**
+       * Response headers to serve, by name. Only headers the operation
+       * declares on a success are set; any other, and any value that is not a
+       * string or number or carries a line break, is dropped with a warning in
+       * the trace. Added within protocol version 1.
+       */
+      headers?: Record<string, unknown>;
       meta?: ProviderMeta;
     }
   | { ok: false; error: ProviderError; meta?: ProviderMeta };
@@ -308,6 +315,41 @@ export function missingRequired(op: Operation, input: Record<string, unknown>): 
  * larger than the one asked for is refused rather than silently cut, because
  * cutting it would drop records with no cursor to reach them.
  */
+/**
+ * The headers a provider may set: those the operation declares on a success,
+ * spelled as declared. Everything else is dropped, each with a warning, so a
+ * provider cannot put on the wire what the contract never says is there.
+ */
+export function providerHeaders(
+  op: Operation,
+  raw: unknown,
+): { headers: Record<string, string>; warnings: string[] } {
+  const headers: Record<string, string> = {};
+  const warnings: string[] = [];
+  if (!isRecord(raw) || raw.ok !== true || raw.headers === undefined) return { headers, warnings };
+  if (!isRecord(raw.headers)) {
+    warnings.push("Provider 'headers' is not an object; no header was set.");
+    return { headers, warnings };
+  }
+  const declared = new Map((op.output.headers ?? []).map((name) => [name.toLowerCase(), name]));
+  for (const [name, value] of Object.entries(raw.headers)) {
+    const spelled = declared.get(name.toLowerCase());
+    if (!spelled) {
+      warnings.push(
+        `Provider header '${name}' dropped: ${op.id} declares no such response header.`,
+      );
+      continue;
+    }
+    const text = typeof value === "number" && Number.isFinite(value) ? String(value) : value;
+    if (typeof text !== "string" || /[\r\n\0]/.test(text)) {
+      warnings.push(`Provider header '${name}' dropped: its value is not a single-line string.`);
+      continue;
+    }
+    headers[spelled] = text;
+  }
+  return { headers, warnings };
+}
+
 export function shapeProviderResponse(
   op: Operation,
   request: ProviderRequest,
@@ -327,6 +369,8 @@ export function shapeProviderResponse(
     const mapped = mapDomainError(op, raw.error);
     return { ok: false, error: { code: mapped.code, message: mapped.message, wire: mapped.wire } };
   }
+  const { headers } = providerHeaders(op, raw);
+  const served = Object.keys(headers).length > 0 ? { headers } : {};
   if (request.page) {
     if (!Array.isArray(raw.items)) return malformed("a paged operation needs an 'items' array.");
     if (raw.items.length > request.page.size) {
@@ -344,9 +388,10 @@ export function shapeProviderResponse(
       output: { items: raw.items },
       ...(typeof next === "string" && next !== "" ? { nextCursor: next } : {}),
       ...(total !== undefined ? { total } : {}),
+      ...served,
     };
   }
-  return { ok: true, output: raw.result === undefined ? null : raw.result };
+  return { ok: true, output: raw.result === undefined ? null : raw.result, ...served };
 }
 
 /** What `normalizeRequest` needs from the simulator besides the operation and input. */
@@ -440,7 +485,11 @@ export async function askProvider(
   provider: StateProvider,
   op: Operation,
   request: ProviderRequest,
-): Promise<{ raw: ProviderResponse | { transportError: string }; result: SimResult }> {
+): Promise<{
+  raw: ProviderResponse | { transportError: string };
+  result: SimResult;
+  warnings: string[];
+}> {
   let raw: ProviderResponse;
   try {
     raw = await provider.invoke(request);
@@ -453,7 +502,9 @@ export async function askProvider(
     return {
       raw: { transportError: message },
       result: { ok: false, error: { code, message: `State provider failed: ${message}` } },
+      warnings: [],
     };
   }
-  return { raw, result: shapeProviderResponse(op, request, raw) };
+  const result = shapeProviderResponse(op, request, raw);
+  return { raw, result, warnings: result.ok ? providerHeaders(op, raw).warnings : [] };
 }

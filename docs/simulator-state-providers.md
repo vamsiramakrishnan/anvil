@@ -190,7 +190,8 @@ compile costs for five vendor specs are in
 - Errors use the contract's declared status for that error, and the body
   `{"error": {"code": "<vendor code or Anvil code>", "message": "..."}}`
   unless the provider supplied its own body.
-- Every response carries `X-Request-Id`, the deterministic request id.
+- Every response carries `X-Request-Id`, the deterministic request id, and
+  any declared response header the provider set (see `invoke`).
 
 ## Wire protocol (stdio JSON-RPC 2.0)
 
@@ -328,6 +329,24 @@ in-process result. `meta` was added without changing `protocolVersion`, like
 `params.cookie`: a version 1 provider that never sends it is unaffected, and
 a version 1 simulator from before this release ignores it.
 
+A success may also carry `headers`, the response headers to serve, by name:
+
+```json
+{"ok": true, "items": [{"sys_id": "a1"}], "nextCursor": "1",
+ "headers": {"X-Total-Count": 57, "Link": "<https://.../incident?sysparm_offset=1>;rel=\"next\""}}
+```
+
+Anvil sets a header only when the operation declares it on a success
+response (ServiceNow's Table API declares `Link` and `X-Total-Count`),
+matching its name in any case and spelling it as declared. A string or
+number value is served; an undeclared header, a value of another type or
+with a line break, and a header the simulator writes itself (`X-Request-Id`,
+the body's framing, or a bare array's continuation `Link`) are dropped, each
+with a line in the trace entry's `warnings`. The headers served are recorded
+in the entry's `headers`. `headers` was added without changing
+`protocolVersion`, like `meta`: a version 1 provider that never sends it is
+unaffected, and a version 1 simulator from before this release ignores it.
+
 Anvil maps an error onto the operation's declared errors: an entry whose
 vendor code equals `upstreamCode` wins, then an entry with the same Anvil
 code. That entry supplies the HTTP status and the vendor code in the default
@@ -432,6 +451,8 @@ failure is reported on stderr, and the response carries an
 | `provider` | What the provider answered, including its `meta`; `{"transportError": "..."}` when it could not answer; or `null` |
 | `result` | Anvil's result before wire encoding |
 | `status`, `response` | The final HTTP status and body |
+| `headers` | The response headers the provider set and Anvil served, when there were any |
+| `warnings` | What Anvil dropped from the provider's answer and why (an undeclared header), when anything was |
 
 ## In process (TypeScript)
 

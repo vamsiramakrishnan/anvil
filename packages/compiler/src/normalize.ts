@@ -43,7 +43,11 @@ import {
   webhookPathItems,
 } from "./protocols/webhooks.js";
 import { DEFAULT_SCHEMA_BOUNDS, materializeWithin, type SchemaBounds } from "./schema-bounds.js";
-import { declaredSuccessStatuses, isSubResourceAction } from "./success-statuses.js";
+import {
+  declaredSuccessHeaders,
+  declaredSuccessStatuses,
+  isSubResourceAction,
+} from "./success-statuses.js";
 
 const HTTP_METHODS = HttpMethod.options;
 
@@ -567,6 +571,7 @@ export function normalize(
         raw.responses?.["2xx"] ??
         undefined;
       const outputSchema = jsonSchemaOf(successRes?.content, namedSchemas, bounds);
+      const successHeaders = declaredSuccessHeaders(raw.responses);
       const pagination = classifyPagination(effect, effect.action, params, outputSchema, body);
       // A read with no trailing id defaults to `list`; an unpaged one whose
       // declared response is not a collection (`GET /me`, a file's content
@@ -619,6 +624,7 @@ export function normalize(
           schema: outputSchema,
           description: successRes?.description,
           ...(successStatuses.length > 0 ? { successStatuses } : {}),
+          ...(successHeaders.length > 0 ? { headers: successHeaders } : {}),
         },
         errors: errorSpecs(raw.responses),
         idempotency,

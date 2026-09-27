@@ -655,3 +655,65 @@ describe("a timestamp id retyped as a string", () => {
     ).toBe("1700000000.123400");
   });
 });
+
+describe("response headers a provider sets", () => {
+  // ServiceNow's Table API declares Link and X-Total-Count on a list.
+  const serviceNow = `openapi: "3.0.3"
+info: { title: ServiceNow Table API, version: "1.0.0" }
+paths:
+  /api/now/table/{tableName}:
+    get:
+      operationId: getRecords
+      parameters:
+        - { name: tableName, in: path, required: true, schema: { type: string } }
+        - { name: sysparm_offset, in: query, schema: { type: integer } }
+        - { name: sysparm_limit, in: query, schema: { type: integer } }
+      responses:
+        "200":
+          description: ok
+          headers:
+            Link: { schema: { type: string } }
+            X-Total-Count: { schema: { type: integer } }
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { result: { type: array, items: { type: object } } }
+`;
+
+  it("serves the declared ones, drops the rest with a warning, and traces both", async () => {
+    const compiled = await compile({ spec: serviceNow, serviceId: "servicenow" });
+    const snAir = approveOperations(
+      compiled,
+      compiled.operations.map((o) => o.id),
+    );
+    for (const op of snAir.operations) op.auth = { ...op.auth, type: "none", scopes: [] };
+    expect(snAir.operations[0]?.output.headers).toEqual(["Link", "X-Total-Count"]);
+    const link = '<https://instance.example/api/now/table/incident?sysparm_offset=1>;rel="next"';
+    const provider: StateProvider = {
+      invoke: (): ProviderResponse => ({
+        ok: true,
+        result: { result: [{ sys_id: "a" }] },
+        headers: { link, "x-total-count": 57, "X-Secret": "s", "X-Request-Id": "mine" },
+      }),
+    };
+    const trace: TraceEntry[] = [];
+    const sim = new Simulator(snAir, simulatorDefinitionFor(snAir), { provider });
+    const http = await serveSimulatorHttp(sim, snAir, { trace: { write: (e) => trace.push(e) } });
+    try {
+      const res = await fetch(`${http.url}/api/now/table/incident?sysparm_limit=1`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("link")).toBe(link);
+      expect(res.headers.get("x-total-count")).toBe("57");
+      expect(res.headers.get("x-secret")).toBeNull();
+      expect(res.headers.get("x-request-id")).toBe("r1");
+      expect(trace[0]?.headers).toEqual({ Link: link, "X-Total-Count": "57" });
+      expect(trace[0]?.warnings).toEqual([
+        "Provider header 'X-Secret' dropped: servicenow.table.get declares no such response header.",
+        "Provider header 'X-Request-Id' dropped: servicenow.table.get declares no such response header.",
+      ]);
+    } finally {
+      await http.close();
+    }
+  });
+});

@@ -1069,6 +1069,13 @@ export const Operation = z.object({
        * none (or only a `2XX` range).
        */
       successStatuses: z.array(z.number().int().min(200).max(299)).optional(),
+      /**
+       * The response headers a success declares, by name as declared, across
+       * every declared 2xx response (ServiceNow's `Link` and `X-Total-Count`).
+       * A server that answers for the contract sets only these. Absent when
+       * none is declared.
+       */
+      headers: z.array(z.string()).optional(),
       /** Safe default view returned to agents; raw wire names stay in `schema`. */
       agentProjection: AgentProjection.optional(),
     })

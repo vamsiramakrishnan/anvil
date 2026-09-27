@@ -9,6 +9,7 @@
  */
 import type { SurfaceSignature } from "@anvil/compiler";
 
+export * from "./declared-shape.js";
 export * from "./define.js";
 export * from "./http.js";
 export * from "./model.js";

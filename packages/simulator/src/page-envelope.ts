@@ -15,7 +15,7 @@ import {
   type Operation,
   responseFieldPath,
 } from "@anvil/air";
-import { declaredResponse } from "./runtime.js";
+import { declaredResponse } from "./declared-shape.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

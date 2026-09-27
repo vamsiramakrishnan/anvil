@@ -32,9 +32,10 @@ import {
   wireProtocolFor,
 } from "@anvil/air";
 import { coerceWireValues, decodeRequestBody, decodeUndeclared } from "./body-decoding.js";
+import { declaredResponse } from "./declared-shape.js";
 import { fillFixedFields, pageEnvelope } from "./page-envelope.js";
 import { servesItems } from "./provider.js";
-import { declaredResponse, type InvokeContext, type SimError, type Simulator } from "./runtime.js";
+import type { InvokeContext, SimError, Simulator } from "./runtime.js";
 import { TRACE_SCHEMA, type TraceSink, writeTrace } from "./trace.js";
 
 export interface SimulatorHttpOptions {
@@ -68,6 +69,16 @@ export interface SimulatorHttpServer {
 }
 
 const MAX_BODY_BYTES = 16 * 1024 * 1024;
+
+/** Headers the server writes on every response; a provider never sets them. */
+const ANVIL_HEADERS = [
+  "x-request-id",
+  "x-anvil-trace-error",
+  "content-type",
+  "content-length",
+  "transfer-encoding",
+  "connection",
+];
 
 interface Route {
   op: Operation;
@@ -478,6 +489,20 @@ export async function serveSimulatorHttp(
     } else {
       responseBody = sim.wireError(call.operation, call.result.error).body;
     }
+    // A provider's declared headers are served unless Anvil writes that
+    // header itself: the request id, the body's framing, or a bare array's
+    // continuation `Link`, which must point at this server.
+    const warnings = [...(call.warnings ?? [])];
+    const providerSet: Record<string, string> = {};
+    const owned = new Set([...ANVIL_HEADERS, ...Object.keys(headers).map((h) => h.toLowerCase())]);
+    for (const [name, value] of Object.entries(call.result.ok ? (call.result.headers ?? {}) : {})) {
+      if (owned.has(name.toLowerCase())) {
+        warnings.push(`Provider header '${name}' dropped: the simulator writes it.`);
+      } else {
+        providerSet[name] = value;
+      }
+    }
+    headers = { ...providerSet, ...headers };
     if (status === 204) responseBody = null;
     if (graphql) {
       // GraphQL over HTTP answers a well-formed request with 200 and reports
@@ -509,6 +534,8 @@ export async function serveSimulatorHttp(
         result: call.result,
         status,
         response: responseBody,
+        ...(Object.keys(providerSet).length > 0 ? { headers: providerSet } : {}),
+        ...(warnings.length > 0 ? { warnings } : {}),
       },
       options.onTraceError,
     );

@@ -69,3 +69,43 @@ describe("declared success statuses and sub-resource actions", () => {
     expect(edit?.output.successStatuses).toEqual([200, 204]);
   });
 });
+
+describe("declared success headers", () => {
+  it("records every 2xx response's headers once, as first spelled, without Content-Type", async () => {
+    const air = await compile({
+      spec: JSON.stringify({
+        openapi: "3.0.1",
+        info: { title: "Table API", version: "1" },
+        servers: [{ url: "https://instance.example" }],
+        paths: {
+          "/api/now/table/incident": {
+            get: {
+              responses: {
+                "200": {
+                  description: "ok",
+                  headers: {
+                    Link: { schema: { type: "string" } },
+                    "X-Total-Count": { schema: { type: "integer" } },
+                    "Content-Type": { schema: { type: "string" } },
+                  },
+                  content: withBody,
+                },
+                "206": {
+                  description: "partial",
+                  headers: { link: { schema: { type: "string" } } },
+                },
+                "429": { description: "slow down", headers: { "Retry-After": {} } },
+              },
+            },
+          },
+          "/plain": { get: { responses: { "200": { description: "ok", content: withBody } } } },
+        },
+      }),
+      serviceId: "table",
+    });
+    const headers = (path: string) =>
+      air.operations.find((o) => o.sourceRef.path === path)?.output.headers;
+    expect(headers("/api/now/table/incident")).toEqual(["Link", "X-Total-Count"]);
+    expect(headers("/plain")).toBeUndefined();
+  });
+});
