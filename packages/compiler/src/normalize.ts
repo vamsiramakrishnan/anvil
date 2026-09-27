@@ -89,6 +89,8 @@ interface RawOperation {
   security?: Array<Record<string, string[]>>;
   /** Vendor extension: the spec author declares a repeat call is a no-op. */
   "x-idempotent"?: unknown;
+  /** Microsoft's CSDL converter: `action`, `function`, or `operation`. */
+  "x-ms-docs-operation-type"?: unknown;
   /**
    * Vendor extension: a protocol adapter's explicit effect assertion. The
    * adapters lower everything to the one truthful wire method (SOAP, GraphQL
@@ -541,6 +543,13 @@ export function normalize(
         params,
         bounds,
       );
+      // Microsoft's CSDL-to-OpenAPI converter marks an OData action's body
+      // with `x-ms-docs-operation-type: action`, and spells its parameters as
+      // the CSDL does. Microsoft Graph binds them in any case (see
+      // `RequestBody.fieldNameMatch`), so the contract records that.
+      if (body && raw["x-ms-docs-operation-type"] === "action") {
+        body.fieldNameMatch = "case_insensitive";
+      }
 
       // Parsed rather than trusted, like the wire binding beside it: the
       // extension arrives as `unknown` off a lowered document. Its presence is

@@ -587,6 +587,16 @@ export const RequestBody = z.object({
   projection: z.enum(["fields", "whole"]).default("whole"),
   /** Top-level fields when `projection === "fields"`; empty for `whole`. */
   fields: z.array(BodyField).default([]),
+  /**
+   * How the service matches the body's top-level field names. Absent: exactly,
+   * as JSON does. `case_insensitive`: in any case, as Microsoft Graph binds an
+   * OData action's parameters. Its contract spells them as its CSDL declares
+   * (`DestinationId` for `message.move`, `Message` and `SaveToSentItems` for
+   * `sendMail`) while its documentation and clients send camelCase
+   * (`destinationId`), and the service accepts both. Names stay as declared;
+   * this only says what else the service accepts.
+   */
+  fieldNameMatch: z.enum(["case_insensitive"]).optional(),
 });
 export type RequestBody = z.infer<typeof RequestBody>;
 

@@ -540,3 +540,48 @@ describe("a page-numbered position block", () => {
     expect(pagination("/files.cursor")?.pagingField).toBeUndefined();
   });
 });
+
+describe("OData action bodies", () => {
+  it("records that Graph binds an action's parameters in any case, and nothing else", async () => {
+    const action = (extension: Record<string, unknown>) => ({
+      post: {
+        ...extension,
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { type: "object", properties: { DestinationId: { type: "string" } } },
+            },
+          },
+        },
+        responses: { "2XX": { description: "ok" } },
+      },
+    });
+    const air = await compile({
+      spec: JSON.stringify({
+        openapi: "3.0.1",
+        info: { title: "Graph", version: "1" },
+        servers: [{ url: "https://graph.example.test/v1.0" }],
+        paths: {
+          "/me/messages/{message-id}/move": {
+            parameters: [
+              { name: "message-id", in: "path", required: true, schema: { type: "string" } },
+            ],
+            ...action({ "x-ms-docs-operation-type": "action" }),
+          },
+          "/me/messages": action({ "x-ms-docs-operation-type": "operation" }),
+          "/plain": action({}),
+        },
+      }),
+      serviceId: "graph",
+    });
+    const body = (path: string) =>
+      air.operations.find((o) => o.sourceRef.path === path)?.input.body;
+    expect(body("/me/messages/{message-id}/move")).toMatchObject({
+      fields: [{ name: "DestinationId" }],
+      fieldNameMatch: "case_insensitive",
+    });
+    expect(body("/me/messages")?.fieldNameMatch).toBeUndefined();
+    expect(body("/plain")?.fieldNameMatch).toBeUndefined();
+  });
+});

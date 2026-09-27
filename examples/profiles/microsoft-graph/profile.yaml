@@ -9,8 +9,8 @@
 # is reviewed and the pin updated.
 profile: graph-workplace
 description: >-
-  Find SharePoint sites and drives and read, search, and share drive items;
-  list, read, send, and reply to Outlook mail; read and post Teams channel
+  Find SharePoint sites and drives and read, download, search, and share
+  drive items; list, read, send, reply to, move, and copy Outlook mail; read and post Teams channel
   messages and replies; look up people; and run Microsoft Search (KQL) queries.
 source:
   url: https://raw.githubusercontent.com/microsoftgraph/msgraph-metadata/master/openapi/v1.0/openapi.yaml
@@ -35,6 +35,7 @@ select:
       - "/drives/{drive-id}/items/{driveItem-id}/versions"
       - "/drives/{drive-id}/search(q='{q}')"
       - "/drives/{drive-id}/items/{driveItem-id}/search(q='{q}')"
+      - "/drives/{drive-id}/items/{driveItem-id}/content"
   - method: post
     path:
       - "/drives/{drive-id}/items/{driveItem-id}/children"
@@ -54,6 +55,8 @@ select:
       - "/me/messages/{message-id}/reply"
       - "/me/messages/{message-id}/replyAll"
       - "/me/messages/{message-id}/forward"
+      - "/me/messages/{message-id}/move"
+      - "/me/messages/{message-id}/copy"
   # Teams channel messages.
   - method: get
     path:

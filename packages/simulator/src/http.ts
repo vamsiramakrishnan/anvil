@@ -651,15 +651,43 @@ function liftInput(
     input[sizeParam] = Number(query[sizeParam].at(-1));
   }
   const declared = op.input.body;
-  if (declared?.projection === "fields" && typeof body === "object" && body !== null) {
+  const anyCase = declared?.fieldNameMatch === "case_insensitive";
+  if (declared?.projection === "fields" && isRecord(body)) {
     for (const f of declared.fields) {
-      const value = (body as Record<string, unknown>)[f.name];
+      const value = anyCase ? fieldInAnyCase(body, f.name) : body[f.name];
       if (value !== undefined) input[agentPropKey(f)] = value;
     }
   } else if (declared && body !== undefined) {
-    input.body = body;
+    input.body = anyCase && isRecord(body) ? declaredSpelling(body, declared.schema) : body;
   }
   return { input, headers };
+}
+
+/** A field's value under its declared name, else under the one key that differs only in case. */
+function fieldInAnyCase(body: Record<string, unknown>, name: string): unknown {
+  if (body[name] !== undefined) return body[name];
+  const lower = name.toLowerCase();
+  const matches = Object.keys(body).filter((key) => key.toLowerCase() === lower);
+  return matches.length === 1 ? body[matches[0] as string] : undefined;
+}
+
+/**
+ * A whole body with each top-level key that matches a declared property in
+ * another case respelled as declared, so a provider reads the names the
+ * contract gives. Keys that match nothing declared are kept as sent.
+ */
+function declaredSpelling(
+  body: Record<string, unknown>,
+  schema: Record<string, unknown>,
+): Record<string, unknown> {
+  const declared = isRecord(schema.properties) ? Object.keys(schema.properties) : [];
+  const byLower = new Map(declared.map((name) => [name.toLowerCase(), name]));
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    const name = declared.includes(key) ? key : (byLower.get(key.toLowerCase()) ?? key);
+    if (out[name] === undefined || name === key) out[name] = value;
+  }
+  return out;
 }
 
 /** The idempotency key from wherever the contract says it travels. */

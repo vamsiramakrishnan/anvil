@@ -122,7 +122,11 @@ compile costs for five vendor specs are in
   by its schema and a repeated key read as an array; or `multipart/form-data`,
   where a file part (or a field declared as binary) becomes a base64 string,
   a JSON part is parsed, and a text part is typed by its schema. A body that
-  does not decode is a `400` with `validation_error`.
+  does not decode is a `400` with `validation_error`. Top-level body fields
+  match their declared names exactly, except in an OData action body from
+  Microsoft's converter (`x-ms-docs-operation-type: action`), which Microsoft
+  Graph binds in any case: `destinationId`, as Graph's documentation sends
+  it, reaches the provider as the declared `DestinationId`.
 - **Cookies.** Declared cookie parameters are read from the `Cookie` header.
 - **Faults.** `X-Anvil-Fault: throttle | outage | conflict | slow` activates a
   named fault scenario for that request.

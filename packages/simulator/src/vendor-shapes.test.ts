@@ -147,6 +147,45 @@ paths:
                     type: object
                     required: [next_cursor]
                     properties: { next_cursor: { type: string } }
+  /me/messages/{message-id}/move:
+    post:
+      operationId: me.messages.message.move
+      x-ms-docs-operation-type: action
+      parameters:
+        - { name: message-id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, properties: { DestinationId: { type: string } } }
+      responses:
+        2XX: { description: ok, content: { application/json: { schema: { type: object } } } }
+  /me/sendMail:
+    post:
+      operationId: me.sendMail
+      x-ms-docs-operation-type: action
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                Message: { type: object, properties: { subject: { type: string } } }
+                SaveToSentItems: { type: boolean }
+      responses:
+        "204": { description: sent }
+  /rest/api/3/issue/{key}/watchers:
+    post:
+      operationId: addWatcher
+      parameters:
+        - { name: key, in: path, required: true, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema: { type: object, properties: { accountId: { type: string } } }
+      responses:
+        "204": { description: added }
   /users:
     get:
       operationId: users.user.ListUser
@@ -324,6 +363,56 @@ describe("fields the contract fixes to one value", () => {
       const res = await fetch(`${s.url}/users.info?user=U1`);
       expect(s.provider.seen[0]?.kind).toBe("read");
       expect(await res.json()).toEqual({ ok: true, user: { id: "U1" } });
+    } finally {
+      await s.close();
+    }
+  });
+});
+
+describe("an OData action's parameters in any case", () => {
+  // Graph's contract spells action parameters as its CSDL declares them
+  // (PascalCase); its documentation and clients send camelCase, and the
+  // service binds either.
+  it("reads Graph's camelCase and PascalCase action bodies under the declared names", async () => {
+    const s = await serving();
+    try {
+      for (const body of [{ destinationId: "deleteditems" }, { DestinationId: "deleteditems" }]) {
+        const res = await fetch(`${s.url}/me/messages/M1/move`, {
+          method: "POST",
+          headers: json,
+          body: JSON.stringify(body),
+        });
+        expect(res.status).toBe(200);
+      }
+      expect(s.provider.seen.map((r) => r.body)).toEqual([
+        { DestinationId: "deleteditems" },
+        { DestinationId: "deleteditems" },
+      ]);
+
+      await fetch(`${s.url}/me/sendMail`, {
+        method: "POST",
+        headers: json,
+        body: JSON.stringify({ message: { subject: "Hi" }, saveToSentItems: false, extra: 1 }),
+      });
+      expect(s.provider.seen[2]?.body).toEqual({
+        Message: { subject: "Hi" },
+        SaveToSentItems: false,
+        extra: 1,
+      });
+    } finally {
+      await s.close();
+    }
+  });
+
+  it("matches a body that is not an OData action exactly, as JSON does", async () => {
+    const s = await serving();
+    try {
+      await fetch(`${s.url}/rest/api/3/issue/K-1/watchers`, {
+        method: "POST",
+        headers: json,
+        body: JSON.stringify({ AccountId: "a1" }),
+      });
+      expect(s.provider.seen[0]?.body).toBeNull();
     } finally {
       await s.close();
     }
