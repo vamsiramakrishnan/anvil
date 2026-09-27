@@ -316,4 +316,17 @@ describe("service auth over alternative security requirements", () => {
       "auth/alternative_selected_by_manifest",
     );
   });
+
+  it("names the legacy oauth2 type, not a missing carrier, as the reason it stays blocked", async () => {
+    const legacy = await compileSource(ephemeralCompilerSource(spec), {
+      manifest:
+        "auth:\n  type: oauth2\n  scopes: [read]\noperations:\n  listThings: { state: approved }\n",
+    });
+    const op = legacy.operations[0];
+    expect(op?.state).toBe("blocked");
+    expect(op?.reviewNotes.some((n) => n.includes("Legacy service auth type oauth2"))).toBe(true);
+    expect(legacy.diagnostics.filter((d) => d.code === "auth/service_oauth2_ambiguous")).toEqual([
+      expect.objectContaining({ level: "error", operationId: op?.id }),
+    ]);
+  });
 });

@@ -9,8 +9,15 @@ service:
   owner: backtesting
   environment: prod
 
+# Confluence Cloud accepts basic auth (account email + API token) OR OAuth 2.0
+# (3LO authorization code) on every operation. The compiler does not pick
+# between alternatives that carry different authority, and the legacy
+# scope-only `oauth2` names no grant, so it cannot make the choice: every
+# operation would stay blocked. Basic auth is the service credential an
+# agent holds; the scopes below are the OAuth scopes the same calls need,
+# kept so a simulated principal is gated by them.
 auth:
-  type: oauth2
+  type: basic
   scopes:
     - read:page:confluence
     - write:page:confluence

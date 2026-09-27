@@ -173,11 +173,25 @@ function applyServiceAuthDefaults(
   return {
     operations: operations.map((operation) => {
       let next = operation;
-      if (
-        alternativesUnmodeled.has(operation.id) &&
-        config.type !== undefined &&
-        config.type !== "oauth2"
-      ) {
+      if (alternativesUnmodeled.has(operation.id) && config.type === "oauth2") {
+        // The legacy scope-only `oauth2` names no grant, principal, or carrier,
+        // so it cannot be the choice auth/alternatives_unmodeled asks for. Say
+        // so on the operation and in an error: otherwise the only visible
+        // reason is the placeholder contract's missing carrier, which points
+        // the reviewer at the wrong fix.
+        const note =
+          "Legacy service auth type oauth2 does not choose among the source's alternative " +
+          "security requirements; set auth.type to the one the runtime should use (for " +
+          "example basic, jwt_bearer, oauth2_client_credentials, or oauth2_on_behalf_of).";
+        next = { ...operation, reviewNotes: [...operation.reviewNotes] };
+        if (!next.reviewNotes.includes(note)) next.reviewNotes.push(note);
+        diagnostics.push({
+          level: "error",
+          code: "auth/service_oauth2_ambiguous",
+          message: note,
+          operationId: operation.id,
+        });
+      } else if (alternativesUnmodeled.has(operation.id) && config.type !== undefined) {
         // The source offers OR'd security alternatives the compiler would not
         // pick between (auth/alternatives_unmodeled). A service-level manifest
         // auth type IS the explicit choice that diagnostic asks for: apply it,

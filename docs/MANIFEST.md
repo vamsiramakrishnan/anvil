@@ -251,6 +251,10 @@ auth:
   type: basic
 ```
 
+The legacy `type: oauth2` names no grant, principal, or carrier, so it is not
+that choice: the operations stay blocked, with an
+`auth/service_oauth2_ambiguous` error that asks for a concrete type.
+
 ### mTLS, custom headers, and end-user authorization-code
 
 Three more auth types the runtime executes, each declared by NAME only —
