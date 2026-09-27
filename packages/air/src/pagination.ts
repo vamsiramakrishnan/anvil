@@ -7,6 +7,14 @@ import { z } from "zod";
 export const Pagination = z.object({
   style: z.enum(["cursor", "page", "offset", "link"]),
   cursorParam: z.string().optional(),
+  /**
+   * Where `cursorParam` and `pageSizeParam` travel. `body`: they are fields of
+   * the request body, as on a POST search that carries its continuation token
+   * there (Jira `POST /rest/api/3/search/jql` sends `nextPageToken` and
+   * `maxResults` in the body and answers with `nextPageToken`). Absent: they
+   * are declared parameters.
+   */
+  in: z.enum(["body"]).optional(),
   nextField: z.string().optional(),
   itemsField: z.string().optional(),
   /**

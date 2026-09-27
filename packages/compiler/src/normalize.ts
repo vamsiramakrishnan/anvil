@@ -23,7 +23,6 @@ import {
   classifyConfirmation,
   classifyEffect,
   classifyLongRunning,
-  classifyPagination,
   classifyRetry,
   findJobHandleField,
   findStateField,
@@ -31,6 +30,7 @@ import {
 import { deriveNames, estatePathContext, singularize } from "./naming.js";
 import { resolveAuth } from "./normalize-auth.js";
 import { buildRequestBody } from "./normalize-body.js";
+import { classifyPagination } from "./pagination-inference.js";
 import type { ParsedSpec } from "./parse.js";
 import {
   classifyPathGrammar,
@@ -574,7 +574,7 @@ export function normalize(
         raw.responses?.["2xx"] ??
         undefined;
       const outputSchema = jsonSchemaOf(successRes?.content, namedSchemas, bounds);
-      const pagination = classifyPagination(effect, effect.action, params, outputSchema);
+      const pagination = classifyPagination(effect, effect.action, params, outputSchema, body);
       const auth = resolveAuth(doc, raw.security);
       if (auth.issue) {
         diagnostics.push({

@@ -1,6 +1,7 @@
 import { Pagination } from "@anvil/air";
 import { describe, expect, it } from "vitest";
-import { classifyEffect, classifyPagination } from "./classify.js";
+import { classifyEffect } from "./classify.js";
+import { classifyPagination } from "./pagination-inference.js";
 
 /**
  * Page-SIZE inference, tested against the shapes it will actually meet.

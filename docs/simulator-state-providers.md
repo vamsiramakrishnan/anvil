@@ -130,8 +130,10 @@ compile costs for five vendor specs are in
   unconfirmed mutation before sending it, and the wire carries no confirm
   field.
 - **Cursor and page size.** From the contract's `cursorParam` and
-  `pageSizeParam`. A requested size is clamped to the declared
-  `maxPageSize`.
+  `pageSizeParam`, which are parameters, or request-body fields when the
+  contract pages in the body (`pagination.in: body`, as Jira's
+  `POST /rest/api/3/search/jql` sends `nextPageToken` and `maxResults`). A
+  requested size is clamped to the declared `maxPageSize`.
 
 ### How a response is written
 

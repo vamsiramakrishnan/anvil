@@ -373,11 +373,7 @@ function providerPage(
   input: Record<string, unknown>,
   ctx: NormalizeContext,
 ): { cursor: string | null; size: number } {
-  const inputFor = (name: string | undefined) => {
-    if (name === undefined) return undefined;
-    const param = op.input.params.find((p) => p.name === name);
-    return input[param ? agentPropKey(param) : name];
-  };
+  const inputFor = (name: string | undefined) => pagingInput(op, input, name);
   const rawCursor = ctx.cursor ?? inputFor(op.pagination?.cursorParam);
   const cursor = rawCursor === undefined || rawCursor === null ? null : String(rawCursor);
   const asked = Number(inputFor(op.pagination?.pageSizeParam));
@@ -385,6 +381,29 @@ function providerPage(
   const max = op.pagination?.maxPageSize;
   if (max !== undefined) size = Math.min(size, max);
   return { cursor, size };
+}
+
+/**
+ * The value an agent-keyed input holds for a paging control named by its wire
+ * name: a declared parameter by its agent key, a body field (projected, or
+ * inside a whole body) when the contract pages in the body, else the raw name.
+ */
+export function pagingInput(
+  op: Operation,
+  input: Record<string, unknown>,
+  name: string | undefined,
+): unknown {
+  if (name === undefined) return undefined;
+  if (op.pagination?.in === "body") {
+    const body = op.input.body;
+    if (body?.projection === "fields") {
+      const field = body.fields.find((f) => f.name === name);
+      return field ? input[agentPropKey(field)] : undefined;
+    }
+    return isRecord(input.body) ? input.body[name] : undefined;
+  }
+  const param = op.input.params.find((p) => p.name === name);
+  return input[param ? agentPropKey(param) : name];
 }
 
 /** Ask the provider, turning a transport failure into a surface error. */

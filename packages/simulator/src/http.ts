@@ -464,8 +464,7 @@ export async function serveSimulatorHttp(
       ({ input, headers: traced } = liftInput(op, pathValue, query, req, body));
       const key = idempotencyKeyFor(op, pathValue, query, req, body);
       if (key !== undefined) ctx.idempotencyKey = key;
-      const cursorParam = op.pagination?.cursorParam;
-      const cursor = cursorParam ? query[cursorParam]?.at(-1) : undefined;
+      const cursor = wireCursor(op, query, body);
       if (cursor !== undefined) ctx.cursor = cursor;
     } else {
       body = decodeUndeclared(raw, contentType);
@@ -578,6 +577,25 @@ export async function serveSimulatorHttp(
         server.close((err) => (err ? reject(err) : resolve()));
       }),
   };
+}
+
+/**
+ * The continuation a request carries, from wherever the contract pages: the
+ * cursor parameter or the cursor field of the body.
+ */
+function wireCursor(
+  op: Operation,
+  query: Record<string, string[]>,
+  body: unknown,
+): string | undefined {
+  const pagination = op.pagination;
+  const cursorParam = pagination?.cursorParam;
+  if (!cursorParam) return undefined;
+  if (pagination.in === "body") {
+    const value = isRecord(body) ? body[cursorParam] : undefined;
+    return typeof value === "string" && value !== "" ? value : undefined;
+  }
+  return query[cursorParam]?.at(-1);
 }
 
 function isItems(output: unknown): output is { items: unknown[] } {

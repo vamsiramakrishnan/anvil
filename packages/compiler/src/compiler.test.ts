@@ -2,13 +2,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { confidenceFor, type Operation } from "@anvil/air";
 import { describe, expect, it } from "vitest";
-import {
-  classifyArchetype,
-  classifyConfirmation,
-  classifyEffect,
-  classifyPagination,
-} from "./classify.js";
+import { classifyArchetype, classifyConfirmation, classifyEffect } from "./classify.js";
 import { approveOperations, compile } from "./compile.js";
+import { classifyPagination } from "./pagination-inference.js";
 
 const read = (rel: string) =>
   readFileSync(
