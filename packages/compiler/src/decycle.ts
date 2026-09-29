@@ -30,6 +30,7 @@
  *    whole spec's schema graph) only happens once, in phase 1; phase 2 runs
  *    per operation over an already-small, already-deduped input.
  */
+import { stampAlternatives } from "./schema-alternatives.js";
 import { flattenInheritance, withoutDiscriminatorMapping } from "./schema-inherit.js";
 import { collapseExpandable, compactLeafSchema } from "./schema-leaf.js";
 import { SCHEMA_MAP_KEYS, truncateToStub } from "./schema-stub.js";
@@ -779,15 +780,12 @@ export function materializeSchema(
 ): MaterializeResult {
   const refDepthLimitedAt: string[] = [];
   const nodeBudgetLimitedAt: string[] = [];
-  // Memoized by name, not just cycle-guarded by ancestor chain: an
-  // operation's response commonly reaches the same named type from several
-  // unrelated branches (e.g. a Stripe `charge` references `customer`
-  // directly, and `invoice`, which *also* references `customer`) — without
-  // this, each branch re-inlines that type's whole body independently, and
-  // since each hop can itself fan out to further shared types, a handful of
-  // operations each touching a dozen or so cross-referential named types
-  // was enough to produce a 400MB+ document even though `bundleDocument`
-  // (the whole-spec pass) had already deduplicated everything once.
+  // Memoized by name, not just cycle-guarded by ancestor chain: a response
+  // commonly reaches the same named type from unrelated branches (a Stripe
+  // `charge` references `customer` directly and through `invoice`). Without
+  // this each branch re-inlines that body, each hop fans out to more shared
+  // types, and a handful of cross-referential operations produced a 400MB+
+  // document although `bundleDocument` had already deduplicated them once.
   const resolved = new Map<string, { refDepth: number; value: unknown }>();
   const inheritAllOf = options.inheritAllOf === true;
   const budget: Budget = { count: 0, max: maxNodes, spent: false, inheritAllOf };
@@ -912,6 +910,7 @@ function resolveRefs(
       !inSchemaMap && SCHEMA_MAP_KEYS.has(k),
     );
   }
+  if (!inSchemaMap) stampAlternatives(node, obj);
   if (budget.inheritAllOf && !inSchemaMap && Array.isArray(obj.allOf)) {
     return flattenInheritance(obj) ?? obj;
   }
