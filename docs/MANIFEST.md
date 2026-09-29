@@ -108,12 +108,52 @@ Prefer the source operation id when it is stable and unique.
 | `auth` | Define principal, carrier, profile, issuer, audience, and source | Store identifiers and variable names only, never credential values |
 | `retries` | Bound attempts and retryable conditions | Runtime still disables retries when idempotency does not make them safe |
 | `pagination` | Declare how a paginated read is paged (`style`, `cursor_param`, `items_field`, `next_field`, `paging_field`, …) when the spec did not make it inferable; the field names may be nested paths such as `response_metadata.next_cursor` | Carrier parameters are validated against the operation's real inputs; a phantom parameter or a mutation declines with a review note |
-| `params` | Retype an input the source types wrongly, by wire name: `ts: { type: string, pattern: ... }` carries Slack's message timestamp as the string it is instead of a number | Applies to a parameter in any location and a top-level body field; the old type's constraints are dropped and descriptions kept. A name nothing carries declines with a review note |
+| `params` | Retype an input the source types wrongly, by wire name: `ts: { type: string, pattern: ... }` carries Slack's message timestamp as the string it is instead of a number. Or narrow a union input to one alternative with `one_of` (see below) | Applies to a parameter in any location and a top-level body field; a retype drops the old type's constraints and keeps descriptions. A narrowing may only tighten. A name nothing carries, and a narrowing that cannot apply, decline with a review note |
 | `query_policy` | Constrain a raw query passthrough | A policy moves the operation out of `blocked`, not directly to `approved` |
 | `query_schema` | Add catalog-grounded tables, columns, sensitivity, and examples | Documentation input; runtime does not treat it as enforcement |
 | `stream` | Resize a subscription's observation window (`max_events`, `max_seconds`) | Capped at 10,000 events / 300 seconds by AIR's schema; resizes an existing window, never creates one |
 | `state` | Record lifecycle state | Approval must follow inspection and organizational review |
 | `reviewed_by`, `review_reason` | Name who reviewed this entry's `state` and why | Only `oauth2_authorization_code` gates on them: `state: approved` there is refused unless both are non-empty. Every other auth type accepts them into an informational review note only — they never grant anything |
+
+### Narrow a union input to one alternative
+
+Some sources type an input as a `oneOf` or `anyOf` whose alternatives all
+accept the same values. Confluence's v2 page write types `body` as
+`oneOf[PageBodyWrite, PageNestedBodyWrite]`, and both are open objects, so a
+strict `oneOf` refuses every body, including the
+`{"representation": "storage", "value": "..."}` the service accepts. A
+`params` entry with `one_of` picks the alternative the service reads:
+
+```yaml
+operations:
+  createPage:
+    params:
+      body:
+        one_of: PageBodyWrite          # or '#/components/schemas/PageBodyWrite', or 0
+        properties:
+          representation: { enum: [storage] }
+        required: [representation, value]
+        additional_properties: false   # optional
+```
+
+| Key | Meaning |
+| --- | --- |
+| `one_of` | The alternative, by the component name it was declared as (a `$ref` works too; only its tail is read), by its `title`, or by its zero-based index in the union |
+| `properties.<name>.enum` | Limit a property the alternative declares to some of the values it already allows |
+| `required` | Properties of the alternative that must be present; added to any it already requires |
+| `additional_properties` | Only `false`: close the alternative to the properties it declares |
+
+The narrowing can only tighten. An enum value the alternative does not allow,
+a property or requirement it does not declare, an input that is not a union,
+or an alternative that does not exist each leave the input as the source typed
+it and add a review note that says why. Where the input appears more than once
+(a parameter and its body projection), every copy is narrowed or none is.
+
+The narrowed schema is what AIR records, so the MCP tool's input schema, the
+simulator's request validation, and the generated SDK types of a narrowed
+parameter all agree. Operations the entry does not name keep their union. The entry is part of the `params` overlay predicate: two
+overlays that narrow the same operation's inputs differently raise a conflict
+rather than resolving by order.
 
 ## Idempotency strategies
 
