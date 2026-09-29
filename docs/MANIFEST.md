@@ -150,8 +150,8 @@ it and add a review note that says why. Where the input appears more than once
 (a parameter and its body projection), every copy is narrowed or none is.
 
 The narrowed schema is what AIR records, so the MCP tool's input schema, the
-simulator's request validation, and the generated SDK types of a narrowed
-parameter all agree. Operations the entry does not name keep their union. The entry is part of the `params` overlay predicate: two
+simulator's value validation (`anvil simulate serve --validate-values`), and
+the generated SDK types of a narrowed parameter all agree. Operations the entry does not name keep their union. The entry is part of the `params` overlay predicate: two
 overlays that narrow the same operation's inputs differently raise a conflict
 rather than resolving by order.
 

@@ -34,6 +34,11 @@ export interface TraceEntry {
   headers?: Record<string, string>;
   /** What Anvil dropped from the provider's answer, and why; absent when nothing was. */
   warnings?: string[];
+  /**
+   * `true` when the simulator checked the call's values against their declared
+   * schemas (`--validate-values`); absent when it checked required presence only.
+   */
+  validateValues?: true;
 }
 
 /** Where trace entries go. */

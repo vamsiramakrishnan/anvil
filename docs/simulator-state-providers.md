@@ -56,6 +56,7 @@ protocol sends it, so any HTTP client of the real API can target it:
 | `--principal <id>` | Principal for requests that name none (default: the profile holding every scope, `admin`) |
 | `--page-size <n>` | Page size when the contract lets Anvil derive none |
 | `--trace <file>` | Append one JSON line per call |
+| `--validate-values` | Also refuse a provider-backed call whose values do not match their declared schemas (off by default, see below) |
 | `--protocol-facade` | Serve SOAP, transcoded gRPC, and queue-bridged operations at their synthesized paths over HTTP+JSON (see below) |
 
 ### Which protocols are served
@@ -127,6 +128,19 @@ compile costs for five vendor specs are in
   Microsoft's converter (`x-ms-docs-operation-type: action`), which Microsoft
   Graph binds in any case: `destinationId`, as Graph's documentation sends
   it, reaches the provider as the declared `DestinationId`.
+- **Required inputs.** A provider-backed call missing a required parameter,
+  body field, or required body is a `400` with `validation_error`, and the
+  provider is not asked.
+- **Values.** Not checked by default. Vendor contracts often mark as required
+  what the service does not need (Microsoft Graph's generated schemas require
+  `@odata.type`, for one), so a simulator that enforced every declared
+  constraint would refuse calls the real service accepts. With
+  `--validate-values` (`validateValues: true` on `SimulatorOptions`), each
+  parameter, body field, or whole body is also checked against the schema
+  AIR declares for it, the same one the MCP server publishes, and a mismatch
+  is a `400` with `validation_error` before the provider is asked. A page
+  size is still clamped rather than refused. Each trace entry then carries
+  `"validateValues": true`.
 - **Cookies.** Declared cookie parameters are read from the `Cookie` header.
 - **Faults.** `X-Anvil-Fault: throttle | outage | conflict | slow` activates a
   named fault scenario for that request.
@@ -453,6 +467,7 @@ failure is reported on stderr, and the response carries an
 | `status`, `response` | The final HTTP status and body |
 | `headers` | The response headers the provider set and Anvil served, when there were any |
 | `warnings` | What Anvil dropped from the provider's answer and why (an undeclared header), when anything was |
+| `validateValues` | `true` when the call's values were checked against their declared schemas (`--validate-values`); absent otherwise |
 
 ## In process (TypeScript)
 

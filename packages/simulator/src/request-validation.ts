@@ -1,9 +1,11 @@
 /**
- * The simulator's request validation: a call must carry every required input
- * (`missingRequired`), and each value it carries must satisfy the schema the
- * operation declares for it. The schema is the one AIR records, the same one
- * the MCP server publishes and validates against, so a value one surface
- * refuses is never one the simulator serves.
+ * The simulator's opt-in value validation (`SimulatorOptions.validateValues`,
+ * `anvil simulate serve --validate-values`): a call must carry every required
+ * input (`missingRequired`), and each value it carries must satisfy the schema
+ * the operation declares for it. The schema is the one AIR records, the same
+ * one the MCP server publishes and validates against. It is off by default
+ * because vendor contracts often mark as required what the service does not
+ * need, and the simulator must not be stricter than the service.
  */
 import {
   agentPropKey,

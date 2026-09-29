@@ -1,14 +1,29 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AirDocument, Operation } from "@anvil/air";
 import { approveOperations, compile } from "@anvil/compiler";
-import { buildMcpServer, generateSdks } from "@anvil/generators";
+import { buildMcpServer, generateBundle, generateSdks, writeBundle } from "@anvil/generators";
 import { type HttpResponse, MockTransport } from "@anvil/runtime";
 import { Simulator, simulatorDefinitionFor } from "@anvil/simulator";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { beforeAll, describe, expect, it } from "vitest";
+import { startSimulateServe } from "./commands/simulate-serve.js";
+import { bufferIO } from "./io.js";
+
+/** A stdio state provider that accepts every call. */
+const PROVIDER = `
+import { createInterface } from "node:readline";
+const send = (msg) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...msg }) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (msg.method === "initialize") return send({ id: msg.id, result: { protocolVersion: 1 } });
+  if (msg.method === "shutdown") { send({ id: msg.id, result: null }); process.exit(0); }
+  send({ id: msg.id, result: { ok: true, result: { id: "P-1" } } });
+});
+`;
 
 /**
  * A union input narrowed by manifest reaches every projection alike. The
@@ -141,9 +156,10 @@ describe("a union input narrowed by manifest, end to end", () => {
     await client.close();
   });
 
-  it("the simulator agrees with the served tool", async () => {
+  it("the simulator agrees with the served tool when asked to validate values", async () => {
     const sim = new Simulator(air, simulatorDefinitionFor(air), {
       provider: { invoke: () => ({ ok: true, result: { id: "P-1" } }) },
+      validateValues: true,
     });
     const call = (id: string, body: unknown, extra: Record<string, unknown> = {}) =>
       sim.invokeAsync(opNamed(id).mcp.toolName, { body: page(body), ...extra }, { confirm: true });
@@ -156,6 +172,48 @@ describe("a union input narrowed by manifest, end to end", () => {
       ok: false,
       error: { code: "validation_error" },
     });
+  });
+
+  it("anvil simulate serve checks values only with --validate-values, and traces it", async () => {
+    const tmp = mkdtempSync(join(tmpdir(), "anvil-union-serve-"));
+    try {
+      writeBundle(join(tmp, "bundle"), generateBundle(air));
+      writeFileSync(join(tmp, "provider.mjs"), PROVIDER, "utf8");
+      const post = async (validateValues: boolean) => {
+        const io = bufferIO();
+        const trace = join(tmp, `trace-${validateValues}.jsonl`);
+        const started = await startSimulateServe(
+          {
+            contract: join(tmp, "bundle"),
+            providerCmd: `"${process.execPath}" "${join(tmp, "provider.mjs")}"`,
+            trace,
+            ...(validateValues ? { validateValues: true } : {}),
+          },
+          io,
+        );
+        if (!started.ok) throw new Error(io.text());
+        try {
+          const res = await fetch(`${started.http.url}/pages`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(page(NESTED)),
+          });
+          return { status: res.status, entry: JSON.parse(readFileSync(trace, "utf8").trim()) };
+        } finally {
+          await started.close();
+        }
+      };
+      // Default: required presence only, exactly as before; the provider answers.
+      const lenient = await post(false);
+      expect(lenient.status).toBe(200);
+      expect(lenient.entry).not.toHaveProperty("validateValues");
+      // Opted in: the nested form does not match the narrowed alternative.
+      const strict = await post(true);
+      expect(strict.status).toBe(400);
+      expect(strict.entry).toMatchObject({ validateValues: true, normalized: null });
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("the generated SDKs type a narrowed parameter as the alternative it took", () => {

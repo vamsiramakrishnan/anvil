@@ -6,6 +6,7 @@ import { simulatorDefinitionFor } from "./define.js";
 import type { ProviderRequest } from "./provider.js";
 import { invalidRequest } from "./request-validation.js";
 import { Simulator } from "./runtime.js";
+import type { TraceEntry } from "./trace.js";
 
 /**
  * The simulator checks a call's values against the schema AIR declares for
@@ -43,23 +44,51 @@ const opNamed = (id: string) => air.operations.find((o) => o.sourceRef.operation
 const tool = (id: string) => opNamed(id)?.mcp.toolName as string;
 const page = (body: unknown) => ({ body: { spaceId: "S1", title: "Hello", body } });
 
-describe("simulator request validation", () => {
-  it("serves a storage body once the union is narrowed, and refuses the nested form", async () => {
-    const seen: ProviderRequest[] = [];
-    const sim = new Simulator(air, simulatorDefinitionFor(air), {
-      provider: {
-        invoke: (req) => {
-          seen.push(req);
-          return { ok: true, result: { id: "P-1" } };
-        },
+function recording(validateValues: boolean) {
+  const seen: ProviderRequest[] = [];
+  const traced: TraceEntry[] = [];
+  const sim = new Simulator(air, simulatorDefinitionFor(air), {
+    provider: {
+      invoke: (req) => {
+        seen.push(req);
+        return { ok: true, result: { id: "P-1" } };
       },
-    });
+    },
+    trace: { write: (entry) => traced.push(entry) },
+    ...(validateValues ? { validateValues: true } : {}),
+  });
+  return { sim, seen, traced };
+}
+
+describe("simulator request validation", () => {
+  it("with validateValues, serves a storage body once narrowed and refuses the nested form", async () => {
+    const { sim, seen, traced } = recording(true);
     const ok = await sim.invokeAsync(tool("createPage"), page(STORAGE), { confirm: true });
     expect(ok).toMatchObject({ ok: true });
     const refused = await sim.invokeAsync(tool("createPage"), page(NESTED), { confirm: true });
     expect(refused).toMatchObject({ ok: false, error: { code: "validation_error" } });
     // A refused call never reaches the state behind the simulator.
     expect(seen).toHaveLength(1);
+    // The trace records that values were checked.
+    expect(traced.map((e) => e.validateValues)).toEqual([true, true]);
+  });
+
+  it("by default checks required presence only, so an over-strict spec still reaches the provider", async () => {
+    const { sim, seen, traced } = recording(false);
+    // `spaceId` is required by the declared body schema but missing here; the
+    // nested form does not match the narrowed alternative. Neither is refused.
+    const overStrict = { body: { title: "Hello", body: NESTED } };
+    expect(await sim.invokeAsync(tool("createPage"), overStrict, { confirm: true })).toMatchObject({
+      ok: true,
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.body).toEqual(overStrict.body);
+    expect(traced[0]).not.toHaveProperty("validateValues");
+    // A missing required input is still refused, as it always was.
+    expect(await sim.invokeAsync(tool("createPage"), {}, { confirm: true })).toMatchObject({
+      ok: false,
+      error: { code: "validation_error", message: "Missing required request body." },
+    });
   });
 
   it("still refuses every body on the operation the manifest left as a strict oneOf", () => {

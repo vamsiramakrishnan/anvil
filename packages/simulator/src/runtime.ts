@@ -26,6 +26,7 @@ import {
   askProvider,
   initializeParams,
   mapDomainError,
+  missingRequired,
   normalizeRequest,
   type ProviderInitializeParams,
   type ProviderRequest,
@@ -93,6 +94,14 @@ export interface SimulatorOptions {
    * none. Without it, the built-in fixture fallback applies.
    */
   defaultPageSize?: number;
+  /**
+   * Check each value a provider-backed call carries against the schema AIR
+   * declares for it (`invalidRequest`), not only that required inputs are
+   * present. Off by default: vendor contracts often overstate what they
+   * require, so a simulator that enforced every declared constraint would be
+   * stricter than the service it stands in for. Recorded on the trace.
+   */
+  validateValues?: boolean;
 }
 
 /** The full record of one call, as `call` returns it. */
@@ -105,6 +114,8 @@ export interface SimCall {
   result: SimResult;
   /** What Anvil dropped from the provider's answer, and why (an undeclared header). */
   warnings?: string[];
+  /** Present when the call was checked with `validateValues`. */
+  validateValues?: true;
 }
 
 /**
@@ -392,7 +403,14 @@ export class Simulator {
     const seq = this.callIndex;
     const requestId = `r${seq}`;
     const op = this.resolve(toolName);
-    const base = { seq, requestId, operation: op, normalized: null, provider: null };
+    const base = {
+      seq,
+      requestId,
+      operation: op,
+      normalized: null,
+      provider: null,
+      ...(this.options.validateValues ? { validateValues: true as const } : {}),
+    };
     const gate = this.admit(op, toolName, input, ctx);
     if (gate.refused) return { ...base, result: gate.refused };
     const served = op as Operation;
@@ -415,7 +433,9 @@ export class Simulator {
       }
     }
 
-    const invalid = invalidRequest(served, input);
+    const invalid = this.options.validateValues
+      ? invalidRequest(served, input)
+      : missingRequired(served, input);
     if (invalid) {
       return {
         ...base,
@@ -477,6 +497,7 @@ export class Simulator {
       result: call.result,
       status: this.statusFor(call),
       ...(call.warnings ? { warnings: call.warnings } : {}),
+      ...(call.validateValues ? { validateValues: true as const } : {}),
     });
     return call.result;
   }

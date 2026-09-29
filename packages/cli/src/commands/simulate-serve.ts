@@ -25,6 +25,8 @@ export interface SimulateServeOptions {
   pageSize?: string;
   trace?: string;
   protocolFacade?: boolean;
+  /** Check call values against their declared schemas, not only required presence. */
+  validateValues?: boolean;
 }
 
 /**
@@ -39,7 +41,7 @@ export function registerSimulateServe(simulate: Command, ctx: CommandContext): v
       .command("serve")
       .summary("Serve the simulator over HTTP at the contract's paths, optionally provider-backed.")
       .description(
-        "Serves a bundle's approved operations over HTTP at their declared paths and methods, so a generated SDK (base_url) or the generated MCP server (ANVIL_BASE_URL) can target the simulator. Anvil keeps the surface: auth scopes, required idempotency and replay, injected faults (X-Anvil-Fault), page envelopes, and the contract's error statuses. With --provider-cmd, state and query semantics come from a child process speaking JSON-RPC 2.0 over stdio (see docs/simulator-state-providers.md); without it, the built-in seeded store serves. GraphQL operations are served at one endpoint (POST the query document, as the runtime's GraphQL codec does). An operation the server cannot reach over its native protocol is refused at startup. Prints the bound URL on stdout's first line. With --trace, appends one JSON line per call; the trace file is opened before serving, and a later write failure is reported on stderr and in an X-Anvil-Trace-Error header without changing the response.",
+        "Serves a bundle's approved operations over HTTP at their declared paths and methods, so a generated SDK (base_url) or the generated MCP server (ANVIL_BASE_URL) can target the simulator. Anvil keeps the surface: auth scopes, required idempotency and replay, injected faults (X-Anvil-Fault), page envelopes, and the contract's error statuses. With --provider-cmd, state and query semantics come from a child process speaking JSON-RPC 2.0 over stdio (see docs/simulator-state-providers.md); without it, the built-in seeded store serves. GraphQL operations are served at one endpoint (POST the query document, as the runtime's GraphQL codec does). An operation the server cannot reach over its native protocol is refused at startup. A provider-backed call missing a required input is refused; with --validate-values, so is one whose values do not match their declared schemas. Prints the bound URL on stdout's first line. With --trace, appends one JSON line per call; the trace file is opened before serving, and a later write failure is reported on stderr and in an X-Anvil-Trace-Error header without changing the response.",
       )
       .requiredOption("--contract <path>", "generated bundle directory (or its air.yaml)")
       .option(
@@ -57,6 +59,10 @@ export function registerSimulateServe(simulate: Command, ctx: CommandContext): v
       )
       .option("--page-size <n>", "page size when the contract lets Anvil derive none")
       .option("--trace <file>", "append a JSONL call trace to this file")
+      .option(
+        "--validate-values",
+        "refuse a provider-backed call whose values do not match their declared schemas (off by default: vendor specs often overstate what they require); each trace entry records it",
+      )
       .option(
         "--protocol-facade",
         "serve SOAP, transcoded gRPC and queue-bridged operations at their synthesized paths over HTTP+JSON, for clients that declare a protocol facade",
@@ -150,6 +156,7 @@ export async function startSimulateServe(
     ...(provider ? { provider } : {}),
     ...(trace ? { trace } : {}),
     ...(pageSize ? { defaultPageSize: pageSize } : {}),
+    ...(opts.validateValues ? { validateValues: true } : {}),
   });
   const principal =
     opts.principal ??
