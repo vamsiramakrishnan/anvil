@@ -55,7 +55,7 @@ export function stampAlternatives(source: unknown, resolved: Schema): void {
 }
 
 /** A JSON scalar a narrowed property may be limited to. */
-export type AlternativeValue = string | number | boolean | null;
+type AlternativeValue = string | number | boolean | null;
 
 /** The manifest's narrowing of one union input; see `ManifestParams`. */
 export interface AlternativeNarrowing {

@@ -37,7 +37,7 @@ const opNamed = (air: AirDocument, id: string) =>
   air.operations.find((o) => o.sourceRef.operationId === id) as Operation;
 
 const bodyProp = (op: Operation) =>
-  (op.input.body?.schema.properties as Record<string, Record<string, unknown>>).body;
+  (op.input.body?.schema.properties as Record<string, Record<string, unknown>> | undefined)?.body;
 
 const notes = (op: Operation) => op.reviewNotes.join("\n");
 
@@ -57,8 +57,10 @@ describe("manifest params: narrowing a union to one alternative", () => {
       "Input 'body' narrowed by manifest to oneOf[0] (PageBodyWrite).",
     );
     // The assembled input schema every surface reads carries the narrowed body.
-    const served = (create.input.schema?.properties as Record<string, Record<string, unknown>>)
-      .body;
+    const inputProps = create.input.schema?.properties as
+      | Record<string, Record<string, unknown>>
+      | undefined;
+    const served = inputProps?.body;
     expect(JSON.stringify(served)).not.toContain("PageNestedBodyWrite");
     expect(JSON.stringify(served)).toContain('"enum":["storage"]');
   });
