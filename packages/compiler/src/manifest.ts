@@ -419,7 +419,7 @@ export const OperationManifest = z.strictObject({
   async_contract: ManifestAsyncContract.optional(),
   /** How a paginated read is paged; see `ManifestPagination`. */
   pagination: ManifestPagination.optional(),
-  /** Retype inputs the source types wrongly, by wire name; see `ManifestParams`. */
+  /** Retype or narrow inputs the source types wrongly, by wire name; see `ManifestParams`. */
   params: ManifestParams.optional(),
   /**
    * Resize a subscription's observation window. Only the ceilings are

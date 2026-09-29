@@ -5,8 +5,9 @@
  * wire is described, and each declines with a review note rather than bind
  * to an input the operation does not have.
  */
-import type { Operation } from "@anvil/air";
+import { type Operation, operationInputSchema } from "@anvil/air";
 import { z } from "zod";
+import { type AlternativeNarrowing, narrowToAlternative } from "./schema-alternatives.js";
 
 /**
  * Declare how a paginated read is paged, when the spec did not make it
@@ -29,22 +30,46 @@ export const ManifestPagination = z.strictObject({
 export type ManifestPagination = z.infer<typeof ManifestPagination>;
 
 /**
- * Retype an input the source types wrongly, by its wire name: a query, path,
- * header, or cookie parameter, or a top-level body field. Slack's contract
- * types a message timestamp (`chat.delete`'s `ts`, `"1700000000.123400"`) as
- * a number, so it would travel as a float and lose its trailing zeros; the
- * timestamp is an id and must be carried as the string it is. The new type
- * replaces the old one with its type-specific constraints; descriptions are
- * kept.
+ * Retype an input the source types wrongly. Slack's contract types a message
+ * timestamp (`chat.delete`'s `ts`, `"1700000000.123400"`) as a number, so it
+ * would travel as a float and lose its trailing zeros; the timestamp is an id
+ * and must be carried as the string it is. The new type replaces the old one
+ * with its type-specific constraints; descriptions are kept.
  */
-export const ManifestParams = z.record(
-  z.string(),
-  z.strictObject({
-    type: z.enum(["string", "number", "integer", "boolean"]),
-    format: z.string().optional(),
-    pattern: z.string().optional(),
-  }),
-);
+const ManifestRetype = z.strictObject({
+  type: z.enum(["string", "number", "integer", "boolean"]),
+  format: z.string().optional(),
+  pattern: z.string().optional(),
+});
+
+/**
+ * Narrow a union input (`oneOf`/`anyOf`) to one alternative, tighten-only.
+ * Confluence's v2 page write types `body` as `oneOf[PageBodyWrite,
+ * PageNestedBodyWrite]` and both accept any object, so a strict `oneOf`
+ * refuses every body. `one_of` names the alternative the service reads, by
+ * component name (or a `$ref` whose tail is one) or by branch index; the rest
+ * may only tighten it (`schema-alternatives.ts`).
+ */
+const ManifestAlternative = z.strictObject({
+  one_of: z.union([z.string().min(1), z.number().int().nonnegative()]),
+  properties: z
+    .record(
+      z.string(),
+      z.strictObject({
+        enum: z.array(z.union([z.string(), z.number(), z.boolean(), z.null()])).min(1),
+      }),
+    )
+    .optional(),
+  required: z.array(z.string()).min(1).optional(),
+  additional_properties: z.literal(false).optional(),
+});
+
+/**
+ * Correct how an input is typed, by its wire name: a query, path, header, or
+ * cookie parameter, or a top-level body field. Either a scalar retype
+ * (`type`) or a narrowing of a union to one alternative (`one_of`).
+ */
+export const ManifestParams = z.record(z.string(), z.union([ManifestRetype, ManifestAlternative]));
 export type ManifestParams = z.infer<typeof ManifestParams>;
 
 function note(op: Operation, text: string): void {
@@ -103,23 +128,78 @@ export function applyPaginationPatch(op: Operation, pagination: ManifestPaginati
 }
 
 /**
- * Retype inputs by wire name. A name that matches nothing declines with the
- * reason rather than inventing an input the wire never carries.
+ * Retype or narrow inputs by wire name. A name that matches nothing, and a
+ * narrowing that cannot apply everywhere the input appears, decline with the
+ * reason rather than inventing an input or loosening one.
  */
 export function applyParamsPatch(op: Operation, params: ManifestParams): void {
-  for (const [name, retype] of Object.entries(params)) {
-    const retyped = retypeInput(op, name, retype);
+  for (const [name, patch] of Object.entries(params)) {
+    if ("one_of" in patch) {
+      note(op, narrowInput(op, name, patch));
+      continue;
+    }
+    const retyped = retypeInput(op, name, patch);
     note(
       op,
       retyped
-        ? `Input '${name}' retyped by manifest: ${retyped} → ${retype.type}.`
-        : `params manifest patch for '${name}' left unset: the operation has no parameter ` +
-            "or top-level body field of that name.",
+        ? `Input '${name}' retyped by manifest: ${retyped} → ${patch.type}.`
+        : unmatched(name),
     );
   }
+  // An operation that already carries its assembled input schema (one
+  // re-enriched after compile) must not serve the schema from before.
+  if (op.input.schema !== undefined) op.input.schema = operationInputSchema(op);
 }
 
-type Retype = ManifestParams[string];
+const unmatched = (name: string) =>
+  `params manifest patch for '${name}' left unset: the operation has no parameter ` +
+  "or top-level body field of that name.";
+
+type Retype = z.infer<typeof ManifestRetype>;
+
+/** Every schema slot that carries the input `name`, as a getter/setter pair. */
+function inputSlots(op: Operation, name: string) {
+  const slots: { schema: Record<string, unknown>; set: (s: Record<string, unknown>) => void }[] =
+    [];
+  for (const param of op.input.params) {
+    if (param.name === name)
+      slots.push({ schema: param.schema ?? {}, set: (s) => (param.schema = s) });
+  }
+  const body = op.input.body;
+  if (!body) return slots;
+  for (const field of body.fields) {
+    if (field.name === name)
+      slots.push({ schema: field.schema ?? {}, set: (s) => (field.schema = s) });
+  }
+  const props = body.schema.properties;
+  const prop = isObject(props) ? props[name] : undefined;
+  if (isObject(props) && isObject(prop))
+    slots.push({ schema: prop, set: (s) => (props[name] = s) });
+  return slots;
+}
+
+/**
+ * Narrow every slot carrying `name` to the same alternative, or none of them:
+ * a parameter and its body projection that disagreed would be two contracts.
+ */
+function narrowInput(op: Operation, name: string, narrowing: AlternativeNarrowing): string {
+  const slots = inputSlots(op, name);
+  if (slots.length === 0) return unmatched(name);
+  const results = slots.map((slot) => narrowToAlternative(slot.schema, narrowing));
+  const refused = results.find((r) => !r.ok);
+  if (refused && !refused.ok) {
+    return `params manifest patch for '${name}' left unset: ${refused.reason}.`;
+  }
+  let alternative = "";
+  slots.forEach((slot, i) => {
+    const result = results[i];
+    if (result?.ok) {
+      slot.set(result.schema);
+      alternative = result.alternative;
+    }
+  });
+  return `Input '${name}' narrowed by manifest to ${alternative}.`;
+}
 
 /** Keywords that describe a value without constraining its type; they survive a retype. */
 const TYPE_NEUTRAL_KEYWORDS = new Set([
@@ -156,25 +236,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
  */
 function retypeInput(op: Operation, name: string, retype: Retype): string | undefined {
   let previous: string | undefined;
-  const typeOf = (schema: Record<string, unknown> | undefined) =>
-    typeof schema?.type === "string" ? schema.type : "untyped";
-  for (const param of op.input.params) {
-    if (param.name !== name) continue;
-    previous ??= typeOf(param.schema);
-    param.schema = retypedSchema(param.schema ?? {}, retype);
-  }
-  const body = op.input.body;
-  if (!body) return previous;
-  for (const field of body.fields) {
-    if (field.name !== name) continue;
-    previous ??= typeOf(field.schema);
-    field.schema = retypedSchema(field.schema ?? {}, retype);
-  }
-  const props = body.schema.properties;
-  const prop = isObject(props) ? props[name] : undefined;
-  if (isObject(props) && isObject(prop)) {
-    previous ??= typeOf(prop);
-    props[name] = retypedSchema(prop, retype);
+  for (const slot of inputSlots(op, name)) {
+    previous ??= typeof slot.schema.type === "string" ? slot.schema.type : "untyped";
+    slot.set(retypedSchema(slot.schema, retype));
   }
   return previous;
 }

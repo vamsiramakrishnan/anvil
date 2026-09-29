@@ -45,6 +45,7 @@ import {
   profileSelects,
   selectableOf,
 } from "./profile.js";
+import { stripComponentNames } from "./schema-alternatives.js";
 import { DEFAULT_SCHEMA_BOUNDS } from "./schema-bounds.js";
 import { type CompilerSource, ephemeralCompilerSource } from "./source/compiler-source.js";
 import { validate } from "./validate.js";
@@ -482,8 +483,10 @@ async function buildAir(
     ]),
   ].sort();
 
-  // Attach the assembled input JSON Schema to each operation.
+  // Every manifest, overlay and auth patch has run: drop the union member
+  // names they could select by, then attach the assembled input JSON Schema.
   for (const op of operations) {
+    stripComponentNames(op);
     op.input.schema = operationInputSchema(op);
   }
 

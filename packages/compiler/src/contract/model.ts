@@ -118,8 +118,8 @@ export const SemanticPredicate = z.enum([
   // predicate for the same reason as `asyncContract`: the window is one shape,
   // and two overlays each supplying half of it was never a coherent pair.
   "stream",
-  // input retypes by wire name — one combined predicate, the manifest's
-  // `params` map as written
+  // input retypes and union narrowings by wire name — one combined
+  // predicate, the manifest's `params` map as written
   "params",
   // catalog-derived schema knowledge (harness-supplied; skill-card context)
   "querySchema",

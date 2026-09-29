@@ -6,6 +6,7 @@ import {
   DEFAULT_MAX_SCHEMA_NODES,
   materializeSchema,
 } from "./decycle.js";
+import { COMPONENT_NAME_KEYWORD } from "./schema-alternatives.js";
 
 describe("bundleDocument", () => {
   it("leaves an acyclic, shallow document untouched", () => {
@@ -827,5 +828,39 @@ describe("materializeSchema", () => {
     const noBudget = materializeSchema(ref, namedSchemas, 1, Number.MAX_SAFE_INTEGER);
     expect(withBudget.schema).toEqual(noBudget.schema);
     expect(withBudget.nodeBudgetLimitedAt).toEqual([]);
+  });
+
+  const unionNamed = {
+    Flat: { type: "object", properties: { value: { type: "string" } } },
+    Nested: { type: "object", properties: { storage: { $ref: "#/components/schemas/Flat" } } },
+  };
+  const unionSchema = {
+    type: "object",
+    properties: {
+      body: {
+        oneOf: [{ $ref: "#/components/schemas/Flat" }, { $ref: "#/components/schemas/Nested" }],
+      },
+      plain: { $ref: "#/components/schemas/Flat" },
+    },
+  };
+
+  it("names no union alternative unless asked to", () => {
+    const { schema } = materializeSchema(unionSchema, unionNamed, 3);
+    expect(JSON.stringify(schema)).not.toContain(COMPONENT_NAME_KEYWORD);
+  });
+
+  it("stamps a union alternative with the component it was declared as, and nothing else", () => {
+    const namedSchemas = unionNamed;
+    const { schema } = materializeSchema(unionSchema, namedSchemas, 3, undefined, {
+      nameAlternatives: true,
+    });
+    const props = (schema as { properties: Record<string, Record<string, unknown>> }).properties;
+    const branches = props.body?.oneOf as Record<string, unknown>[];
+    expect(branches.map((b) => b[COMPONENT_NAME_KEYWORD])).toEqual(["Flat", "Nested"]);
+    // A property reached by `$ref` is not an alternative; it stays as declared,
+    // and the shared memoized body is never mutated by the stamp.
+    expect(props.plain).toEqual(namedSchemas.Flat);
+    const nested = branches[1]?.properties as Record<string, Record<string, unknown>> | undefined;
+    expect(nested?.storage?.[COMPONENT_NAME_KEYWORD]).toBeUndefined();
   });
 });

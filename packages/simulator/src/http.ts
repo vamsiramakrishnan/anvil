@@ -536,6 +536,7 @@ export async function serveSimulatorHttp(
         response: responseBody,
         ...(Object.keys(providerSet).length > 0 ? { headers: providerSet } : {}),
         ...(warnings.length > 0 ? { warnings } : {}),
+        ...(call.validateValues ? { validateValues: true as const } : {}),
       },
       options.onTraceError,
     );
