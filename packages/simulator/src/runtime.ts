@@ -26,7 +26,6 @@ import {
   askProvider,
   initializeParams,
   mapDomainError,
-  missingRequired,
   normalizeRequest,
   type ProviderInitializeParams,
   type ProviderRequest,
@@ -36,6 +35,7 @@ import {
   successStatus,
   type WireError,
 } from "./provider.js";
+import { invalidRequest } from "./request-validation.js";
 import { Rng } from "./rng.js";
 import { synthesizeBody } from "./synthesize.js";
 import { TRACE_SCHEMA, type TraceSink, writeTrace } from "./trace.js";
@@ -415,7 +415,7 @@ export class Simulator {
       }
     }
 
-    const invalid = missingRequired(served, input);
+    const invalid = invalidRequest(served, input);
     if (invalid) {
       return {
         ...base,
