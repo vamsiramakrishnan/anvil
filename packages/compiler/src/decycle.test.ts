@@ -830,24 +830,30 @@ describe("materializeSchema", () => {
     expect(withBudget.nodeBudgetLimitedAt).toEqual([]);
   });
 
-  it("stamps a union alternative with the component it was declared as, and nothing else", () => {
-    const namedSchemas = {
-      Flat: { type: "object", properties: { value: { type: "string" } } },
-      Nested: { type: "object", properties: { storage: { $ref: "#/components/schemas/Flat" } } },
-    };
-    const { schema } = materializeSchema(
-      {
-        type: "object",
-        properties: {
-          body: {
-            oneOf: [{ $ref: "#/components/schemas/Flat" }, { $ref: "#/components/schemas/Nested" }],
-          },
-          plain: { $ref: "#/components/schemas/Flat" },
-        },
+  const unionNamed = {
+    Flat: { type: "object", properties: { value: { type: "string" } } },
+    Nested: { type: "object", properties: { storage: { $ref: "#/components/schemas/Flat" } } },
+  };
+  const unionSchema = {
+    type: "object",
+    properties: {
+      body: {
+        oneOf: [{ $ref: "#/components/schemas/Flat" }, { $ref: "#/components/schemas/Nested" }],
       },
-      namedSchemas,
-      3,
-    );
+      plain: { $ref: "#/components/schemas/Flat" },
+    },
+  };
+
+  it("names no union alternative unless asked to", () => {
+    const { schema } = materializeSchema(unionSchema, unionNamed, 3);
+    expect(JSON.stringify(schema)).not.toContain(COMPONENT_NAME_KEYWORD);
+  });
+
+  it("stamps a union alternative with the component it was declared as, and nothing else", () => {
+    const namedSchemas = unionNamed;
+    const { schema } = materializeSchema(unionSchema, namedSchemas, 3, undefined, {
+      nameAlternatives: true,
+    });
     const props = (schema as { properties: Record<string, Record<string, unknown>> }).properties;
     const branches = props.body?.oneOf as Record<string, unknown>[];
     expect(branches.map((b) => b[COMPONENT_NAME_KEYWORD])).toEqual(["Flat", "Nested"]);

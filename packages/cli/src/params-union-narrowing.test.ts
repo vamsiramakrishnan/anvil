@@ -73,6 +73,32 @@ async function served() {
 }
 
 describe("a union input narrowed by manifest, end to end", () => {
+  it("an unnarrowed compile publishes no union member name in AIR or the MCP tool list", async () => {
+    const plain = await compile({ spec: SPEC, serviceId: "pages" });
+    const doc = approveOperations(
+      plain,
+      plain.operations.map((o) => o.id),
+    );
+    expect(JSON.stringify(doc)).not.toContain("x-anvil-component");
+    const server = buildMcpServer(doc, {
+      contextFor: () => ({
+        transport: new MockTransport(() => ok({})),
+        serviceId: doc.service.id,
+        baseUrl: "https://pages.example.com/wiki/api/v2",
+        allowedHosts: ["pages.example.com"],
+        env: "dev",
+      }),
+    });
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair();
+    await server.connect(serverT);
+    const client = new Client({ name: "test", version: "0" }, { capabilities: {} });
+    await client.connect(clientT);
+    const tools = await client.listTools();
+    expect(JSON.stringify(tools)).toContain("oneOf");
+    expect(JSON.stringify(tools)).not.toContain("x-anvil-component");
+    await client.close();
+  });
+
   it("AIR records the narrowing and leaves the unnamed operation's union alone", () => {
     expect(opNamed("createPage").reviewNotes).toContain(
       "Input 'body' narrowed by manifest to oneOf[0] (PageBodyWrite).",
@@ -93,6 +119,9 @@ describe("a union input narrowed by manifest, end to end", () => {
     // A one-value enum is re-emitted by the SDK as the equivalent `const`.
     expect(schemaOf("createPage")).toContain('"const":"storage"');
     expect(schemaOf("updatePage")).toContain("oneOf");
+    // Union member names are compile-time bookkeeping: no published schema,
+    // narrowed or not, carries one.
+    expect(JSON.stringify(tools)).not.toContain("x-anvil-component");
 
     const call = (id: string, body: unknown, extra: Record<string, unknown> = {}) =>
       client.callTool({

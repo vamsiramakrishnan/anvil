@@ -747,6 +747,7 @@ interface Budget {
   spent: boolean;
   /** See `MaterializeOptions.inheritAllOf`. */
   inheritAllOf: boolean;
+  nameAlternatives: boolean;
 }
 
 export interface MaterializeOptions {
@@ -759,6 +760,8 @@ export interface MaterializeOptions {
    * them, were cut to a stub. The ancestor guard still stops a cycle.
    */
   inheritAllOf?: boolean;
+  /** Stamp `$ref` union members with their name (`stampAlternatives`); compile strips it. */
+  nameAlternatives?: boolean;
 }
 
 /**
@@ -788,7 +791,8 @@ export function materializeSchema(
   // document although `bundleDocument` had already deduplicated them once.
   const resolved = new Map<string, { refDepth: number; value: unknown }>();
   const inheritAllOf = options.inheritAllOf === true;
-  const budget: Budget = { count: 0, max: maxNodes, spent: false, inheritAllOf };
+  const nameAlternatives = options.nameAlternatives === true;
+  const budget: Budget = { count: 0, max: maxNodes, spent: false, inheritAllOf, nameAlternatives };
   const result = resolveRefs(
     schema,
     namedSchemas,
@@ -910,7 +914,7 @@ function resolveRefs(
       !inSchemaMap && SCHEMA_MAP_KEYS.has(k),
     );
   }
-  if (!inSchemaMap) stampAlternatives(node, obj);
+  if (budget.nameAlternatives && !inSchemaMap) stampAlternatives(node, obj);
   if (budget.inheritAllOf && !inSchemaMap && Array.isArray(obj.allOf)) {
     return flattenInheritance(obj) ?? obj;
   }

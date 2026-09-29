@@ -68,12 +68,22 @@ describe("manifest params: narrowing a union to one alternative", () => {
   it("leaves an operation the manifest does not name exactly as the source typed it", async () => {
     const air = await compiled(["  createPage:", "    params:", ...STORAGE]);
     const update = opNamed(air, "updatePage");
-    const alternatives = bodyProp(update)?.oneOf as Record<string, unknown>[];
-    expect(alternatives.map((a) => a["x-anvil-component"])).toEqual([
-      "PageBodyWrite",
-      "PageNestedBodyWrite",
-    ]);
+    expect(bodyProp(update)?.oneOf).toHaveLength(2);
     expect(notes(update)).not.toContain("narrowed");
+  });
+
+  it("writes no union member name into AIR, with or without a manifest", async () => {
+    // The name is bookkeeping for selecting an alternative while patches
+    // apply; nothing an agent or client reads may carry it.
+    const plain = await compile({ spec: SPEC, serviceId: "pages" });
+    expect(JSON.stringify(plain)).not.toContain("x-anvil-component");
+    const narrowed = await compiled(["  createPage:", "    params:", ...STORAGE]);
+    expect(JSON.stringify(narrowed)).not.toContain("x-anvil-component");
+    expect(JSON.stringify(bodyProp(opNamed(narrowed, "createPage")))).not.toContain(
+      "x-anvil-component",
+    );
+    // The name the narrowing selected by survives only in its review note.
+    expect(notes(opNamed(narrowed, "createPage"))).toContain("(PageBodyWrite)");
   });
 
   it("names the same alternative by $ref, by index, or by component name alike", async () => {

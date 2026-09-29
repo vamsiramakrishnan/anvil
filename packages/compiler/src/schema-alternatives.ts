@@ -54,6 +54,22 @@ export function stampAlternatives(source: unknown, resolved: Schema): void {
   }
 }
 
+/**
+ * Remove every component-name stamp from an operation, in place. The stamp is
+ * bookkeeping for naming an alternative while manifests and overlays apply;
+ * nothing an agent or client reads (AIR, the MCP input schema, the simulator,
+ * SDKs, skills) may carry it. Compile calls this once every patch has run.
+ */
+export function stripComponentNames(value: unknown): void {
+  if (Array.isArray(value)) {
+    for (const item of value) stripComponentNames(item);
+    return;
+  }
+  if (!isObject(value)) return;
+  delete value[COMPONENT_NAME_KEYWORD];
+  for (const child of Object.values(value)) stripComponentNames(child);
+}
+
 /** A JSON scalar a narrowed property may be limited to. */
 type AlternativeValue = string | number | boolean | null;
 

@@ -47,7 +47,9 @@ export function materializeWithin(
   namedSchemas: Record<string, unknown>,
   bounds: SchemaBounds = DEFAULT_SCHEMA_BOUNDS,
 ): MaterializeResult {
-  const options = { inheritAllOf: bounds.inheritAllOf };
+  // Operation schemas carry union member names only until compile has applied
+  // the manifest; `stripComponentNames` removes them before AIR is written.
+  const options = { inheritAllOf: bounds.inheritAllOf, nameAlternatives: true };
   if (bounds.fitToBudget) {
     for (let depth = bounds.maxRefDepth; depth > 1; depth--) {
       const attempt = materializeSchema(
