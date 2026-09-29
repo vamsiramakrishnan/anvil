@@ -1,0 +1,82 @@
+# A page-write excerpt shaped like Confluence's v2 contract: `body` is a oneOf
+# of two alternatives that both accept any object, so a strict oneOf refuses
+# every body. The manifest `params.body.one_of` narrowing is exercised against it.
+openapi: 3.0.3
+info: { title: Pages, version: "2.0.0" }
+servers:
+  - url: https://pages.example.com/wiki/api/v2
+paths:
+  /pages:
+    get:
+      operationId: getPages
+      parameters:
+        - name: body-format
+          in: query
+          schema:
+            oneOf:
+              - { type: string, enum: [storage, atlas_doc_format, view] }
+              - { type: integer }
+      responses:
+        "200":
+          description: The pages.
+          content:
+            application/json:
+              schema: { type: object, properties: { results: { type: array, items: { type: object } } } }
+    post:
+      operationId: createPage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PageWrite" }
+      responses:
+        "200":
+          description: The created page.
+          content:
+            application/json:
+              schema: { type: object, properties: { id: { type: string } } }
+  /pages/{id}:
+    put:
+      operationId: updatePage
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PageWrite" }
+      responses:
+        "200":
+          description: The updated page.
+          content:
+            application/json:
+              schema: { type: object, properties: { id: { type: string } } }
+components:
+  schemas:
+    PageWrite:
+      type: object
+      required: [spaceId, title]
+      properties:
+        spaceId: { type: string }
+        title: { type: string }
+        body:
+          oneOf:
+            - $ref: "#/components/schemas/PageBodyWrite"
+            - $ref: "#/components/schemas/PageNestedBodyWrite"
+    PageBodyWrite:
+      type: object
+      properties:
+        representation:
+          type: string
+          enum: [storage, atlas_doc_format, wiki]
+          description: Type of content representation used for the value field.
+        value:
+          type: string
+          description: Body of the page, in the format found in the representation field.
+    PageNestedBodyWrite:
+      type: object
+      description: Body of the page. Only one body format should be specified as the property for this object.
+      properties:
+        storage: { $ref: "#/components/schemas/PageBodyWrite" }
+        atlas_doc_format: { $ref: "#/components/schemas/PageBodyWrite" }
+        wiki: { $ref: "#/components/schemas/PageBodyWrite" }

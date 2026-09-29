@@ -113,8 +113,9 @@ export const CONTRACT_SAFETY_PREDICATES: ReadonlySet<SemanticPredicate> =
     // Same contested-only footing: how long a connection may be held open is a
     // resource-safety fact two overlays must not settle by array order.
     "stream",
-    // What type an input travels as is a wire fact; two overlays that retype
-    // it differently must not be settled by array order either.
+    // What type an input travels as, and which alternative of a union it
+    // takes, are wire facts; two overlays that retype or narrow it differently
+    // must not be settled by array order either.
     "params",
   ]);
 
@@ -246,7 +247,7 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
     // owns the "resize, never create" rule against the compiled contract.
     if (m.pagination) assertions.push(set(ref, "pagination", m.pagination));
     if (m.stream) assertions.push(set(ref, "stream", m.stream));
-    // Input retypes, carried verbatim — `applyOperationManifest` owns matching
+    // Input retypes and narrowings, carried verbatim — `applyOperationManifest` owns matching
     // each wire name against the compiled inputs.
     if (m.params) assertions.push(set(ref, "params", m.params));
 

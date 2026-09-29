@@ -134,7 +134,10 @@ function admits(property: Schema, value: AlternativeValue): boolean {
   return declared.length === 0 || declared.some((t) => TYPE_OF[t]?.(value) ?? false);
 }
 
-function tighten(branch: Schema, narrowing: AlternativeNarrowing): Schema | { reason: string } {
+function tighten(
+  branch: Schema,
+  narrowing: AlternativeNarrowing,
+): { schema: Schema } | { reason: string } {
   const out: Schema = { ...branch };
   const declared = isObject(branch.properties) ? branch.properties : {};
   const narrowedProps: Schema = { ...declared };
@@ -153,7 +156,7 @@ function tighten(branch: Schema, narrowing: AlternativeNarrowing): Schema | { re
     }
     narrowedProps[name] = { ...property, enum: [...values] };
   }
-  if (narrowing.properties) out.properties = narrowedProps;
+  if (Object.keys(narrowing.properties ?? {}).length > 0) out.properties = narrowedProps;
   if (narrowing.required) {
     const unknown = narrowing.required.filter((name) => !isObject(declared[name]));
     if (unknown.length > 0) {
@@ -165,7 +168,7 @@ function tighten(branch: Schema, narrowing: AlternativeNarrowing): Schema | { re
     out.required = [...new Set([...existing, ...narrowing.required])];
   }
   if (narrowing.additional_properties === false) out.additionalProperties = false;
-  return out;
+  return { schema: out };
 }
 
 /**
@@ -179,8 +182,9 @@ export function narrowToAlternative(schema: Schema, narrowing: AlternativeNarrow
   if (!keyword) return { ok: false, reason: "the input is not a oneOf/anyOf union" };
   const picked = pick(schema[keyword] as unknown[], keyword, narrowing.one_of);
   if ("reason" in picked) return { ok: false, reason: picked.reason };
-  const branch = tighten(picked.branch, narrowing);
-  if ("reason" in branch) return { ok: false, reason: branch.reason };
+  const tightened = tighten(picked.branch, narrowing);
+  if ("reason" in tightened) return { ok: false, reason: tightened.reason };
+  const branch = tightened.schema;
 
   const { [keyword]: _union, discriminator: _discriminator, ...siblings } = schema;
   const clash = Object.keys(branch).some(
