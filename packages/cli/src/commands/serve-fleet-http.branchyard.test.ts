@@ -130,6 +130,8 @@ interface Yard {
   upstream: Upstream;
   tokens: Awaited<ReturnType<typeof mockTokenEndpoint>>;
   mint(grants: unknown[], extra?: Record<string, unknown>): string;
+  /** The person's connect token, as `by connect` mints it. */
+  connectToken(extra?: Record<string, unknown>): string;
 }
 
 const ISSUER = "branchyard:local:test";
@@ -210,7 +212,9 @@ async function yard(port: number, opts: { singleBundle?: boolean } = {}): Promis
       by_grants: grants,
       ...extra,
     });
-  return { root, workspace, env, auditFile, upstream, tokens, mint };
+  const connectToken = (extra: Record<string, unknown> = {}) =>
+    mint([], { by_branch: "", by_turn: "", by_purpose: "connect", ...extra });
+  return { root, workspace, env, auditFile, upstream, tokens, mint, connectToken };
 }
 
 function signToken(key: KeyObject, claims: Record<string, unknown>): string {
@@ -338,8 +342,12 @@ describe("the Branchyard gateway", () => {
     await startGateway(y, port);
     const token = y.mint(githubRead);
     expect(
-      (await post(port, "/connect/api-key", token, { connector: "github", api_key: "pat-1" }))
-        .status,
+      (
+        await post(port, "/connect/api-key", y.connectToken(), {
+          connector: "github",
+          api_key: "pat-1",
+        })
+      ).status,
     ).toBe(200);
     const mcp = await client(port, token);
     const denied = await mcp.callTool({
@@ -386,7 +394,7 @@ describe("the Branchyard gateway", () => {
     expect(JSON.stringify(before)).not.toMatch(/https?:\/\/|connect\/start/);
     expect(y.upstream.hits).toHaveLength(0);
 
-    const stored = await post(port, "/connect/api-key", token, {
+    const stored = await post(port, "/connect/api-key", y.connectToken(), {
       connector: "github",
       api_key: "pat-ada",
     });
@@ -401,7 +409,7 @@ describe("the Branchyard gateway", () => {
     ]);
 
     const status = await fetch(`http://127.0.0.1:${port}/connect/status`, {
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${y.connectToken()}` },
     });
     const listed = (await status.json()) as { connections: unknown[] };
     expect(listed.connections).toMatchObject([
@@ -430,7 +438,9 @@ describe("the Branchyard gateway", () => {
     const y = await yard(port);
     await startGateway(y, port);
     const token = y.mint([{ connector: "tracker", operations: ["*"], mode: "read" }]);
-    const started = await post(port, "/connect/start", token, { connector: "tracker" });
+    const started = await post(port, "/connect/start", y.connectToken(), {
+      connector: "tracker",
+    });
     expect(started.status).toBe(200);
     expect(started.json.kind).toBe("oauth");
     const url = new URL(started.json.url as string);
@@ -461,7 +471,7 @@ describe("the Branchyard gateway", () => {
     const y = await yard(port);
     await startGateway(y, port);
     const tokenFile = join(y.root, "turn.token");
-    writeFileSync(tokenFile, y.mint([]), { mode: 0o600 });
+    writeFileSync(tokenFile, y.connectToken(), { mode: 0o600 });
     const io = bufferIO();
     const code = await runAnvilCli(
       [
@@ -515,6 +525,85 @@ describe("the Branchyard gateway", () => {
       ),
     ).toBe(1);
     expect(keyBased.text()).toContain("--api-key-stdin");
+  });
+
+  it("takes connect mutations only from a connect token, never from a harness's turn token", async () => {
+    const port = await freePort();
+    const y = await yard(port);
+    await startGateway(y, port);
+    const person = y.connectToken();
+    expect(
+      (await post(port, "/connect/api-key", person, { connector: "github", api_key: "pat-ada" }))
+        .status,
+    ).toBe(200);
+    // Every turn token a harness could hold — any grant, even a write grant
+    // on the very connector — is refused at every connect route, and the
+    // stored credential is left alone.
+    for (const turn of [
+      y.mint(githubRead),
+      y.mint([{ connector: "github", operations: ["*"], mode: "write" }]),
+      y.mint([]),
+    ]) {
+      const overwrite = await post(port, "/connect/api-key", turn, {
+        connector: "github",
+        api_key: "pat-attacker",
+      });
+      expect(overwrite).toMatchObject({
+        status: 403,
+        json: { error: { code: "connect_token_required" } },
+      });
+      expect((await post(port, "/connect/start", turn, { connector: "tracker" })).status).toBe(403);
+      const status = await fetch(`http://127.0.0.1:${port}/connect/status`, {
+        headers: { authorization: `Bearer ${turn}` },
+      });
+      expect(status.status).toBe(403);
+      await status.text();
+    }
+    // An unknown purpose, and a connect token living past ten minutes, are invalid.
+    const now = Math.floor(Date.now() / 1000);
+    for (const bad of [
+      y.connectToken({ by_purpose: "admin" }),
+      y.connectToken({ iat: now, exp: now + 3600 }),
+    ]) {
+      expect(
+        (await post(port, "/connect/api-key", bad, { connector: "github", api_key: "x" })).status,
+      ).toBe(401);
+    }
+    const mcp = await client(port, y.mint(githubRead));
+    expect(await mcp.callTool({ name: "github__list_issues", arguments: {} })).not.toHaveProperty(
+      "isError",
+      true,
+    );
+    expect(y.upstream.hits.map((h) => h.authorization)).toEqual(["Bearer pat-ada"]);
+  });
+
+  it("refuses a connect token for tools/list and tool calls", async () => {
+    const port = await freePort();
+    const y = await yard(port);
+    await startGateway(y, port);
+    const init = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${y.connectToken()}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "t", version: "1" },
+        },
+      }),
+    });
+    expect(init.status).toBe(403);
+    expect(await init.json()).toMatchObject({ error: { code: "turn_token_required" } });
+    // A connect token that also carries a grant is still not a tool caller.
+    await expect(client(port, y.connectToken({ by_grants: githubRead }))).rejects.toThrow();
+    expect(y.upstream.hits).toHaveLength(0);
   });
 
   it("binds a session to one turn's token", async () => {

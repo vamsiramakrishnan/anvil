@@ -5,11 +5,12 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
-import type { AirDocument } from "@anvil/air";
+import { dirname, join, relative, resolve } from "node:path";
+import { type AirDocument, isDirectlyCallable } from "@anvil/air";
 import type { GrantEntry } from "@anvil/runtime";
 import type { Command } from "commander";
 import { harnessCliSource, harnessOperations } from "../harness-cli-source.js";
@@ -31,13 +32,40 @@ import { annotate } from "./meta.js";
  *   GRANTED connector.
  */
 
-/** The connector id a bundle directory is served under: its folded basename (the fleet prefix rule). */
-function connectorIdFor(bundleDir: string): string {
-  return (
-    basename(resolve(bundleDir))
-      .replace(/[^A-Za-z0-9_-]+/g, "_")
-      .replace(/^_+|_+$/g, "") || "bundle"
+/**
+ * The connector id the gateway serves a bundle under — exactly the fleet's
+ * rule: the bundle's id as `discoverBundles` names it beneath the workspace
+ * the gateway serves (its workspace-relative path, so `<ws>/team/github` is
+ * `team/github`), folded by `fleetToolPrefix` (`team_github`). Without a
+ * workspace the bundle is taken as served alone, which `discoverBundles`
+ * names by its directory name. Undefined when the workspace does not serve
+ * the bundle.
+ */
+async function servedConnectorId(
+  bundleDir: string,
+  workspace: string | undefined,
+): Promise<string | undefined> {
+  const { discoverBundles } = await import("@anvil/generators");
+  const { fleetToolPrefix } = await import("@anvil/mcp-runtime");
+  const real = (path: string) => {
+    try {
+      return realpathSync(path);
+    } catch {
+      return resolve(path);
+    }
+  };
+  const target = real(bundleDir);
+  const found = discoverBundles(real(workspace ?? bundleDir)).find(
+    (bundle) => real(bundle.dir) === target,
   );
+  return found ? fleetToolPrefix(found.id) : undefined;
+}
+
+function notServed(io: CliIO, bundle: string, workspace: string): number {
+  io.err(
+    `anvil: ${bundle} is not a bundle the workspace ${workspace} serves (bundles are found as \`anvil serve mcp <workspace> --fleet\` finds them).`,
+  );
+  return 1;
 }
 
 /** Agent Skills names are [a-z0-9-]. */
@@ -70,11 +98,17 @@ export function registerPackageHarness(pkg: Command, ctx: CommandContext): void 
     )
     .option(
       "--connector <id>",
-      "the connector id the gateway serves this bundle under (default: the bundle directory's name)",
+      "the connector id the gateway serves this bundle under (default: its fleet id under --workspace)",
     )
-    .action(async (bundle: string, opts: { out: string; connector?: string }) => {
-      ctx.code = await runPackageHarness(bundle, opts, ctx.io);
-    });
+    .option(
+      "--workspace <dir>",
+      "the workspace the gateway serves (`anvil serve mcp <dir> --fleet`); the bundle's connector id is its path there, folded as the fleet folds it (default: the bundle served alone, named by its directory)",
+    )
+    .action(
+      async (bundle: string, opts: { out: string; connector?: string; workspace?: string }) => {
+        ctx.code = await runPackageHarness(bundle, opts, ctx.io);
+      },
+    );
 }
 
 export function registerConnectors(parent: Command, ctx: CommandContext): void {
@@ -98,8 +132,15 @@ export function registerConnectors(parent: Command, ctx: CommandContext): void {
       "--skills-root <dir>",
       "the directory holding the packaged connectors, as INDEX.md should name it (default: the directory of --out)",
     )
+    .option(
+      "--workspace <dir>",
+      "the workspace the gateway serves; each bundle's connector id is its path there, folded as the fleet folds it (default: each bundle served alone, named by its directory)",
+    )
     .action(
-      async (bundles: string[], opts: { grants: string; out: string; skillsRoot?: string }) => {
+      async (
+        bundles: string[],
+        opts: { grants: string; out: string; skillsRoot?: string; workspace?: string },
+      ) => {
         ctx.code = await runConnectorsIndex(bundles, opts, ctx.io);
       },
     );
@@ -110,8 +151,13 @@ async function loadBundleAir(bundle: string): Promise<AirDocument> {
   return loadAir(bundle);
 }
 
+/** The operations a harness can call: the gateway's served set (approved, directly callable). */
+function callable(air: AirDocument) {
+  return air.operations.filter((op) => op.state === "approved" && isDirectlyCallable(op));
+}
+
 function capabilityLine(air: AirDocument): string {
-  const approved = air.operations.filter((op) => op.state === "approved");
+  const approved = callable(air);
   const reads = approved.filter((op) => op.effect.kind === "read").length;
   const writes = approved.length - reads;
   const resources = [...new Set(approved.map((op) => op.effect.resource).filter(Boolean))];
@@ -121,8 +167,7 @@ function capabilityLine(air: AirDocument): string {
 /** What the service is for, from what AIR records: its name and its operations' own summaries. */
 function servicePurpose(air: AirDocument): string {
   const title = air.service.displayName ?? air.service.id;
-  const summaries = air.operations
-    .filter((op) => op.state === "approved")
+  const summaries = callable(air)
     .map((op) => firstSentence(op.description || op.displayName).replace(/[.!?]$/, ""))
     .filter(Boolean)
     .slice(0, 4);
@@ -256,7 +301,7 @@ async function writeSdk(
 
 async function runPackageHarness(
   bundle: string,
-  opts: { out: string; connector?: string },
+  opts: { out: string; connector?: string; workspace?: string },
   io: CliIO,
 ): Promise<number> {
   const { bundleHash, readBundleDir, resolveBundleDir, sdkPlan } = await import(
@@ -271,14 +316,15 @@ async function runPackageHarness(
     io.err(`anvil: ${bundle} is not a compiled bundle: ${(error as Error).message}`);
     return 1;
   }
-  const connector = opts.connector ?? connectorIdFor(bundleDir);
+  const connector = opts.connector ?? (await servedConnectorId(bundleDir, opts.workspace));
+  if (connector === undefined) return notServed(io, bundle, opts.workspace as string);
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(connector)) {
     io.err(`anvil: connector id '${connector}' must be 1-64 of [A-Za-z0-9_-].`);
     return 1;
   }
-  const approved = air.operations.filter((op) => op.state === "approved");
+  const approved = callable(air);
   if (approved.length === 0) {
-    io.err(`anvil: ${bundle} has no approved operations; there is nothing to package.`);
+    io.err(`anvil: ${bundle} has no approved, callable operations; there is nothing to package.`);
     return 1;
   }
   const out = resolve(opts.out);
@@ -374,7 +420,7 @@ async function readGrantFile(path: string): Promise<GrantEntry[] | undefined> {
 
 async function runConnectorsIndex(
   bundles: string[],
-  opts: { grants: string; out: string; skillsRoot?: string },
+  opts: { grants: string; out: string; skillsRoot?: string; workspace?: string },
   io: CliIO,
 ): Promise<number> {
   const grants = await readGrantFile(opts.grants);
@@ -399,7 +445,8 @@ async function runConnectorsIndex(
       io.err(`anvil: ${bundle} is not a compiled bundle: ${(error as Error).message}`);
       return 1;
     }
-    const connector = connectorIdFor(bundleDir);
+    const connector = await servedConnectorId(bundleDir, opts.workspace);
+    if (connector === undefined) return notServed(io, bundle, opts.workspace as string);
     const granted = grants.filter((entry) => entry.connector === connector);
     if (granted.length === 0 || seen.has(connector)) continue;
     seen.add(connector);

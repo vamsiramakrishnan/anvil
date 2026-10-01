@@ -4,6 +4,7 @@ import {
   agentPropKey,
   camelCase,
   effectiveAuthCarrier,
+  isDirectlyCallable,
   isModeledIdempotencyCarrierInput,
   type JsonSchema,
   type Operation,
@@ -561,9 +562,7 @@ function asyncOf(op: Operation, byId: Map<string, Operation>): SdkAsync | undefi
  * is not advice here — it is the filter, applied in exactly one place.
  */
 export function sdkOperations(air: AirDocument): Operation[] {
-  return air.operations.filter(
-    (op) => op.state === "approved" && op.archetype !== "webhook_receiver",
-  );
+  return air.operations.filter((op) => op.state === "approved" && isDirectlyCallable(op));
 }
 
 /**

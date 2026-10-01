@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -11,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { airFromYaml, airToYaml } from "@anvil/air";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runAnvilCli } from "../anvil-cli.js";
 import { bufferIO } from "../io.js";
@@ -167,6 +169,107 @@ describe("anvil package harness", () => {
     expect(code).toBe(0);
     expect(existsSync(join(out, "bin", "gh_work"))).toBe(true);
     expect(JSON.parse(readFileSync(join(out, "harness.json"), "utf8")).connector).toBe("gh_work");
+  });
+});
+
+describe("connector ids follow the fleet's rule", () => {
+  it("names a nested fleet bundle by its folded workspace path, in the package and the index", async () => {
+    const ws = join(work, "fleet");
+    const nested = join(ws, "team", "github");
+    mkdirSync(dirname(nested), { recursive: true });
+    cpSync(github, nested, { recursive: true });
+    const out = join(work, "fleet-home", "team_github");
+    const packaged = await anvil(["package", "harness", nested, "--out", out, "--workspace", ws]);
+    expect(packaged.code, packaged.io.text()).toBe(0);
+    const manifest = JSON.parse(readFileSync(join(out, "harness.json"), "utf8"));
+    expect(manifest.connector).toBe("team_github");
+    expect(manifest.operations.map((op: { tool: string }) => op.tool)).toContain(
+      "team_github__github_list_issue",
+    );
+    expect(existsSync(join(out, "bin", "team_github"))).toBe(true);
+    expect(readFileSync(join(out, "bin", "team_github"), "utf8")).toContain("team_github");
+
+    const grants = join(work, "fleet-grants.json");
+    writeFileSync(
+      grants,
+      JSON.stringify([{ connector: "team_github", operations: ["*"], mode: "read" }]),
+    );
+    const index = join(work, "fleet-home", "INDEX.md");
+    const indexed = await anvil([
+      "connectors",
+      "index",
+      "--grants",
+      grants,
+      "--out",
+      index,
+      "--workspace",
+      ws,
+      nested,
+    ]);
+    expect(indexed.code, indexed.io.text()).toBe(0);
+    expect(readFileSync(index, "utf8")).toContain("## team_github — GitHub Mini");
+
+    // An explicit --connector still wins; a bundle outside the workspace is refused.
+    const explicit = await anvil([
+      "package",
+      "harness",
+      nested,
+      "--out",
+      join(work, "fleet-home", "gh"),
+      "--workspace",
+      ws,
+      "--connector",
+      "gh",
+    ]);
+    expect(explicit.code).toBe(0);
+    expect(
+      JSON.parse(readFileSync(join(work, "fleet-home", "gh", "harness.json"), "utf8")).connector,
+    ).toBe("gh");
+    const outside = await anvil([
+      "package",
+      "harness",
+      payments,
+      "--out",
+      join(work, "fleet-home", "payments"),
+      "--workspace",
+      ws,
+    ]);
+    expect(outside.code).toBe(1);
+    expect(outside.io.text()).toContain("not a bundle the workspace");
+  });
+});
+
+describe("webhook receivers", () => {
+  it("leaves an approved webhook_receiver out of the CLI, skill and harness.json, as the MCP server and SDKs do", async () => {
+    const bundle = join(work, "hooked", "github");
+    cpSync(github, bundle, { recursive: true });
+    const air = airFromYaml(readFileSync(join(bundle, "air.yaml"), "utf8"));
+    const hooked = {
+      ...air,
+      operations: air.operations.map((op) =>
+        op.id === "github.pulls.list" ? { ...op, archetype: "webhook_receiver" as const } : op,
+      ),
+    };
+    writeFileSync(join(bundle, "air.yaml"), airToYaml(hooked), "utf8");
+    rmSync(join(bundle, "air.json"), { force: true });
+    const out = join(work, "hooked-home", "github");
+    const { code, io } = await anvil(["package", "harness", bundle, "--out", out]);
+    expect(code, io.text()).toBe(0);
+    const manifest = JSON.parse(readFileSync(join(out, "harness.json"), "utf8"));
+    const ids = manifest.operations.map((op: { id: string }) => op.id);
+    expect(ids).toContain("github.issues.list");
+    expect(ids).not.toContain("github.pulls.list");
+    expect(readFileSync(join(out, "SKILL.md"), "utf8")).not.toContain("github pulls list");
+    expect(readFileSync(join(out, "bin", "github"), "utf8")).not.toContain("github.pulls.list");
+    const help = execFileSync(join(out, "bin", "github"), ["--help"], {
+      env: { PATH: process.env.PATH ?? "" },
+      encoding: "utf8",
+    });
+    expect(help).not.toContain("pulls list");
+    // The SDK the package ships agrees.
+    expect(readFileSync(join(out, "python", "anvil_github", "client.py"), "utf8")).not.toContain(
+      "list_pull",
+    );
   });
 });
 

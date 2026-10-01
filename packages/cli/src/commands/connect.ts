@@ -10,10 +10,11 @@ import { annotate } from "./meta.js";
  * the person's upstream accounts to a running Branchyard gateway
  * (docs/branchyard.md). The gateway owns the flow; this command asks it for
  * an authorization URL and prints it (or opens it with `--open`), or, for a
- * key-based connector, submits the key read from stdin. The person's token
- * comes from `--token-file` / `ANVIL_GATEWAY_TOKEN_FILE`, and the gateway
- * from `--gateway` / `ANVIL_GATEWAY_URL` — the same two values a harness
- * gets. `<workspace>` is the directory the gateway serves; it is read only
+ * key-based connector, submits the key read from stdin. The person's connect
+ * token (`by_purpose: "connect"`, which `by connect` mints; the gateway
+ * refuses a harness's turn token here) comes from `--token-file` /
+ * `ANVIL_GATEWAY_TOKEN_FILE`, and the gateway from `--gateway` /
+ * `ANVIL_GATEWAY_URL`. `<workspace>` is the directory the gateway serves; it is read only
  * to check the connector exists before anything is sent.
  */
 export function registerConnect(parent: Command, ctx: CommandContext): void {
@@ -22,7 +23,7 @@ export function registerConnect(parent: Command, ctx: CommandContext): void {
       .command("connect")
       .summary("Connect a person's upstream account to a running Branchyard gateway.")
       .description(
-        "Asks the gateway (ANVIL_GATEWAY_URL or --gateway) for an OAuth authorization URL for the connector and prints it, or opens it with --open. A key-based connector reads its key from stdin with --api-key-stdin. The person is identified by their gateway token (ANVIL_GATEWAY_TOKEN_FILE or --token-file); tokens never leave the gateway.",
+        'Asks the gateway (ANVIL_GATEWAY_URL or --gateway) for an OAuth authorization URL for the connector and prints it, or opens it with --open. A key-based connector reads its key from stdin with --api-key-stdin. The person is identified by their connect token (ANVIL_GATEWAY_TOKEN_FILE or --token-file; by_purpose "connect" — the gateway refuses a turn token here); tokens never leave the gateway.',
       )
       .argument("<workspace>", "the workspace directory the gateway serves")
       .argument(
@@ -33,7 +34,7 @@ export function registerConnect(parent: Command, ctx: CommandContext): void {
       .option("--gateway <url>", "the gateway's /mcp URL (default: ANVIL_GATEWAY_URL)")
       .option(
         "--token-file <path>",
-        "the person's gateway token file (default: ANVIL_GATEWAY_TOKEN_FILE)",
+        'the person\'s connect token file (by_purpose "connect", as `by connect` mints it; default: ANVIL_GATEWAY_TOKEN_FILE)',
       )
       .option(
         "--api-key-stdin",

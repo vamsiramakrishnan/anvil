@@ -7,7 +7,9 @@
 //     writes <dir>/signing.jwk.json (0600, private) and <dir>/jwks.json
 //   node examples/github-mini/yard-keys.mjs mint <dir> --iss <iss> --aud <aud> \
 //       --sub <sub> --grants '<json array>' [--ttl 600] [--tenant t] [--branch b] [--turn n]
-//     prints a compact EdDSA JWT
+//       [--purpose connect]
+//     prints a compact EdDSA JWT; `--purpose connect` makes the person's
+//     connect token (the only token the gateway's /connect/* routes take)
 import { createPrivateKey, generateKeyPairSync, randomUUID, sign } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -58,6 +60,7 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
       ...(flag("tenant") ? { by_tenant: flag("tenant") } : {}),
       ...(flag("branch") ? { by_branch: flag("branch") } : {}),
       ...(flag("turn") ? { by_turn: flag("turn") } : {}),
+      ...(flag("purpose") ? { by_purpose: flag("purpose") } : {}),
     };
     process.stdout.write(`${mint(dir, claims, { ttl: Number(flag("ttl") ?? 600) })}\n`);
   } else {

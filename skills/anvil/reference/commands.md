@@ -1494,12 +1494,12 @@ Options:
 
 Connect a person's upstream account to a running Branchyard gateway.
 
-Asks the gateway (ANVIL_GATEWAY_URL or --gateway) for an OAuth authorization URL for the connector and prints it, or opens it with --open. A key-based connector reads its key from stdin with --api-key-stdin. The person is identified by their gateway token (ANVIL_GATEWAY_TOKEN_FILE or --token-file); tokens never leave the gateway.
+Asks the gateway (ANVIL_GATEWAY_URL or --gateway) for an OAuth authorization URL for the connector and prints it, or opens it with --open. A key-based connector reads its key from stdin with --api-key-stdin. The person is identified by their connect token (ANVIL_GATEWAY_TOKEN_FILE or --token-file; by_purpose "connect" — the gateway refuses a turn token here); tokens never leave the gateway.
 
 Options:
 - `--account <name>` — which of the person's accounts to connect (default: default)
 - `--gateway <url>` — the gateway's /mcp URL (default: ANVIL_GATEWAY_URL)
-- `--token-file <path>` — the person's gateway token file (default: ANVIL_GATEWAY_TOKEN_FILE)
+- `--token-file <path>` — the person's connect token file (by_purpose "connect", as `by connect` mints it; default: ANVIL_GATEWAY_TOKEN_FILE)
 - `--api-key-stdin` — read an API key or personal token for a key-based connector from stdin
 - `--open` — open the authorization URL in the default browser as well as printing it
 
@@ -1529,7 +1529,8 @@ Writes <out>/SKILL.md, reference/, schemas/, examples/, python/, typescript/, bi
 
 Options:
 - `--out <dir>` — the package directory to write (replaced if it holds a previous package)
-- `--connector <id>` — the connector id the gateway serves this bundle under (default: the bundle directory's name)
+- `--connector <id>` — the connector id the gateway serves this bundle under (default: its fleet id under --workspace)
+- `--workspace <dir>` — the workspace the gateway serves (`anvil serve mcp <dir> --fleet`); the bundle's connector id is its path there, folded as the fleet folds it (default: the bundle served alone, named by its directory)
 
 ### `anvil connectors`  *(mutates)*
 `anvil connectors [options] [command]`
@@ -1549,6 +1550,7 @@ Options:
 - `--grants <file>` — the grant JSON
 - `--out <file>` — where to write INDEX.md
 - `--skills-root <dir>` — the directory holding the packaged connectors, as INDEX.md should name it (default: the directory of --out)
+- `--workspace <dir>` — the workspace the gateway serves; each bundle's connector id is its path there, folded as the fleet folds it (default: each bundle served alone, named by its directory)
 
 ### `anvil skill`
 `anvil skill [options] [out-dir]`

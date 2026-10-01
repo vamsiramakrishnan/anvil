@@ -9,6 +9,7 @@ import {
   branchyardSessionFingerprint,
   type InboundAuthConfig,
   type InboundClaims,
+  isBranchyardConnectToken,
   type Jwk,
   loadInboundAuthConfig,
   verifyInboundToken,
@@ -99,12 +100,26 @@ describe("branchyard inbound auth", () => {
     ["grant not a list", { by_grants: "github:read" }, "by_grants"],
     ["missing grant", { by_grants: undefined }, "by_grants"],
     ["non-string turn", { by_turn: 7 }, "by_turn"],
+    ["unknown purpose", { by_purpose: "admin" }, "by_purpose"],
+    ["connect token over ten minutes", { by_purpose: "connect", exp: NOW + 1200 }, "ten minutes"],
   ])("rejects a token with a bad %s", async (_label, change, message) => {
     const result = await verify(mint({ ...claims, ...change }));
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.status).toBe(401);
     expect(result.description).toContain(message);
+  });
+
+  it("tells a connect token from a turn token, and gives a connect token no principal", async () => {
+    const connect = await verify(
+      mint({ ...claims, by_branch: "", by_turn: "", by_grants: [], by_purpose: "connect" }),
+    );
+    expect(connect.ok).toBe(true);
+    if (!connect.ok) return;
+    expect(isBranchyardConnectToken(connect.claims)).toBe(true);
+    expect(branchyardPrincipal(connect.claims)).toBeUndefined();
+    const turn = await verify(mint(claims));
+    expect(turn.ok && isBranchyardConnectToken(turn.claims)).toBe(false);
   });
 
   it("rejects a token signed by a key the JWKS does not hold", async () => {

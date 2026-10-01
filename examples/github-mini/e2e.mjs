@@ -10,7 +10,9 @@
 // 4. makes a yard key, its JWKS file, and a vault key;
 // 5. serves the workspace with `anvil serve mcp <ws> --fleet --http <port>` in
 //    branchyard mode, with ANVIL_AUDIT_FILE;
-// 6. connects the person's account with `anvil connect --api-key-stdin`;
+// 6. connects the person's account with `anvil connect --api-key-stdin` and a
+//    connect token (`by_purpose: "connect"`), after checking the turn token
+//    is refused there;
 // 7. with a token granting github:read, lists issues through the packaged
 //    Python SDK in gateway mode (GITHUB_TOKEN is set to a wrong value and
 //    must not be read), and asks for issues.create, which must be refused
@@ -191,9 +193,33 @@ try {
   writeFileSync(tokenFile, token, { mode: 0o600 });
 
   // 6. Connect the person's account (a personal token, so a key connection).
+  // The turn's token — the one the harness holds — cannot touch the vault.
+  const byTurn = await fetch(`http://127.0.0.1:${port}/connect/api-key`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ connector: "github", api_key: "from-the-harness" }),
+  });
+  check("a turn token is refused at /connect/api-key", byTurn.status === 403, byTurn.status);
+  await byTurn.text();
+  // Only the person's connect token (`by connect` mints one) can.
+  const connectFile = join(work, "connect.token");
+  writeFileSync(
+    connectFile,
+    mint(yard, {
+      iss: ISSUER,
+      aud: mcpUrl,
+      sub: SUB,
+      by_tenant: "e2e",
+      by_branch: "",
+      by_turn: "",
+      by_grants: [],
+      by_purpose: "connect",
+    }),
+    { mode: 0o600 },
+  );
   await run(
     process.execPath,
-    [anvil, "connect", workspace, "github", "--gateway", mcpUrl, "--token-file", tokenFile, "--api-key-stdin"],
+    [anvil, "connect", workspace, "github", "--gateway", mcpUrl, "--token-file", connectFile, "--api-key-stdin"],
     { input: `${UPSTREAM_TOKEN}\n` },
   );
 

@@ -7,6 +7,7 @@ import {
   type FleetServer,
   type InboundAuthConfig,
   type InboundClaims,
+  isBranchyardConnectToken,
   loadInboundAuthConfig,
   protectedResourceMetadata,
   verifiedPrincipalFingerprint,
@@ -127,6 +128,19 @@ async function authorize(
     // never threaded on as an inbound identity — the gateway does not forward
     // it upstream (the MCP specification forbids token passthrough).
     const claims = result.claims as InboundClaims;
+    if (isBranchyardConnectToken(claims)) {
+      // A connect token is for /connect/* only: it never lists or calls tools.
+      res.writeHead(403, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: {
+            code: "turn_token_required",
+            message: "A connect token cannot list or call tools; use the turn's token.",
+          },
+        }),
+      );
+      return { ok: false };
+    }
     const principal = branchyardPrincipal(claims);
     if (!principal) {
       res.writeHead(401, {
@@ -530,6 +544,12 @@ function text(value: unknown): string | undefined {
  *   bearer (a browser follows it), bound to the person by `state`.
  * - `POST /connect/api-key` `{connector, account?, api_key}` with the token.
  * - `GET /connect/status` with the token → the person's connections, no secrets.
+ *
+ * "The token" on every route but the callback is a connect token
+ * (`by_purpose: "connect"`, at most ten minutes, minted by `by connect` for
+ * the person alone). A turn token — the one a harness holds — is refused 403
+ * before the vault is touched, so a prompt-injected harness can neither start
+ * a connection nor overwrite the person's stored credential.
  */
 async function handleConnect(
   req: IncomingMessage,
@@ -568,7 +588,18 @@ async function handleConnect(
     res.end(JSON.stringify({ error: { code: verified.error, message: verified.description } }));
     return;
   }
-  const sub = (verified.claims as InboundClaims).sub as string;
+  const claims = verified.claims as InboundClaims;
+  if (!isBranchyardConnectToken(claims)) {
+    req.resume();
+    return json(res, 403, {
+      error: {
+        code: "connect_token_required",
+        message:
+          'The connect routes take only a connect token (by_purpose "connect"), never a turn token.',
+      },
+    });
+  }
+  const sub = claims.sub as string;
   if (url.pathname === "/connect/status" && req.method === "GET") {
     return json(res, 200, { sub, connections: gateway.vault.list(sub) });
   }

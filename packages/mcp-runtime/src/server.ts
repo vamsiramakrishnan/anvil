@@ -7,6 +7,7 @@ import {
   DEFAULT_OUTPUT_SCHEMA_BUDGET_TOKENS,
   DEFAULT_RESPONSE_BUDGET_TOKENS,
   estimateTokens,
+  isDirectlyCallable,
   mcpToolAnnotations,
   mcpToolDescription,
   type Operation,
@@ -195,8 +196,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
   // wired only through AsyncContract.webhook and the generated receiver
   // route (packages/generators/src/entrypoints.ts), never through tools/list.
   const ops = air.operations.filter(
-    (op) =>
-      (options.includeUnapproved || op.state === "approved") && op.archetype !== "webhook_receiver",
+    (op) => (options.includeUnapproved || op.state === "approved") && isDirectlyCallable(op),
   );
   const opsById = new Map(ops.map((op) => [op.id, op]));
   // The SDK hands back a live handle per tool. Held so the disclosure ladder can

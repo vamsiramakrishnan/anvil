@@ -316,6 +316,14 @@ export class ConnectFlow {
     }
     const stamp = new Date(this.now()).toISOString();
     const existing = safeGet(this.options.vault, pending.sub, pending.connector, pending.account);
+    // A reconnect whose response does not rotate the refresh token keeps the
+    // one already stored, exactly as a refresh does (vault.ts).
+    const refreshToken =
+      typeof body.refresh_token === "string" && body.refresh_token.length > 0
+        ? body.refresh_token
+        : existing?.kind === "oauth"
+          ? existing.refreshToken
+          : undefined;
     const connection: StoredConnection = {
       sub: pending.sub,
       connector: pending.connector,
@@ -323,7 +331,7 @@ export class ConnectFlow {
       kind: "oauth",
       status: "active",
       accessToken: body.access_token,
-      ...(typeof body.refresh_token === "string" ? { refreshToken: body.refresh_token } : {}),
+      ...(refreshToken ? { refreshToken } : {}),
       ...(typeof body.expires_in === "number"
         ? { expiresAt: this.now() + body.expires_in * 1000 }
         : {}),

@@ -110,11 +110,17 @@ from the Anvil checkout.
    ```
 
 7. Connect the person's account. GitHub-mini authenticates with a bearer the
-   person already holds, so it is a key connection read from stdin.
+   person already holds, so it is a key connection read from stdin. The
+   connect routes take only the person's connect token (`by connect` mints
+   it), never the turn's token a harness holds.
 
    ```bash
+   node examples/github-mini/yard-keys.mjs mint "$WORK/yard" \
+     --iss branchyard:local:e2e --aud http://127.0.0.1:$PORT/mcp --sub local:e2e-person \
+     --tenant e2e --purpose connect --grants '[]' > "$WORK/connect.token"
+   chmod 600 "$WORK/connect.token"
    printf '%s\n' e2e-upstream-pat | $ANVIL connect "$WORK/workspace" github \
-     --gateway http://127.0.0.1:$PORT/mcp --token-file "$WORK/turn.token" --api-key-stdin
+     --gateway http://127.0.0.1:$PORT/mcp --token-file "$WORK/connect.token" --api-key-stdin
    ```
 
 8. Act as the harness: the packaged Python SDK and CLI with only the two
@@ -170,6 +176,22 @@ signature, `iss`, `aud`, `exp` (and refuses one more than an hour away), `nbf`,
 audit log. Any failure is a `401` with `WWW-Authenticate`. A session belongs to
 one token: a different token presenting its session id gets `403`.
 
+There are two kinds of token, told apart by `by_purpose`:
+
+- A **turn token** has no `by_purpose`. Branchyard mints one per turn and the
+  harness holds it. It is the only token `/mcp` takes, and the connect routes
+  refuse it with `403 connect_token_required`, before the vault is read or
+  written, so a harness (or a prompt injected into one) can never start a
+  connection or overwrite the person's stored credential.
+- A **connect token** has `by_purpose: "connect"`, an empty `by_grants`, and
+  empty `by_branch` and `by_turn`. `by connect` mints one for the person alone
+  and hands it to `anvil connect`, never to a harness. It lives at most ten
+  minutes (`exp - iat`; a longer one is a `401`). It is the only token the
+  connect routes take, and `/mcp` refuses it with `403 turn_token_required`,
+  so it can neither list nor call tools.
+
+Any other `by_purpose` is a `401`.
+
 ### Grants
 
 `by_grants` is a list of entries; an operation is allowed when some entry
@@ -204,7 +226,10 @@ link; the link goes to the person through `/connect/start`.
 
 ### Connect routes
 
-All but the callback take the person's token as a bearer.
+All but the callback take the person's connect token (`by_purpose:
+"connect"`) as a bearer; a turn token gets `403 connect_token_required` and
+nothing is read or stored. The callback takes no bearer: it is bound to the
+person by the `state` a connect token's `/connect/start` made.
 
 | Route | Body | Answer |
 | --- | --- | --- |
@@ -233,7 +258,7 @@ plan. Go and Java clients do not have a gateway mode yet.
 
 ### Harness package
 
-`anvil package harness <bundle> --out <dir> [--connector <id>]` writes:
+`anvil package harness <bundle> --out <dir> [--workspace <dir>] [--connector <id>]` writes:
 
 ```text
 <dir>/
@@ -247,7 +272,16 @@ plan. Go and Java clients do not have a gateway mode yet.
   harness.json    connector, service, bundle hash, entry points, operations
 ```
 
+The connector id is the one the gateway serves the bundle under: its path in
+`--workspace` (the directory given to `anvil serve mcp --fleet`), folded as the
+fleet folds it, so `<workspace>/team/github` is `team_github`. Without
+`--workspace` the bundle is taken as served alone and named by its directory.
+`--connector` overrides both. Only operations the gateway serves are packaged:
+approved, and never a `webhook_receiver` (the same rule as the MCP server and
+the SDKs).
+
 Branchyard can cache a package by `harness.json`'s `bundleHash`. `anvil
-connectors index --grants <file> --out INDEX.md <bundle...>` writes one entry
-per bundle a grant names: what it is for, when to use it, what is granted, and
-where its `SKILL.md` is.
+connectors index --grants <file> --out INDEX.md [--workspace <dir>]
+<bundle...>` writes one entry per bundle a grant names, matching grants by the
+same connector id: what it is for, when to use it, what is granted, and where
+its `SKILL.md` is.

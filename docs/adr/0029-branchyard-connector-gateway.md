@@ -94,6 +94,16 @@ the authorization URL to the person who asked; `state` is single-use,
 short-lived, and bound server-side to that person, connector, and account;
 `GET /connect/callback` checks an `iss` parameter when the provider sends one
 (RFC 9207). A key-based connector takes its key on `POST /connect/api-key`.
+Every connect route but the callback takes only a **connect token**: one
+with `by_purpose: "connect"`, which Branchyard mints for the person alone
+(`by connect`), with an empty grant and a lifetime of at most ten minutes. A
+turn token, which a harness holds, has no `by_purpose` and is refused `403`
+before the vault is touched, so a prompt-injected harness cannot start a
+connection or overwrite the person's credential. The reverse holds too: `/mcp`
+refuses a connect token (`branchyardPrincipal` names no caller for it), so it
+can never list or call tools. An unknown `by_purpose` is invalid. A reconnect
+whose token response does not rotate the refresh token keeps the stored one,
+as a refresh does.
 The OAuth client is gateway configuration (`ANVIL_CONNECT_<CONNECTOR>_*`),
 never AIR. `anvil connect <workspace> <connector> [--account]` asks the gateway
 for the URL and prints or opens it.
@@ -118,7 +128,11 @@ self-contained, gateway-only package: `SKILL.md`, `reference/`, `schemas/`,
 `examples/`, `python/`, `typescript/`, `bin/<connector>` (a dependency-free
 Node CLI with the generated CLI's grammar and exit codes), and `harness.json`
 with the bundle hash. `anvil connectors index --grants <file> --out INDEX.md
-<bundle...>` writes one short entry per granted connector.
+<bundle...>` writes one short entry per granted connector. Both name a bundle
+by the fleet's rule (its path under `--workspace`, folded by
+`fleetToolPrefix`), so packages and the index match what the gateway serves
+and what grants name; both package exactly the operations the MCP server and
+SDKs serve (`isDirectlyCallable`: never a `webhook_receiver`).
 
 ## Consequences
 

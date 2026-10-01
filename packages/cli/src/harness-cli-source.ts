@@ -2,6 +2,7 @@ import {
   type AirDocument,
   agentPropKey,
   idempotencyModeUsesCarrier,
+  isDirectlyCallable,
   type Operation,
   operationInputSchema,
   operationSafetyInputKeys,
@@ -77,8 +78,10 @@ function inputsOf(op: Operation): HarnessInput[] {
 }
 
 export function harnessOperations(air: AirDocument): HarnessOperation[] {
+  // The same operations the gateway's MCP server and the SDKs serve: approved
+  // and directly callable (never a webhook_receiver).
   return air.operations
-    .filter((op) => op.state === "approved")
+    .filter((op) => op.state === "approved" && isDirectlyCallable(op))
     .map((op) => {
       const safety = operationSafetyInputKeys(op);
       return {

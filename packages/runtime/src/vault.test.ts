@@ -458,6 +458,29 @@ describe("the connect flow", () => {
     ).toMatchObject({ ok: false, code: "invalid_state" });
   });
 
+  it("keeps the stored refresh token when a reconnect's response does not rotate it", async () => {
+    const { auth, vault, connect } = await flow();
+    const connectOnce = async (body: Record<string, unknown>) => {
+      const started = connect.start({ sub: "local:ada", connector: "github" });
+      if (!started.ok || started.kind !== "oauth") throw new Error("expected an OAuth start");
+      auth.next.push({ status: 200, body });
+      const state = new URL(started.url).searchParams.get("state") as string;
+      expect(await connect.callback({ state, code: "c" })).toMatchObject({ ok: true });
+    };
+    await connectOnce({ access_token: "gho_1", refresh_token: "ghr_1", expires_in: 60 });
+    await connectOnce({ access_token: "gho_2", expires_in: 60 });
+    expect(vault.get("local:ada", "github", "default")).toMatchObject({
+      accessToken: "gho_2",
+      refreshToken: "ghr_1",
+    });
+    // A response that does rotate it replaces it.
+    await connectOnce({ access_token: "gho_3", refresh_token: "ghr_3" });
+    expect(vault.get("local:ada", "github", "default")).toMatchObject({
+      accessToken: "gho_3",
+      refreshToken: "ghr_3",
+    });
+  });
+
   it("does not store anything when the provider refuses the code", async () => {
     const { auth, vault, connect } = await flow();
     const started = connect.start({ sub: "local:ada", connector: "github" });

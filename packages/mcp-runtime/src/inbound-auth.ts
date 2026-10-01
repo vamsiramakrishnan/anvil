@@ -514,6 +514,27 @@ export function verifiedPrincipalFingerprint(claims: unknown): string | undefine
 /** One hour: Branchyard mints a token per turn that expires with it, and never later than this. */
 const BRANCHYARD_MAX_LIFETIME_SECONDS = 3600;
 
+/** Ten minutes: a connect token lives only as long as one connect flow takes to start. */
+const BRANCHYARD_CONNECT_MAX_LIFETIME_SECONDS = 600;
+
+/**
+ * The `by_purpose` value of the person-only token Branchyard mints for
+ * `by connect` (and nothing else): it names the person and grants nothing.
+ */
+const BRANCHYARD_CONNECT_PURPOSE = "connect";
+
+/**
+ * True when verified branchyard claims are a connect token
+ * (`by_purpose: "connect"`). Only a connect token may start a connection,
+ * store a key, or read the person's connections at `/connect/*`; a connect
+ * token may never list or call tools. A turn token (no `by_purpose`) is the
+ * reverse — a harness holds it, so it must never change the person's
+ * connections.
+ */
+export function isBranchyardConnectToken(claims: InboundClaims): boolean {
+  return claims.by_purpose === BRANCHYARD_CONNECT_PURPOSE;
+}
+
 /**
  * `branchyard` configuration: the yard's issuer (a URL, or
  * `branchyard:local:<yard id>`), the gateway's canonical `/mcp` URL as the
@@ -581,6 +602,17 @@ function branchyardClaimsProblem(
     if (!optionalText(claims[key])) return `Token ${key} is invalid.`;
   }
   if (parseGrants(claims.by_grants) === undefined) return "Token grant (by_grants) is malformed.";
+  if (claims.by_purpose !== undefined) {
+    // Fail closed on a purpose this gateway does not know.
+    if (claims.by_purpose !== BRANCHYARD_CONNECT_PURPOSE) return "Token by_purpose is unknown.";
+    if (
+      typeof claims.exp === "number" &&
+      claims.exp - (typeof claims.iat === "number" ? Math.min(claims.iat, now) : now) >
+        BRANCHYARD_CONNECT_MAX_LIFETIME_SECONDS + leeway
+    ) {
+      return "Connect token lifetime exceeds ten minutes.";
+    }
+  }
   return undefined;
 }
 
@@ -588,9 +620,12 @@ function branchyardClaimsProblem(
  * The principal a verified branchyard token names: `id` is `sub`, the grant
  * is `by_grants`, and `by_tenant`/`by_branch`/`by_turn` ride along for audit.
  * Scopes are every scope: the grant, not a scope list, is what limits this
- * caller, and it is checked per operation before any upstream call.
+ * caller, and it is checked per operation before any upstream call. A token
+ * with a `by_purpose` (a connect token) names no tool caller: undefined.
  */
 export function branchyardPrincipal(claims: InboundClaims): Principal | undefined {
+  // A connect token is the person at the connect routes, never a caller of tools.
+  if (claims.by_purpose !== undefined) return undefined;
   const grants = parseGrants(claims.by_grants);
   if (typeof claims.sub !== "string" || claims.sub.length === 0 || grants === undefined) {
     return undefined;
