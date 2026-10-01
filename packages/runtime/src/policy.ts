@@ -1,5 +1,6 @@
 import type { Operation } from "@anvil/air";
 import { AnvilError } from "./errors.js";
+import type { GrantEntry } from "./grants.js";
 import type { HttpRequest, HttpResponse } from "./transport.js";
 
 /**
@@ -58,6 +59,15 @@ export interface Principal {
   id: string;
   /** Scopes granted to this principal. `"*"` grants every scope. */
   scopes: string[];
+  /**
+   * A Branchyard grant (`by_grants`, grants.ts). When present — even empty —
+   * every call is checked against it before any upstream call, and the
+   * credential comes from this principal's own vault connection. Absent for
+   * every other principal, which keeps their behavior unchanged.
+   */
+  grants?: GrantEntry[];
+  /** Where a Branchyard call comes from (`by_tenant`/`by_branch`/`by_turn`), for audit. */
+  attribution?: { tenant?: string; branch?: string; turn?: string };
 }
 
 /**

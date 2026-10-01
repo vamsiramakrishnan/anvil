@@ -13,6 +13,7 @@ import {
   resolveIdempotencyCarrier,
 } from "@anvil/air";
 import { checkQuery, lexicalFamily, renderTemplate } from "@anvil/grammar";
+import { type AuditSink, auditCall } from "./audit.js";
 import {
   type AuthMaterial,
   applyAuth,
@@ -29,6 +30,7 @@ import {
   normalizeEnv,
 } from "./config.js";
 import { AnvilError, type ErrorEnvelope } from "./errors.js";
+import { decideGrant, type GrantDecision, grantCredentialContext, grantRefusal } from "./grants.js";
 import { httpResponseError } from "./http-error.js";
 import {
   type IdempotencyLedger,
@@ -66,6 +68,7 @@ import {
   type Transport,
   TransportError,
 } from "./transport.js";
+import { CredentialUnavailableError } from "./vault.js";
 import { wireFacadeDecision, wireGateError } from "./wire-gate.js";
 
 export interface DryRunPlan {
@@ -123,6 +126,10 @@ export interface ExecuteContext {
   principalDirectoryConfigured?: boolean;
   /** Per-principal rate/spend limits (fleet runtime). Absent = unlimited. */
   limits?: LimitsGate;
+  /** The bundle id a fleet mounts this operation under: what a Branchyard grant names. */
+  connector?: string;
+  /** One audit line per call (audit.ts). Absent = no audit. */
+  audit?: AuditSink;
   observer?: Observer;
   ledger?: IdempotencyLedger;
   allowedHosts?: string[];
@@ -664,9 +671,17 @@ export async function execute(
     ledger: "none",
   };
 
+  // Filled in by the grant gate and the send loop, for the audit line.
+  let grantDecision: GrantDecision | undefined;
+  let upstreamStatus: number | undefined;
   const finish = (result: ExecuteResult): ExecuteResult => {
     result.record.latencyMs = now() - start;
     (ctx.observer ?? noopObserver).onRecord(result.record);
+    if (ctx.audit) {
+      const error = result.outcome === "error" ? result.envelope.error : undefined;
+      const call = { principal, connector: ctx.connector, input, grant: grantDecision };
+      auditCall(ctx.audit, { ...call, record: result.record, error, upstreamStatus });
+    }
     return result;
   };
 
@@ -813,6 +828,15 @@ export async function execute(
           },
         }),
       );
+    }
+
+    // 0d'. Branchyard grant gate (grants.ts, ADR-0029): connector, operation,
+    // and mode, checked in the same place as the scope gate above.
+    if (principal.grants !== undefined) {
+      grantDecision = decideGrant(principal.grants, ctx.connector ?? "", op, ctx.serviceId);
+      if (!grantDecision.allowed) {
+        return fail(grantRefusal(grantDecision, op.id, traceId, ctx.connector, principal.id));
+      }
     }
 
     // 0e. Rate/spend limits (fleet runtime) — same "before any upstream call,
@@ -1158,9 +1182,17 @@ export async function execute(
     await runHook(ctx.policy?.preAuth, request);
     if (op.auth.type !== "none") {
       const profile = credentialProfileName(ctx.authProfile ?? "default", op.auth);
-      const material = ctx.credentials
-        ? await ctx.credentials.resolve(profile, op.auth, { inbound: ctx.inbound })
-        : null;
+      let material: AuthMaterial | null;
+      try {
+        const grant = grantCredentialContext(principal, ctx.connector, grantDecision);
+        material = ctx.credentials
+          ? await ctx.credentials.resolve(profile, op.auth, { inbound: ctx.inbound, ...grant })
+          : null;
+      } catch (error) {
+        // The vault names the unconnected connector; never a connect link.
+        if (!(error instanceof CredentialUnavailableError)) throw error;
+        return fail(error.toAnvilError(op.id, traceId));
+      }
       if (!material) {
         // Name the credential LOCATIONS the resolver would read (env var names,
         // secret ids) so the caller knows the next action. Names only — values
@@ -1310,6 +1342,7 @@ export async function execute(
         throwIfCancelled(ctx.signal);
         const res = await ctx.transport.send(request);
         lastResponse = res;
+        upstreamStatus = res.status;
         record.responseBytes = byteLen(res.body);
         const fault = isFaultAware(codec) ? codec.faultIn(op, res) : undefined;
         if (fault) {

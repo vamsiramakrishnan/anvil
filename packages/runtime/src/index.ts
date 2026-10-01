@@ -4,6 +4,7 @@
  * upstream → normalize → trace. Nothing here parses specs or runs an LLM.
  */
 
+export * from "./audit.js";
 export * from "./auth.js";
 export * from "./boot.js";
 export * from "./business.js";
@@ -11,11 +12,13 @@ export * from "./business-journal.js";
 export * from "./business-transport.js";
 export * from "./cancellation.js";
 export * from "./config.js";
+export * from "./connect.js";
 export * from "./credentials.js";
 export * from "./env-contract.js";
 export * from "./errors.js";
 export * from "./executor.js";
 export * from "./extensions.js";
+export * from "./grants.js";
 export * from "./idempotency.js";
 export * from "./inbound-identity.js";
 export * from "./job-answer.js";
@@ -28,4 +31,5 @@ export * from "./response-projection.js";
 export * from "./retry.js";
 export * from "./safe-http.js";
 export * from "./transport.js";
+export * from "./vault.js";
 export * from "./webhook-receiver.js";

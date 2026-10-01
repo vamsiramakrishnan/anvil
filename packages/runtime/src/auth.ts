@@ -32,6 +32,15 @@ export interface AuthMaterial {
  */
 export interface CredentialCallContext {
   inbound?: InboundIdentity;
+  /**
+   * The resolved principal's id, the connector (bundle id) serving the call,
+   * and the account the grant selected — set for a Branchyard principal, so
+   * a vault-backed resolver can find that person's own connection
+   * (`VaultCredentialResolver`). Static resolvers ignore them.
+   */
+  principalId?: string;
+  connector?: string;
+  account?: string;
 }
 
 /**
