@@ -33,7 +33,7 @@ export function auditSinkFromEnv(
  * refuses to start without one); `ANVIL_VAULT_DIR` holds the encrypted
  * records (default `~/.anvil/gateway/vault`).
  */
-export function vaultFromEnv(env: NodeJS.ProcessEnv): ConnectionVault {
+function vaultFromEnv(env: NodeJS.ProcessEnv): ConnectionVault {
   const keyFile = env.ANVIL_VAULT_KEY_FILE?.trim();
   if (!keyFile) {
     throw new Error(

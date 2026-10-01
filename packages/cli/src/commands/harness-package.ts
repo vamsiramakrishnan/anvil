@@ -32,7 +32,7 @@ import { annotate } from "./meta.js";
  */
 
 /** The connector id a bundle directory is served under: its folded basename (the fleet prefix rule). */
-export function connectorIdFor(bundleDir: string): string {
+function connectorIdFor(bundleDir: string): string {
   return (
     basename(resolve(bundleDir))
       .replace(/[^A-Za-z0-9_-]+/g, "_")

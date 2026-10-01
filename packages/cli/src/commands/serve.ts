@@ -171,7 +171,7 @@ interface PreparedBundle {
  * What a Branchyard gateway session adds to a fleet composition: the
  * principal's vault-backed credentials (never the environment's).
  */
-export interface GatewaySessionDeps {
+interface GatewaySessionDeps {
   credentials: CredentialResolver;
 }
 

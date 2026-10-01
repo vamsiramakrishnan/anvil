@@ -27,7 +27,7 @@ const GATEWAY_EXCLUSIVE_FLAGS = [
 ] as const;
 
 /** The connector id a gateway mounts this service under (its fleet prefix). */
-export function defaultGatewayConnector(serviceId: string): string {
+function defaultGatewayConnector(serviceId: string): string {
   return serviceId.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "bundle";
 }
 

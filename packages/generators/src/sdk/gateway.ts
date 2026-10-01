@@ -22,7 +22,7 @@ import type { SdkOperation, SdkPlan } from "./plan.js";
  */
 
 /** Wire names the gateway expects for one operation. */
-export interface GatewayToolRow {
+interface GatewayToolRow {
   tool: string;
   /** The confirm input, present only when the operation takes one. */
   confirmKey?: string;
@@ -31,11 +31,11 @@ export interface GatewayToolRow {
 }
 
 /** The MCP reserved argument that asks the server for a dry-run plan. */
-export const GATEWAY_DRY_RUN_ARG = "anvil_dry_run";
+const GATEWAY_DRY_RUN_ARG = "anvil_dry_run";
 /** The MCP protocol revision a gateway client offers. The server may answer with another it supports. */
-export const GATEWAY_PROTOCOL_VERSION = "2025-06-18";
+const GATEWAY_PROTOCOL_VERSION = "2025-06-18";
 
-export function gatewayToolRow(op: SdkOperation): GatewayToolRow {
+function gatewayToolRow(op: SdkOperation): GatewayToolRow {
   return {
     tool: op.mcpToolName,
     ...(op.confirmation.required ? { confirmKey: op.safetyKeys.confirm } : {}),
