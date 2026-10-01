@@ -2,17 +2,21 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { isIP } from "node:net";
 import {
+  branchyardPrincipal,
+  branchyardSessionFingerprint,
   type FleetServer,
   type InboundAuthConfig,
+  type InboundClaims,
   loadInboundAuthConfig,
   protectedResourceMetadata,
   verifiedPrincipalFingerprint,
   verifyInboundToken,
 } from "@anvil/mcp-runtime";
-import { resolvePrincipalForBearer, withInboundIdentity } from "@anvil/runtime";
+import { type Principal, resolvePrincipalForBearer, withInboundIdentity } from "@anvil/runtime";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { CliIO } from "../io.js";
+import { auditSinkFromEnv, buildGatewayRuntime, type GatewayRuntime } from "./gateway.js";
 import { prepareFleetForWorkspace } from "./serve.js";
 
 /**
@@ -35,6 +39,13 @@ import { prepareFleetForWorkspace } from "./serve.js";
  * Binding is loopback unless `--host` says otherwise, and a non-loopback
  * bind with inbound auth "none" is refused: that would hand every mounted
  * tool to the network with no gate at all.
+ *
+ * With `ANVIL_INBOUND_AUTH_MODE=branchyard` this is the Branchyard gateway
+ * (ADR-0029, docs/branchyard.md): each session belongs to one turn's token,
+ * its principal and grant come from that token's claims, every tool is
+ * mounted under its connector id, credentials come from the vault
+ * (`ANVIL_VAULT_KEY_FILE`, required), and the listener also serves the
+ * connect flow at `/connect/*`.
  */
 
 export interface FleetHttpOptions {
@@ -42,6 +53,8 @@ export interface FleetHttpOptions {
   port: number;
   env?: NodeJS.ProcessEnv;
   io?: CliIO;
+  /** Test seams for the connect flow and vault refreshes (the provider's token endpoint). */
+  gatewayDeps?: { fetchImpl?: typeof fetch; now?: () => number };
 }
 
 export type FleetHttpHandle = {
@@ -86,6 +99,8 @@ type Authorized =
       callerFingerprint: string;
       bearer: string | undefined;
       identity: Parameters<typeof withInboundIdentity>[0] | undefined;
+      /** Set in branchyard mode: the principal and grant the token names. */
+      principal?: Principal;
     };
 
 async function authorize(
@@ -107,6 +122,32 @@ async function authorize(
     typeof header === "string" ? header.replace(/^Bearer\s+/i, "").trim() || undefined : undefined;
   if (inbound.mode === "none")
     return { ok: true, callerFingerprint: "anonymous", bearer, identity: undefined };
+  if (inbound.mode === "branchyard") {
+    // The token is the whole caller: its subject, its grant, its turn. It is
+    // never threaded on as an inbound identity — the gateway does not forward
+    // it upstream (the MCP specification forbids token passthrough).
+    const claims = result.claims as InboundClaims;
+    const principal = branchyardPrincipal(claims);
+    if (!principal) {
+      res.writeHead(401, {
+        "content-type": "application/json",
+        "www-authenticate": 'Bearer error="invalid_token"',
+      });
+      res.end(
+        JSON.stringify({
+          error: { code: "invalid_token", message: "Token does not name a caller and a grant." },
+        }),
+      );
+      return { ok: false };
+    }
+    return {
+      ok: true,
+      callerFingerprint: branchyardSessionFingerprint(claims),
+      bearer: undefined,
+      identity: undefined,
+      principal,
+    };
+  }
   const callerFingerprint = bearer ? verifiedPrincipalFingerprint(result.claims) : undefined;
   if (!callerFingerprint || !bearer) {
     res.writeHead(401, {
@@ -210,7 +251,7 @@ export async function startFleetHttp(
   const log = (line: string) => (options.io ? options.io.err(line) : console.error(line));
   let inbound: InboundAuthConfig;
   try {
-    inbound = loadInboundAuthConfig(env);
+    inbound = loadInboundAuthConfig(env, { allowBranchyard: true });
   } catch (error) {
     // An incomplete ANVIL_INBOUND_* family is a refusal before any port is
     // bound, exactly as the deployed server refuses its boot.
@@ -221,12 +262,26 @@ export async function startFleetHttp(
       ok: false,
       message:
         `refusing to bind the fleet to ${options.host} with ANVIL_INBOUND_AUTH_MODE unset: a non-loopback ` +
-        "listener must self-enforce inbound auth (oidc or google_service_account), exactly as the deployed server does",
+        "listener must self-enforce inbound auth (oidc, google_service_account, or branchyard), exactly as the deployed server does",
     };
   }
-  const prepared = await prepareFleetForWorkspace(workspaceRoot, env);
+  const audit = auditSinkFromEnv(env, log);
+  const prepared = await prepareFleetForWorkspace(workspaceRoot, env, { audit });
   if (!prepared.ok) return { ok: false, message: prepared.message };
   const { config, bundleIds, principalDirectoryConfigured } = prepared;
+  let gateway: GatewayRuntime | undefined;
+  if (inbound.mode === "branchyard") {
+    try {
+      gateway = buildGatewayRuntime(
+        prepared.connectors,
+        env,
+        inbound.audience as string,
+        options.gatewayDeps,
+      );
+    } catch (error) {
+      return { ok: false, message: (error as Error).message };
+    }
+  }
 
   // One composition built up front: it surfaces a cross-bundle collision
   // before the port is bound, and it answers /readyz for the whole fleet.
@@ -284,6 +339,9 @@ export async function startFleetHttp(
             error: { code: "not_found", message: "Inbound auth is not configured." },
           });
     }
+    if (gateway && url.pathname.startsWith("/connect/")) {
+      return handleConnect(req, res, url, inbound, gateway);
+    }
     if (url.pathname !== "/mcp") {
       return json(res, 404, { error: { code: "not_found", message: "No such route." } });
     }
@@ -331,14 +389,19 @@ export async function startFleetHttp(
       // execute()'s anonymous default; configured directory + an unnamed
       // caller → undefined + directoryConfigured → execute() refuses
       // fail-closed (policy/principal_unresolved).
-      const principal = auth.identity
-        ? prepared.principalFor(auth.identity)
-        : principalDirectoryConfigured
-          ? resolvePrincipalForBearer(config.principals, auth.bearer)
-          : undefined;
+      const principal = auth.principal
+        ? auth.principal
+        : auth.identity
+          ? prepared.principalFor(auth.identity)
+          : principalDirectoryConfigured
+            ? resolvePrincipalForBearer(config.principals, auth.bearer)
+            : undefined;
       let fleet: FleetServer;
       try {
-        fleet = await prepared.build({ principal });
+        fleet = await prepared.build({
+          principal,
+          ...(gateway ? { gateway: { credentials: gateway.credentials } } : {}),
+        });
       } catch {
         return jsonRpcError(res, 500, -32603, "MCP session initialization failed.");
       }
@@ -414,4 +477,144 @@ export async function startFleetHttp(
     server.closeAllConnections?.();
   };
   return { ok: true, handle: { host: options.host, port, bundleIds, close } };
+}
+
+const CONNECT_BODY_MAX_BYTES = 64 * 1024;
+
+function readSmallJson(req: IncomingMessage): Promise<Record<string, unknown> | undefined> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let done = false;
+    const finish = (value: Record<string, unknown> | undefined) => {
+      if (done) return;
+      done = true;
+      resolve(value);
+    };
+    req.on("data", (chunk: Buffer | string) => {
+      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      size += bytes.length;
+      if (size > CONNECT_BODY_MAX_BYTES) {
+        req.resume();
+        return finish(undefined);
+      }
+      chunks.push(bytes);
+    });
+    req.once("end", () => {
+      try {
+        const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+        finish(
+          value && typeof value === "object" && !Array.isArray(value)
+            ? (value as Record<string, unknown>)
+            : undefined,
+        );
+      } catch {
+        finish(undefined);
+      }
+    });
+    req.once("error", () => finish(undefined));
+  });
+}
+
+function text(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/**
+ * The connect flow's routes (docs/branchyard.md):
+ *
+ * - `POST /connect/start` `{connector, account?}` with the person's token →
+ *   `{kind: "oauth", url, expires_at}` or `{kind: "static", submit}`. The
+ *   authorization URL is returned here and nowhere else.
+ * - `GET /connect/callback?state&code[&iss]` — the provider's redirect; no
+ *   bearer (a browser follows it), bound to the person by `state`.
+ * - `POST /connect/api-key` `{connector, account?, api_key}` with the token.
+ * - `GET /connect/status` with the token → the person's connections, no secrets.
+ */
+async function handleConnect(
+  req: IncomingMessage,
+  res: ServerResponse,
+  url: URL,
+  inbound: InboundAuthConfig,
+  gateway: GatewayRuntime,
+): Promise<void> {
+  if (url.pathname === "/connect/callback") {
+    if (req.method !== "GET") return json(res, 405, { error: { code: "method_not_allowed" } });
+    const q = url.searchParams;
+    const outcome = await gateway.connect.callback({
+      state: q.get("state") ?? undefined,
+      code: q.get("code") ?? undefined,
+      iss: q.get("iss") ?? undefined,
+      error: q.get("error") ?? undefined,
+    });
+    res.writeHead(outcome.ok ? 200 : outcome.status, {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "no-store",
+      "referrer-policy": "no-referrer",
+    });
+    res.end(
+      outcome.ok
+        ? `Connected ${outcome.connector} (account ${outcome.account}). You can close this window.\n`
+        : `Not connected: ${outcome.message}\n`,
+    );
+    return;
+  }
+  const verified = await verifyInboundToken(req.headers.authorization, inbound);
+  if (!verified.ok) {
+    res.writeHead(verified.status, {
+      "content-type": "application/json",
+      "www-authenticate": verified.wwwAuthenticate,
+    });
+    res.end(JSON.stringify({ error: { code: verified.error, message: verified.description } }));
+    return;
+  }
+  const sub = (verified.claims as InboundClaims).sub as string;
+  if (url.pathname === "/connect/status" && req.method === "GET") {
+    return json(res, 200, { sub, connections: gateway.vault.list(sub) });
+  }
+  if (req.method !== "POST") {
+    return json(res, 404, { error: { code: "not_found", message: "No such route." } });
+  }
+  const body = await readSmallJson(req);
+  if (!body) {
+    return json(res, 400, {
+      error: { code: "invalid_request", message: "Expected a JSON object." },
+    });
+  }
+  const connector = text(body.connector);
+  const account = text(body.account);
+  if (!connector) {
+    return json(res, 400, { error: { code: "invalid_request", message: "Name a connector." } });
+  }
+  if (url.pathname === "/connect/start") {
+    const started = gateway.connect.start({ sub, connector, ...(account ? { account } : {}) });
+    if (!started.ok) {
+      return json(res, started.status, { error: { code: started.code, message: started.message } });
+    }
+    return json(
+      res,
+      200,
+      started.kind === "oauth"
+        ? { kind: "oauth", connector, url: started.url, expires_at: started.expiresAt }
+        : { kind: "static", connector, submit: started.submit },
+    );
+  }
+  if (url.pathname === "/connect/api-key") {
+    const secret = typeof body.api_key === "string" ? body.api_key : "";
+    const stored = gateway.connect.putStatic({
+      sub,
+      connector,
+      ...(account ? { account } : {}),
+      secret,
+    });
+    if (!stored.ok) {
+      return json(res, stored.status, { error: { code: stored.code, message: stored.message } });
+    }
+    return json(res, 200, {
+      connected: true,
+      connector: stored.connector,
+      account: stored.account,
+    });
+  }
+  return json(res, 404, { error: { code: "not_found", message: "No such route." } });
 }

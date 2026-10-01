@@ -600,6 +600,7 @@ def invoke(
     sleep: Any = None,
     rng: Any = None,
     dry_run: bool = False,
+    gateway: Any = None,
 ) -> Any:
     """Run one operation end to end: gate, build, send, and retry only where
     the contract proves retrying is safe.
@@ -609,7 +610,13 @@ def invoke(
     'oauth2_authorization_code'. Never cached here; a provider that wants
     caching does its own. 'dry_run' runs every gate, then returns the redacted
     request plan instead of sending — what 'anvil run --dry-run' prints.
+    'gateway' (gateway mode): the local gates run, then the gateway runs them all.
     """
+    if gateway is not None:
+        sent = {k: v for k, v in payload.items() if v is not None}
+        assert_confirmed(spec, confirm)
+        assert_keyed(spec, resolve_idempotency_key(spec, idempotency_key, sent))
+        return gateway.call(spec, payload, confirm, idempotency_key, dry_run, timeout)
     assert_wire_executable(spec, protocol_facade)
     assert_encodable(spec, payload)
     assert_confirmed(spec, confirm)

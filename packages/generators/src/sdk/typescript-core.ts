@@ -474,12 +474,21 @@ export interface ClientOptions {
   /** Injectable jitter source, so a retry schedule is deterministic. */
   random?: () => number;
   userAgent?: string;
+  /** Gateway mode (gateway.ts): the gateway's /mcp URL; ANVIL_GATEWAY_URL when omitted. */
+  gatewayUrl?: string;
+  /** Gateway token file (ANVIL_GATEWAY_TOKEN_FILE), or a provider; either is read per call. */
+  gatewayTokenFile?: string;
+  gatewayTokenProvider?: () => Promise<string>;
+  /** The gateway's connector id; ANVIL_GATEWAY_CONNECTOR or the compiled default. */
+  gatewayConnector?: string;
 }
 
 /** Headers the transport owns; a caller override would break the contract. */
 const RESERVED_HEADERS = new Set(["authorization", "content-length", "content-type", "host", "transfer-encoding"]);
 ${wireFidelityCore.typescript}
 export interface InvokeContext {
+  /** Gateway mode: the local gates run, then the call goes here instead of upstream. */
+  gateway?: { call(spec: OperationSpec, input: Record<string, unknown>, options: CallOptions): Promise<unknown> };
   baseUrl: string;
   protocolFacade?: string;
   token?: string;
@@ -781,6 +790,12 @@ export async function invoke(
   options: CallOptions,
   context: InvokeContext,
 ): Promise<unknown> {
+  if (context.gateway) {
+    // The gateway runs every gate again; no credential is resolved here.
+    assertConfirmed(spec, options);
+    assertKeyed(spec, await resolveIdempotencyKey(spec, options.idempotencyKey, input));
+    return context.gateway.call(spec, input, options);
+  }
   assertWireExecutable(spec, context);
   assertEncodable(spec, input);
   assertConfirmed(spec, options);

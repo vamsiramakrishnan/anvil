@@ -31,8 +31,11 @@ const EMITTERS: Record<SdkLanguage, (plan: SdkPlan) => Record<string, string>> =
  * set and nothing else — a claim no amount of reading four dialects of
  * generated source would establish as cheaply.
  */
-export function generateSdks(air: AirDocument): Record<string, string> {
-  const plan = sdkPlan(air);
+export function generateSdks(
+  air: AirDocument,
+  opts: { gatewayConnector?: string } = {},
+): Record<string, string> {
+  const plan = sdkPlan(air, opts);
   const files: Record<string, string> = {
     "sdk/manifest.json": `${JSON.stringify(sdkManifest(plan), null, 2)}\n`,
     "sdk/README.md": sdkReadme(plan),

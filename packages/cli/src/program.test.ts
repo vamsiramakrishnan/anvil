@@ -101,7 +101,8 @@ describe("root help", () => {
     // 56 -> 57 when `anvil schema` landed (one command, one line).
     // 57 -> 58 when `anvil rollback` landed (one command, one line).
     // 58 -> 72 when the commands were grouped and the help gained a quick start.
-    expect(text.split("\n").length).toBeLessThan(72);
+    // 72 -> 74 when `anvil connect` and `anvil connectors` landed (two commands, two lines).
+    expect(text.split("\n").length).toBeLessThan(74);
     expect(text).not.toContain("--manifest");
   });
 

@@ -4,6 +4,7 @@ import type { Command } from "commander";
 import { parse as parseYaml } from "yaml";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
+import { registerPackageHarness } from "./harness-package.js";
 import { annotate } from "./meta.js";
 
 /** `anvil package skill <dir>` — validate and package the portable skill. */
@@ -27,6 +28,8 @@ export function registerPackage(parent: Command, ctx: CommandContext): void {
     .action((dir: string, opts: { out?: string }) => {
       ctx.code = runPackageSkill(dir, opts.out, ctx.io);
     });
+
+  registerPackageHarness(pkg, ctx);
 }
 
 /** One validation failure: the file it names, the rule it broke, and why. */

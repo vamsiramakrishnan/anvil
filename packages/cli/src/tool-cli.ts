@@ -39,6 +39,7 @@ import {
   requiresExplicitIdempotencyKey,
   riskSummary,
 } from "./explain.js";
+import { resolveGatewayCall } from "./gateway-mode.js";
 import { type CliIO, processIO } from "./io.js";
 
 /*
@@ -157,6 +158,8 @@ export interface ToolCliDeps {
    *  The generated CLI passes its own sibling; `anvil run <dir>` passes
    *  `<dir>/mcp/server.js`. Absent ⇒ resolved relative to the running script. */
   mcpServerPath?: string;
+  /** The connector id a gateway serves this bundle under (default: its folded service id). */
+  gatewayConnector?: string;
   /** Test seam: connect an MCP client to a target and return a minimal client. */
   mcpConnect?: (
     target: string,
@@ -407,6 +410,18 @@ async function invoke(
     throw err;
   }
 
+  // Gateway mode (ADR-0029): ANVIL_GATEWAY_URL sends every call through the
+  // `--mcp <url>` path below; the direct path is never reached.
+  const gateway = resolveGatewayCall(op, air.service.id, flags, env, deps.gatewayConnector);
+  if (gateway && !gateway.ok) {
+    io.err(JSON.stringify(gateway.error.toEnvelope(), null, 2));
+    return exitCodeFor(gateway.error.code);
+  }
+  if (gateway?.ok) {
+    const { safety, target, auth, toolName } = gateway;
+    return invokeViaMcp(op, input, safety, target, deps, io, auth, toolName);
+  }
+
   // skill → CLI → MCP: where this invocation runs is a per-call runtime choice.
   //   (unset)                    → execute directly (the default)
   //   --mcp stdio  | =stdio      → route through the bundle's LOCAL mcp/server.js
@@ -645,6 +660,7 @@ async function invokeViaMcp(
   deps: ToolCliDeps,
   io: CliIO,
   connectOptions: McpConnectOptions = {},
+  toolName: string = op.mcp.toolName,
 ): Promise<number> {
   // Map the CLI's safety flags onto what the MCP tool expects. `confirm` and
   // `idempotency_key` are synthesized INPUT fields (present in the published
@@ -683,7 +699,7 @@ async function invokeViaMcp(
   }
 
   try {
-    const res = await client.callTool({ name: op.mcp.toolName, arguments: args });
+    const res = await client.callTool({ name: toolName, arguments: args });
     const text =
       res.content?.find((c) => c.type === "text")?.text ??
       JSON.stringify(res.structuredContent ?? res, null, 2);

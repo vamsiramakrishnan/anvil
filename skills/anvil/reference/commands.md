@@ -1489,6 +1489,20 @@ Options:
 - `--http <port>` — with --fleet: serve over StreamableHTTP on this port instead of stdio, with the deployed server's inbound-auth enforcement (ANVIL_INBOUND_*); /readyz and /healthz share the listener
 - `--host <host>` — with --http: the interface to bind (default 127.0.0.1); a non-loopback host requires inbound auth
 
+### `anvil connect`  *(mutates)*
+`anvil connect [options] <workspace> <connector>`
+
+Connect a person's upstream account to a running Branchyard gateway.
+
+Asks the gateway (ANVIL_GATEWAY_URL or --gateway) for an OAuth authorization URL for the connector and prints it, or opens it with --open. A key-based connector reads its key from stdin with --api-key-stdin. The person is identified by their gateway token (ANVIL_GATEWAY_TOKEN_FILE or --token-file); tokens never leave the gateway.
+
+Options:
+- `--account <name>` — which of the person's accounts to connect (default: default)
+- `--gateway <url>` — the gateway's /mcp URL (default: ANVIL_GATEWAY_URL)
+- `--token-file <path>` — the person's gateway token file (default: ANVIL_GATEWAY_TOKEN_FILE)
+- `--api-key-stdin` — read an API key or personal token for a key-based connector from stdin
+- `--open` — open the authorization URL in the default browser as well as printing it
+
 ### `anvil package`  *(mutates)*
 `anvil package [options] [command]`
 
@@ -1505,6 +1519,36 @@ Checks SKILL.md frontmatter (spec-legal name and description), that every path S
 
 Options:
 - `--out <dir>` — copy the validated skill to <out>/<skill-name>/
+
+#### `anvil package harness`
+`anvil package harness [options] <bundle>`
+
+Package one connector for a Branchyard harness home (gateway mode).
+
+Writes <out>/SKILL.md, reference/, schemas/, examples/, python/, typescript/, bin/<connector>, and harness.json. The SDKs and CLI call the Anvil gateway named by ANVIL_GATEWAY_URL with the token in ANVIL_GATEWAY_TOKEN_FILE and never read an upstream credential. The CLI needs Node.js 18+, the Python SDK Python 3.9+, the TypeScript SDK a TypeScript build or a runtime that strips types.
+
+Options:
+- `--out <dir>` — the package directory to write (replaced if it holds a previous package)
+- `--connector <id>` — the connector id the gateway serves this bundle under (default: the bundle directory's name)
+
+### `anvil connectors`  *(mutates)*
+`anvil connectors [options] [command]`
+
+Branchyard connector helpers (the harness index).
+
+Writes what a Branchyard harness home needs beside the packaged connectors.
+
+#### `anvil connectors index`
+`anvil connectors index [options] <bundles...>`
+
+Write INDEX.md: one short entry per granted connector.
+
+Reads a grant (a JSON array of {connector, operations, mode, account?, confirm?} entries, or an object with a `grants` array) and writes one entry for each bundle a grant entry names: what it is for, when to use it, and where its skill is. Ungranted bundles are left out.
+
+Options:
+- `--grants <file>` — the grant JSON
+- `--out <file>` — where to write INDEX.md
+- `--skills-root <dir>` — the directory holding the packaged connectors, as INDEX.md should name it (default: the directory of --out)
 
 ### `anvil skill`
 `anvil skill [options] [out-dir]`
