@@ -84,6 +84,7 @@ const PAGES = [
   { src: "docs/targets.md", dest: "guides/agent-platform-targets.md", order: 6 },
   { src: "docs/runtime-extensions.md", dest: "guides/runtime-extensions.md", order: 6 },
   { src: "docs/fleet.md", dest: "guides/fleet.md", order: 6 },
+  { src: "docs/branchyard.md", dest: "guides/branchyard.md", order: 6 },
   { src: "docs/wire-protocols.md", dest: "guides/wire-protocols.md", order: 7 },
   {
     src: "docs/simulator-state-providers.md",

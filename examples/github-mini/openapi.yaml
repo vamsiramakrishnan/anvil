@@ -1,0 +1,121 @@
+openapi: 3.0.3
+info:
+  title: GitHub Mini
+  version: 1.0.0
+  description: >-
+    A four-operation, GitHub-shaped API used as the Branchyard connector
+    fixture: list, get and create issues, and list pull requests in one
+    repository.
+servers:
+  - url: https://api.github.example
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Issue:
+      type: object
+      required: [number, title, state]
+      properties:
+        number: { type: integer }
+        title: { type: string }
+        state: { type: string, enum: [open, closed] }
+        body: { type: string }
+    Pull:
+      type: object
+      required: [number, title, state]
+      properties:
+        number: { type: integer }
+        title: { type: string }
+        state: { type: string, enum: [open, closed, merged] }
+    Error:
+      type: object
+      properties:
+        message: { type: string }
+security:
+  - bearerAuth: []
+paths:
+  /repos/{owner}/{repo}/issues:
+    get:
+      operationId: listIssues
+      summary: List issues in a repository
+      description: List the issues in one repository, newest first.
+      parameters:
+        - { name: owner, in: path, required: true, schema: { type: string } }
+        - { name: repo, in: path, required: true, schema: { type: string } }
+        - name: state
+          in: query
+          schema: { type: string, enum: [open, closed, all] }
+      responses:
+        "200":
+          description: The issues.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Issue" }
+        "404":
+          description: No such repository.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    post:
+      operationId: createIssue
+      summary: Create an issue
+      description: Open a new issue in one repository.
+      parameters:
+        - { name: owner, in: path, required: true, schema: { type: string } }
+        - { name: repo, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string }
+                body: { type: string }
+      responses:
+        "201":
+          description: The created issue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Issue" }
+  /repos/{owner}/{repo}/issues/{issue_number}:
+    get:
+      operationId: getIssue
+      summary: Get an issue
+      description: Read one issue by its number.
+      parameters:
+        - { name: owner, in: path, required: true, schema: { type: string } }
+        - { name: repo, in: path, required: true, schema: { type: string } }
+        - { name: issue_number, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: The issue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Issue" }
+        "404":
+          description: No such issue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /repos/{owner}/{repo}/pulls:
+    get:
+      operationId: listPulls
+      summary: List pull requests
+      description: List the pull requests in one repository.
+      parameters:
+        - { name: owner, in: path, required: true, schema: { type: string } }
+        - { name: repo, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The pull requests.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Pull" }

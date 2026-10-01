@@ -237,6 +237,31 @@ const exchanger = createTokenExchanger(TOKEN_ENDPOINT, { clientId, clientSecret,
 const forAlice = new PaymentsClient({ tokenProvider: exchanger.tokenProvider(aliceInboundToken) });
 ```
 
+## Gateway mode
+
+With `ANVIL_GATEWAY_URL` set, the TypeScript and Python clients send every call
+to an Anvil gateway over MCP Streamable HTTP instead of calling the upstream,
+and read no upstream credential variable, even one that is set. The bearer is
+read from the file `ANVIL_GATEWAY_TOKEN_FILE` names on every call, so a token
+replaced between calls takes effect without a new client. The tool on the wire
+is `<connector>__<tool>`; the connector id defaults to the folded service id
+and can be overridden with `ANVIL_GATEWAY_CONNECTOR` (`anvil package harness`
+bakes in the bundle's own id).
+
+| Language | Gateway options |
+| --- | --- |
+| TypeScript | `{ gatewayUrl, gatewayTokenFile, gatewayTokenProvider, gatewayConnector }` |
+| Python | `gateway_url=`, `gateway_token_file=`, `gateway_connector=` |
+
+The local confirmation and idempotency checks still run before a call leaves
+the client; `confirm`, `idempotency_key`, and dry run travel as the tool's
+reserved inputs; and the result is what a direct call returns or raises: data,
+the dry-run plan, or `AnvilError` carrying the gateway's code and details.
+`packages/generators/src/sdk-gateway.test.ts` drives both languages against a
+stub gateway and asserts the token is re-read per call and `GITHUB_TOKEN` is
+never read. Go and Java clients have no gateway mode yet. See
+[Serving Branchyard harnesses](branchyard.md).
+
 ## Safety rules
 
 | Condition | Client behavior |
