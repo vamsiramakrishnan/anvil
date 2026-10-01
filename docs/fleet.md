@@ -142,6 +142,17 @@ token is refused `policy/principal_unresolved` by `execute()`, never
 promoted to anonymous, the same fail-closed rule stdio's `ANVIL_PRINCIPAL`
 follows.
 
+### As a Branchyard gateway
+
+With `ANVIL_INBOUND_AUTH_MODE=branchyard` the same listener is the gateway
+Branchyard harnesses call: each session belongs to one turn's EdDSA token,
+whose grant (`by_grants`) is checked per operation before any upstream call;
+every tool keeps its connector prefix even when one bundle is mounted;
+credentials come from an encrypted per-person vault instead of
+`ANVIL_<PROFILE>_*`; and `/connect/*` runs the connect flow. See
+[Serving Branchyard harnesses](branchyard.md) and
+[ADR-0029](adr/0029-branchyard-connector-gateway.md).
+
 ## Principals
 
 A `Principal` (`{ id, scopes[] }`,

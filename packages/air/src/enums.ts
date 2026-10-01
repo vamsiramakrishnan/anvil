@@ -216,6 +216,8 @@ export const FLEET_POLICY_CODE = z.enum([
   "policy/rate_limited",
   "policy/budget_exhausted",
   "policy/principal_unresolved",
+  "policy/grant_denied",
+  "policy/grant_confirmation_required",
 ]);
 export type FleetPolicyCode = z.infer<typeof FLEET_POLICY_CODE>;
 export type ErrorCode = z.infer<typeof ErrorCode>;
@@ -303,6 +305,17 @@ export const InteractionArchetype = z.enum([
   "stream_source",
 ]);
 export type InteractionArchetype = z.infer<typeof InteractionArchetype>;
+
+/**
+ * Whether an operation is a directly-callable tool on every agent surface —
+ * the MCP server, the client SDKs, and a harness package's CLI, skill and
+ * `harness.json`. A `webhook_receiver` is not: it is receiver-only, wired
+ * through `AsyncContract.webhook`. The one predicate every surface filters by,
+ * so they never disagree about what an agent can call.
+ */
+export function isDirectlyCallable(op: { archetype?: InteractionArchetype | undefined }): boolean {
+  return op.archetype !== "webhook_receiver";
+}
 
 /** Diagnostic severity emitted by the validator. */
 export const DiagnosticLevel = z.enum(["error", "warning", "info"]);

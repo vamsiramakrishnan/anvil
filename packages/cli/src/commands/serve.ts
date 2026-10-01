@@ -2,7 +2,13 @@ import { createServer } from "node:http";
 import type { CertificationVerdict } from "@anvil/generators";
 import type { FleetBundleInput, FleetServer } from "@anvil/mcp-runtime";
 import { loadAir } from "@anvil/refinement";
-import type { InboundIdentity, Principal, RuntimeConfig } from "@anvil/runtime";
+import type {
+  AuditSink,
+  CredentialResolver,
+  InboundIdentity,
+  Principal,
+  RuntimeConfig,
+} from "@anvil/runtime";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
@@ -161,16 +167,34 @@ interface PreparedBundle {
   certification: FleetBundleInput["certification"];
 }
 
+/**
+ * What a Branchyard gateway session adds to a fleet composition: the
+ * principal's vault-backed credentials (never the environment's).
+ */
+interface GatewaySessionDeps {
+  credentials: CredentialResolver;
+}
+
 export type PreparedFleet =
   | {
       ok: true;
       bundleIds: string[];
+      /** Each mounted bundle's connector id (its fleet prefix) and AIR, for the connect flow. */
+      connectors: Array<{ bundleId: string; connector: string; air: ReturnType<typeof loadAir> }>;
       config: RuntimeConfig;
       principalDirectoryConfigured: boolean;
       /** Resolve a session's caller: by verified inbound identity, else ANVIL_PRINCIPAL. */
       principalFor: (inbound?: InboundIdentity) => Principal | undefined;
-      /** Compose one fleet server for one session/transport, under one principal. */
-      build(session: { principal: Principal | undefined }): Promise<FleetServer>;
+      /**
+       * Compose one fleet server for one session/transport, under one
+       * principal. A principal carrying a Branchyard grant gets every tool
+       * under its connector prefix, `tools/list` narrowed to its grant, and
+       * `gateway.credentials` in place of the environment's resolver.
+       */
+      build(session: {
+        principal: Principal | undefined;
+        gateway?: GatewaySessionDeps;
+      }): Promise<FleetServer>;
     }
   | { ok: false; message: string };
 
@@ -186,6 +210,7 @@ export type PreparedFleet =
 export async function prepareFleetForWorkspace(
   workspaceRoot: string,
   env: NodeJS.ProcessEnv = process.env,
+  opts: { audit?: AuditSink } = {},
 ): Promise<PreparedFleet> {
   const { discoverBundles } = await import("@anvil/generators");
   const bundles = discoverBundles(workspaceRoot);
@@ -200,7 +225,7 @@ export async function prepareFleetForWorkspace(
   const { buildToolResources, readBundleDir, verifyCertification } = await import(
     "@anvil/generators"
   );
-  const { allowedHostsFor, bootRuntimeFromEnv } = await import("@anvil/runtime");
+  const { allowedHostsFor, bootRuntimeFromEnv, decideGrant } = await import("@anvil/runtime");
 
   // Same composition root as every other serving surface (see runServeMcp).
   // A fleet mounts many bundles on one process, so its extensions and its
@@ -280,11 +305,31 @@ export async function prepareFleetForWorkspace(
   return {
     ok: true,
     bundleIds: bundles.map((b) => b.id),
+    connectors: prepared.map((bundle) => ({
+      bundleId: bundle.id,
+      connector: fleetToolPrefix(bundle.id),
+      air: bundle.air,
+    })),
     config,
     principalDirectoryConfigured: boot.contextDeps.principalDirectoryConfigured,
     principalFor: boot.principalFor,
-    build: ({ principal }) =>
-      buildFleetServer(
+    build: ({ principal, gateway }) => {
+      const grants = principal?.grants;
+      if (grants !== undefined && !gateway) {
+        // Fail closed: a granted caller's credentials come from the vault,
+        // never from the environment's resolver.
+        return Promise.reject(
+          new Error("a Branchyard principal needs the gateway's vault credentials"),
+        );
+      }
+      const opsById = new Map(
+        prepared.map((bundle) => [
+          bundle.id,
+          new Map(bundle.air.operations.map((op) => [op.id, op] as const)),
+        ]),
+      );
+      const serviceOf = new Map(prepared.map((bundle) => [bundle.id, bundle.air.service.id]));
+      return buildFleetServer(
         prepared.map((bundle) => ({
           id: bundle.id,
           air: bundle.air,
@@ -293,6 +338,7 @@ export async function prepareFleetForWorkspace(
             measuredAccuracy: bundle.measuredAccuracy,
             contextFor: () => ({
               ...boot.contextDeps,
+              ...(gateway ? { credentials: gateway.credentials } : {}),
               serviceId: bundle.air.service.id,
               baseUrl: bundle.baseUrl,
               authProfile: bundle.authProfile,
@@ -300,12 +346,36 @@ export async function prepareFleetForWorkspace(
               env: config.env,
               timeoutMs: config.upstreamTimeoutMs,
               principal,
+              connector: fleetToolPrefix(bundle.id),
+              ...(opts.audit ? { audit: opts.audit } : {}),
             }),
           },
           certification: bundle.certification,
         })),
-        { name: "anvil-fleet", version: "0.1.0" },
-      ),
+        {
+          name: "anvil-fleet",
+          version: "0.1.0",
+          // A Branchyard caller dials `<connector>__<tool>` whatever else the
+          // gateway serves, and is offered only what its grant allows.
+          ...(grants !== undefined
+            ? {
+                alwaysPrefix: true,
+                listFilter: (bundleId: string, operationId: string | undefined) => {
+                  const op = operationId ? opsById.get(bundleId)?.get(operationId) : undefined;
+                  if (!op) {
+                    // A composite (workflow) tool: offered when the grant
+                    // reaches this connector at all; each step it runs is
+                    // still checked on its own.
+                    return grants.some((entry) => entry.connector === fleetToolPrefix(bundleId));
+                  }
+                  return decideGrant(grants, fleetToolPrefix(bundleId), op, serviceOf.get(bundleId))
+                    .allowed;
+                },
+              }
+            : {}),
+        },
+      );
+    },
   };
 }
 

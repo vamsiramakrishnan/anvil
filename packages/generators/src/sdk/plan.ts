@@ -4,6 +4,7 @@ import {
   agentPropKey,
   camelCase,
   effectiveAuthCarrier,
+  isDirectlyCallable,
   isModeledIdempotencyCarrierInput,
   type JsonSchema,
   type Operation,
@@ -307,6 +308,18 @@ export interface SdkPlan {
   operations: SdkOperation[];
   /** The full Anvil error taxonomy, so every language enumerates the same codes. */
   errorCodes: string[];
+  /**
+   * Gateway mode (docs/branchyard.md): the connector id a Branchyard gateway
+   * mounts this service under. A tool on that gateway is
+   * `<connector>__<mcpToolName>`. Defaults to the folded service id;
+   * `anvil package harness` sets the bundle's own connector id.
+   */
+  gateway: { connector: string };
+}
+
+/** Fold an id to a gateway connector id — the fleet's prefix rule (`fleetToolPrefix`). */
+export function gatewayConnectorId(id: string): string {
+  return id.replace(/[^A-Za-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "") || "bundle";
 }
 
 /** The Anvil error taxonomy (spec §10) — mirrored verbatim into every SDK. */
@@ -549,9 +562,7 @@ function asyncOf(op: Operation, byId: Map<string, Operation>): SdkAsync | undefi
  * is not advice here — it is the filter, applied in exactly one place.
  */
 export function sdkOperations(air: AirDocument): Operation[] {
-  return air.operations.filter(
-    (op) => op.state === "approved" && op.archetype !== "webhook_receiver",
-  );
+  return air.operations.filter((op) => op.state === "approved" && isDirectlyCallable(op));
 }
 
 /**
@@ -692,7 +703,7 @@ function dryRunKeyOf(op: SdkOperation["params"], body: SdkOperation["body"]): st
 }
 
 /** Project AIR onto the language-neutral SDK plan. Pure and deterministic. */
-export function sdkPlan(air: AirDocument): SdkPlan {
+export function sdkPlan(air: AirDocument, opts: { gatewayConnector?: string } = {}): SdkPlan {
   const byId = new Map(air.operations.map((op) => [op.id, op]));
   const serviceNames = names(air.service.id);
   // Auth is a service-level concern in every SDK we emit: the carrier is
@@ -759,6 +770,7 @@ export function sdkPlan(air: AirDocument): SdkPlan {
       errorCodes: [...new Set(op.errors.map((error) => error.code))].sort(),
     })),
     errorCodes: [...SDK_ERROR_CODES],
+    gateway: { connector: gatewayConnectorId(opts.gatewayConnector ?? air.service.id) },
   };
 }
 

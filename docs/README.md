@@ -43,6 +43,9 @@ executed. Parsing and lowering can succeed while the wire path remains blocked.
   simulator over HTTP from your own data, and read back a call trace.
 - [Review console](console.md): inspect pending decisions in the workspace.
 - [Fleet operations](fleet.md): manage repeated work across integrations.
+- [Branchyard harnesses](branchyard.md): serve connectors to Branchyard
+  branches through the fleet gateway, with per-turn grants, a credential
+  vault, and an audit log.
 - [Legacy SDK](legacy-sdk.md): programmatic legacy inventory and review.
 - [Legacy refinement](legacy-refinement.md): evidence-backed capability proposals.
 

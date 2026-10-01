@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=../../schemas/anvil-manifest.schema.json
+# The Branchyard connector fixture (docs/branchyard.md). Operation names are
+# pinned so AIR ids read `github.issues.list`, `github.issues.create`, ... and
+# a grant can say `issues.*` or `pulls.list`.
+service:
+  name: github
+  display_name: GitHub Mini
+  owner: branchyard-fixtures
+  environment: prod
+
+operations:
+  listIssues:
+    name: { resource: issues, verb: list }
+    state: approved
+  getIssue:
+    name: { resource: issues, verb: get }
+    state: approved
+  listPulls:
+    name: { resource: pulls, verb: list }
+    state: approved
+  # Opening an issue is visible to other people: a mutation that needs
+  # confirmation, so a grant must say `mode: write` and `confirm: allow`.
+  createIssue:
+    name: { resource: issues, verb: create }
+    side_effect: mutation
+    risk: medium
+    reversible: false
+    idempotency:
+      strategy: none
+    confirmation:
+      required: true
+      risk: medium
+      reason: Opening an issue notifies the repository's watchers.
+    state: approved

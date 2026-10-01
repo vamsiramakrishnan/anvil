@@ -18,8 +18,8 @@ export const SERVING_ENV_CONTRACT: readonly RuntimeEnvVar[] = [
   {
     name: "ANVIL_INBOUND_AUTH_MODE",
     description:
-      'Inbound bearer verification for every tool route: "none" (default; local runs behind other controls), "oidc" (RS256 JWT against ANVIL_INBOUND_JWKS_URI), or "google_service_account" (Google-issued tokens; issuer and certs fixed unless overridden). Business gateways refuse "none" outside dev.',
-    enum: ["none", "oidc", "google_service_account"],
+      'Inbound bearer verification for every tool route: "none" (default; local runs behind other controls), "oidc" (RS256 JWT against ANVIL_INBOUND_JWKS_URI), "google_service_account" (Google-issued tokens; issuer and certs fixed unless overridden), or "branchyard" (EdDSA per-turn tokens carrying a grant; served only by `anvil serve mcp --fleet --http`, and refused by this server). Business gateways refuse "none" outside dev.',
+    enum: ["none", "oidc", "google_service_account", "branchyard"],
   },
   {
     name: "ANVIL_INBOUND_ISSUER",
@@ -37,7 +37,7 @@ export const SERVING_ENV_CONTRACT: readonly RuntimeEnvVar[] = [
   {
     name: "ANVIL_INBOUND_JWKS_URI",
     description:
-      "Public HTTPS JWKS endpoint used to verify inbound token signatures. Required when the mode is oidc.",
+      "Public HTTPS JWKS endpoint used to verify inbound token signatures. Required when the mode is oidc; for branchyard it may also be a file: URL.",
   },
   {
     name: "ANVIL_INBOUND_REQUIRED_SCOPES",

@@ -18,9 +18,18 @@
  * offline, and keys are cached by URI.
  */
 import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
-import { fetchPublicJson } from "@anvil/runtime";
+import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
+import { fetchPublicJson, type Principal, parseGrants } from "@anvil/runtime";
 
-export type InboundAuthMode = "none" | "oidc" | "google_service_account";
+/**
+ * `branchyard` (ADR-0029): a per-turn EdDSA (Ed25519) token minted by
+ * Branchyard's access broker, verified against a JWKS given as an `https:` or
+ * `file:` URL, carrying the caller's grant (`by_grants`). Only the fleet
+ * gateway (`anvil serve mcp --fleet --http`) serves it, because only the
+ * fleet enforces the grant; every other entrypoint refuses to boot with it.
+ */
+export type InboundAuthMode = "none" | "oidc" | "google_service_account" | "branchyard";
 
 export interface InboundAuthConfig {
   mode: InboundAuthMode;
@@ -61,6 +70,9 @@ export interface Jwk {
   use?: string;
   n?: string;
   e?: string;
+  crv?: string;
+  x?: string;
+  y?: string;
 }
 
 /** Fetches a JWKS document. Injectable so verification is testable offline. */
@@ -69,9 +81,22 @@ export type JwksFetcher = (uri: string) => Promise<{ keys: Jwk[] }>;
 const GOOGLE_ISSUER = "https://accounts.google.com";
 const GOOGLE_JWKS = "https://www.googleapis.com/oauth2/v3/certs";
 
-/** Read the inbound-auth contract from the environment (secrets never live here). */
-export function loadInboundAuthConfig(env: NodeJS.ProcessEnv = process.env): InboundAuthConfig {
+/**
+ * Read the inbound-auth contract from the environment (secrets never live
+ * here). `branchyard` is accepted only when the caller says it enforces the
+ * grant (`allowBranchyard`): a server that verified the token but ignored
+ * its grant would admit every caller to every tool.
+ */
+export function loadInboundAuthConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  opts: { allowBranchyard?: boolean } = {},
+): InboundAuthConfig {
   const mode = normalizeMode(env.ANVIL_INBOUND_AUTH_MODE);
+  if (mode === "branchyard" && !opts.allowBranchyard) {
+    throw new Error(
+      "ANVIL_INBOUND_AUTH_MODE=branchyard is served only by the fleet gateway (`anvil serve mcp <workspace> --fleet --http <port>`), which enforces the token's grant; this entrypoint does not.",
+    );
+  }
   const leeway = parseLeeway(env.ANVIL_INBOUND_LEEWAY_SECONDS);
   if (mode === "google_service_account") {
     // Google-issued tokens: fixed issuer + certs unless explicitly overridden.
@@ -102,9 +127,9 @@ export function loadInboundAuthConfig(env: NodeJS.ProcessEnv = process.env): Inb
 
 function normalizeMode(raw: string | undefined): InboundAuthMode {
   if (raw === undefined || raw.trim() === "" || raw === "none") return "none";
-  if (raw === "oidc" || raw === "google_service_account") return raw;
+  if (raw === "oidc" || raw === "google_service_account" || raw === "branchyard") return raw;
   throw new Error(
-    `Invalid ANVIL_INBOUND_AUTH_MODE=${JSON.stringify(raw)}; expected none, oidc, or google_service_account.`,
+    `Invalid ANVIL_INBOUND_AUTH_MODE=${JSON.stringify(raw)}; expected none, oidc, google_service_account, or branchyard.`,
   );
 }
 
@@ -126,8 +151,19 @@ function parseLeeway(raw: string | undefined): number | undefined {
 const JWKS_CACHE_TTL_MS = 5 * 60_000;
 const jwksCache = new Map<string, { keys: Jwk[]; expiresAt: number }>();
 
+const JWKS_MAX_BYTES = 256 * 1024;
+
 const defaultFetchJwks: JwksFetcher = async (uri) => {
-  const { response, json } = await fetchPublicJson(uri, {}, { maxBytes: 256 * 1024 });
+  if (uri.startsWith("file:")) {
+    // A local yard's `.branchyard/gateway/jwks.json`: read afresh each time
+    // (see getKeys), so a key Branchyard rotates is seen immediately.
+    const text = await readFile(fileURLToPath(uri), "utf8");
+    if (Buffer.byteLength(text) > JWKS_MAX_BYTES) throw new Error("JWKS file is too large");
+    const json: unknown = JSON.parse(text);
+    if (typeof json !== "object" || json === null) throw new Error("JWKS file is not an object");
+    return json as { keys: Jwk[] };
+  }
+  const { response, json } = await fetchPublicJson(uri, {}, { maxBytes: JWKS_MAX_BYTES });
   if (!response.ok) throw new Error(`JWKS fetch failed (${response.status})`);
   if (typeof json !== "object" || json === null) throw new Error("JWKS response is not an object");
   return json as { keys: Jwk[] };
@@ -146,7 +182,7 @@ async function resolveJwksUri(config: InboundAuthConfig, fetchJwks: JwksFetcher)
 }
 
 async function getKeys(uri: string, fetchJwks: JwksFetcher, refresh = false): Promise<Jwk[]> {
-  const cached = jwksCache.get(uri);
+  const cached = uri.startsWith("file:") ? undefined : jwksCache.get(uri);
   if (!refresh && cached && Date.now() < cached.expiresAt) return cached.keys;
   const doc = await fetchJwks(uri);
   if (!doc || !Array.isArray(doc.keys)) throw new Error("JWKS response has no keys array");
@@ -170,7 +206,11 @@ export async function verifyInboundToken(
   opts: { now?: number; fetchJwks?: JwksFetcher } = {},
 ): Promise<InboundAuthResult> {
   if (config.mode === "none") return { ok: true, claims: {} };
-  if (config.mode !== "oidc" && config.mode !== "google_service_account") {
+  if (
+    config.mode !== "oidc" &&
+    config.mode !== "google_service_account" &&
+    config.mode !== "branchyard"
+  ) {
     return deny(401, "invalid_token", "Inbound authentication mode is invalid.", config);
   }
   try {
@@ -209,11 +249,15 @@ export async function verifyInboundToken(
   } catch {
     return deny(401, "invalid_token", "JWT header/payload is not valid JSON.", config);
   }
-  if (header.alg !== "RS256" && header.alg !== "ES256") {
+  // Branchyard signs with Ed25519 and nothing else; the IdP modes keep
+  // RS256/ES256. Each mode accepts only its own algorithms, so a key of one
+  // kind can never be replayed under another.
+  const branchyard = config.mode === "branchyard";
+  if (branchyard ? header.alg !== "EdDSA" : header.alg !== "RS256" && header.alg !== "ES256") {
     return deny(
       401,
       "invalid_token",
-      `Unsupported JWT alg "${header.alg}" (expected RS256 or ES256).`,
+      `Unsupported JWT alg "${header.alg}" (expected ${branchyard ? "EdDSA" : "RS256 or ES256"}).`,
       config,
     );
   }
@@ -244,6 +288,9 @@ export async function verifyInboundToken(
     if (jwk.alg && jwk.alg !== header.alg) {
       return deny(401, "invalid_token", "JWKS key algorithm does not match the token.", config);
     }
+    if (branchyard && (jwk.kty !== "OKP" || jwk.crv !== "Ed25519")) {
+      return deny(401, "invalid_token", "JWKS key is not an Ed25519 key.", config);
+    }
     // Node accepts a JWK directly via `format: "jwk"`; the cast avoids naming the
     // DOM-only `JsonWebKey` type in this node-only package.
     const key = createPublicKey({ key: jwk, format: "jwk" } as unknown as Parameters<
@@ -252,9 +299,11 @@ export async function verifyInboundToken(
     const data = Buffer.from(`${rawHeader}.${rawPayload}`);
     const sig = Buffer.from(rawSig, "base64url");
     verified =
-      header.alg === "RS256"
-        ? cryptoVerify("RSA-SHA256", data, key, sig)
-        : cryptoVerify("sha256", data, { key, dsaEncoding: "ieee-p1363" }, sig);
+      header.alg === "EdDSA"
+        ? cryptoVerify(null, data, key, sig)
+        : header.alg === "RS256"
+          ? cryptoVerify("RSA-SHA256", data, key, sig)
+          : cryptoVerify("sha256", data, { key, dsaEncoding: "ieee-p1363" }, sig);
   } catch {
     // A JWKS fetch/parse failure is a server-side inability to verify — fail
     // closed as an invalid token rather than admitting an unverified caller.
@@ -277,6 +326,10 @@ export async function verifyInboundToken(
   }
   if (typeof claims.nbf === "number" && now < claims.nbf - leeway) {
     return deny(401, "invalid_token", "Token is not yet valid.", config);
+  }
+  if (branchyard) {
+    const problem = branchyardClaimsProblem(claims, now, leeway);
+    if (problem) return deny(401, "invalid_token", problem, config);
   }
   const missing = missingScopes(claims, config.requiredScopes);
   if (missing.length > 0) {
@@ -326,6 +379,10 @@ function validClaimsShape(claims: Record<string, unknown>): claims is InboundCla
 
 function validateEnabledConfig(config: InboundAuthConfig): void {
   if (config.mode === "none") return;
+  if (config.mode === "branchyard") {
+    validateBranchyardConfig(config);
+    return;
+  }
   if (!config.issuer) throw new Error("inbound auth requires an issuer");
   if (!config.audience) throw new Error("inbound auth requires an audience");
   const resource =
@@ -451,5 +508,153 @@ export function verifiedPrincipalFingerprint(claims: unknown): string | undefine
         : undefined;
   return createHash("sha256")
     .update(JSON.stringify({ issuer, sub, oid, authorizedParty, tenant }))
+    .digest("base64url");
+}
+
+/** One hour: Branchyard mints a token per turn that expires with it, and never later than this. */
+const BRANCHYARD_MAX_LIFETIME_SECONDS = 3600;
+
+/** Ten minutes: a connect token lives only as long as one connect flow takes to start. */
+const BRANCHYARD_CONNECT_MAX_LIFETIME_SECONDS = 600;
+
+/**
+ * The `by_purpose` value of the person-only token Branchyard mints for
+ * `by connect` (and nothing else): it names the person and grants nothing.
+ */
+const BRANCHYARD_CONNECT_PURPOSE = "connect";
+
+/**
+ * True when verified branchyard claims are a connect token
+ * (`by_purpose: "connect"`). Only a connect token may start a connection,
+ * store a key, or read the person's connections at `/connect/*`; a connect
+ * token may never list or call tools. A turn token (no `by_purpose`) is the
+ * reverse — a harness holds it, so it must never change the person's
+ * connections.
+ */
+export function isBranchyardConnectToken(claims: InboundClaims): boolean {
+  return claims.by_purpose === BRANCHYARD_CONNECT_PURPOSE;
+}
+
+/**
+ * `branchyard` configuration: the yard's issuer (a URL, or
+ * `branchyard:local:<yard id>`), the gateway's canonical `/mcp` URL as the
+ * audience (HTTPS, or HTTP on a loopback host for a local yard), and the
+ * JWKS as an `https:` or `file:` URL.
+ */
+function validateBranchyardConfig(config: InboundAuthConfig): void {
+  if (!config.issuer) throw new Error("branchyard inbound auth requires ANVIL_INBOUND_ISSUER");
+  if (!config.audience) throw new Error("branchyard inbound auth requires ANVIL_INBOUND_AUDIENCE");
+  if (!config.jwksUri) throw new Error("branchyard inbound auth requires ANVIL_INBOUND_JWKS_URI");
+  let audience: URL;
+  try {
+    audience = new URL(config.audience);
+  } catch {
+    throw new Error("branchyard inbound auth audience must be the gateway's /mcp URL");
+  }
+  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(audience.hostname);
+  if (
+    !(audience.protocol === "https:" || (audience.protocol === "http:" && loopback)) ||
+    audience.username ||
+    audience.password ||
+    audience.hash
+  ) {
+    throw new Error(
+      "branchyard inbound auth audience must be an HTTPS URL (or HTTP on a loopback host) without userinfo or fragment",
+    );
+  }
+  let jwks: URL;
+  try {
+    jwks = new URL(config.jwksUri);
+  } catch {
+    throw new Error("branchyard inbound auth JWKS URI is invalid");
+  }
+  if ((jwks.protocol !== "https:" && jwks.protocol !== "file:") || jwks.username || jwks.password) {
+    throw new Error("branchyard inbound auth JWKS URI must be an https: or file: URL");
+  }
+}
+
+function optionalText(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && value.length <= 256);
+}
+
+/** Why verified branchyard claims are still unacceptable, or undefined when they are fine. */
+function branchyardClaimsProblem(
+  claims: InboundClaims,
+  now: number,
+  leeway: number,
+): string | undefined {
+  if (typeof claims.sub !== "string" || claims.sub.length === 0 || claims.sub.length > 256) {
+    return "Token has no subject.";
+  }
+  if (
+    typeof claims.exp === "number" &&
+    claims.exp - now > BRANCHYARD_MAX_LIFETIME_SECONDS + leeway
+  ) {
+    return "Token lifetime exceeds one hour.";
+  }
+  if (claims.iat !== undefined) {
+    if (typeof claims.iat !== "number" || !Number.isFinite(claims.iat))
+      return "Token iat is invalid.";
+    if (claims.iat > now + leeway) return "Token was issued in the future.";
+  }
+  if (!optionalText(claims.jti)) return "Token jti is invalid.";
+  for (const key of ["by_tenant", "by_branch", "by_turn"] as const) {
+    if (!optionalText(claims[key])) return `Token ${key} is invalid.`;
+  }
+  if (parseGrants(claims.by_grants) === undefined) return "Token grant (by_grants) is malformed.";
+  if (claims.by_purpose !== undefined) {
+    // Fail closed on a purpose this gateway does not know.
+    if (claims.by_purpose !== BRANCHYARD_CONNECT_PURPOSE) return "Token by_purpose is unknown.";
+    if (
+      typeof claims.exp === "number" &&
+      claims.exp - (typeof claims.iat === "number" ? Math.min(claims.iat, now) : now) >
+        BRANCHYARD_CONNECT_MAX_LIFETIME_SECONDS + leeway
+    ) {
+      return "Connect token lifetime exceeds ten minutes.";
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The principal a verified branchyard token names: `id` is `sub`, the grant
+ * is `by_grants`, and `by_tenant`/`by_branch`/`by_turn` ride along for audit.
+ * Scopes are every scope: the grant, not a scope list, is what limits this
+ * caller, and it is checked per operation before any upstream call. A token
+ * with a `by_purpose` (a connect token) names no tool caller: undefined.
+ */
+export function branchyardPrincipal(claims: InboundClaims): Principal | undefined {
+  // A connect token is the person at the connect routes, never a caller of tools.
+  if (claims.by_purpose !== undefined) return undefined;
+  const grants = parseGrants(claims.by_grants);
+  if (typeof claims.sub !== "string" || claims.sub.length === 0 || grants === undefined) {
+    return undefined;
+  }
+  const text = (value: unknown) => (typeof value === "string" ? value : undefined);
+  const attribution = {
+    ...(text(claims.by_tenant) ? { tenant: text(claims.by_tenant) } : {}),
+    ...(text(claims.by_branch) ? { branch: text(claims.by_branch) } : {}),
+    ...(text(claims.by_turn) ? { turn: text(claims.by_turn) } : {}),
+  };
+  return { id: claims.sub, scopes: ["*"], grants, attribution };
+}
+
+/**
+ * A session key for one branchyard token: its issuer, subject, `jti`, turn,
+ * and grant. A new turn's token opens a new session rather than inheriting
+ * the previous turn's grant.
+ */
+export function branchyardSessionFingerprint(claims: InboundClaims): string {
+  return createHash("sha256")
+    .update(
+      JSON.stringify({
+        iss: claims.iss,
+        sub: claims.sub,
+        jti: claims.jti,
+        turn: claims.by_turn,
+        exp: claims.exp,
+        grants: claims.by_grants,
+      }),
+    )
     .digest("base64url");
 }

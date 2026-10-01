@@ -188,9 +188,29 @@ export interface FleetServer {
  * peer bundle happened not to collide with it, which would make a tool's
  * public name depend on what else is deployed alongside it.
  */
+export interface FleetBuildOptions {
+  name?: string;
+  version?: string;
+  /**
+   * Prefix every tool with its bundle id even when only one bundle is
+   * mounted. A Branchyard gateway sets it: there a bundle id IS the
+   * connector a grant names, so the wire name must not depend on what else
+   * the gateway happens to serve.
+   */
+  alwaysPrefix?: boolean;
+  /**
+   * Which tools `tools/list` shows, per bundle. A hidden tool stays callable
+   * — the call reaches the bundle's own executor, whose gates refuse it with
+   * a structured error — so hiding narrows what a caller is offered, never
+   * what is enforced. `operationId` is the tool's `anvil/operation_id`
+   * (absent for a tool that is not one operation, such as a workflow).
+   */
+  listFilter?: (bundleId: string, operationId: string | undefined) => boolean;
+}
+
 export async function buildFleetServer(
   bundles: readonly FleetBundleInput[],
-  opts: { name?: string; version?: string } = {},
+  opts: FleetBuildOptions = {},
 ): Promise<FleetServer> {
   if (bundles.length === 0) {
     throw new Error("buildFleetServer requires at least one bundle.");
@@ -200,13 +220,14 @@ export async function buildFleetServer(
     if (seenIds.has(bundle.id)) throw new FleetDuplicateBundleError(bundle.id);
     seenIds.add(bundle.id);
   }
-  const singleBundle = bundles.length === 1;
+  const singleBundle = bundles.length === 1 && opts.alwaysPrefix !== true;
 
   const fleet = new McpServer({
     name: opts.name ?? "anvil-fleet",
     version: opts.version ?? "0.0.0",
   });
   const toolOwners = new Map<string, string>();
+  const hidden = new Set<string>();
   const closers: Array<() => Promise<void>> = [];
   const readiness: FleetBundleReadiness[] = [];
 
@@ -230,6 +251,13 @@ export async function buildFleetServer(
         throw new FleetToolCollisionError(finalName, existingOwner, bundle.id);
       }
       toolOwners.set(finalName, bundle.id);
+      const operationId = tool._meta?.["anvil/operation_id"];
+      if (
+        opts.listFilter &&
+        !opts.listFilter(bundle.id, typeof operationId === "string" ? operationId : undefined)
+      ) {
+        hidden.add(finalName);
+      }
 
       fleet.registerTool(
         finalName,
@@ -284,6 +312,8 @@ export async function buildFleetServer(
     });
   }
 
+  if (opts.listFilter) hideFromList(fleet, hidden);
+
   return {
     server: fleet,
     toolOwners,
@@ -292,4 +322,25 @@ export async function buildFleetServer(
       for (const close of closers) await close();
     },
   };
+}
+
+/**
+ * Narrow `tools/list` to the tools a caller is offered without unregistering
+ * the rest (unregistered or disabled tools answer "not found", which would
+ * turn a grant refusal into a routing error). The SDK exposes no public hook
+ * for this, so the list handler McpServer installed is wrapped in place.
+ */
+function hideFromList(fleet: McpServer, hidden: ReadonlySet<string>): void {
+  if (hidden.size === 0) return;
+  const protocol = fleet.server as unknown as {
+    _requestHandlers?: Map<string, (request: unknown, extra: unknown) => Promise<unknown>>;
+  };
+  const original = protocol._requestHandlers?.get("tools/list");
+  if (!original || !protocol._requestHandlers) {
+    throw new Error("fleet: the MCP SDK's tools/list handler could not be located to filter it");
+  }
+  protocol._requestHandlers.set("tools/list", async (request, extra) => {
+    const listed = (await original(request, extra)) as { tools?: Array<{ name: string }> };
+    return { ...listed, tools: (listed.tools ?? []).filter((tool) => !hidden.has(tool.name)) };
+  });
 }

@@ -12,6 +12,7 @@ import { registerCase } from "./commands/case.js";
 import { registerCertify } from "./commands/certify.js";
 import { registerCompile } from "./commands/compile.js";
 import { registerConformance } from "./commands/conformance.js";
+import { registerConnect } from "./commands/connect.js";
 import { registerConsole } from "./commands/console.js";
 import type { AnvilCliDeps, CommandContext } from "./commands/context.js";
 import { registerDeploy } from "./commands/deploy.js";
@@ -22,6 +23,7 @@ import { registerEnrich } from "./commands/enrich.js";
 import { registerEstate } from "./commands/estate/estate.js";
 import { registerEvals } from "./commands/evals.js";
 import { registerFuzz } from "./commands/fuzz.js";
+import { registerConnectors } from "./commands/harness-package.js";
 import { registerInspect } from "./commands/inspect.js";
 import { registerJob } from "./commands/job.js";
 import { registerLegacy } from "./commands/legacy/legacy.js";
@@ -144,7 +146,9 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerJob(program, ctx);
   registerAuth(program, ctx);
   registerServe(program, ctx);
+  registerConnect(program, ctx);
   registerPackage(program, ctx);
+  registerConnectors(program, ctx);
   registerSkill(program, ctx);
   // Commander's own `help [command]` joins the group a newcomer reads first.
   program.commandsGroup("Start:").helpCommand(true);
