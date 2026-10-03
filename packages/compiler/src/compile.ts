@@ -21,6 +21,7 @@ import { manifestToOverlay } from "./contract/overlay.js";
 import { applyResolved, resolveOverlays } from "./contract/resolution.js";
 import { applyDialectAdjustment, detectNamingDialect } from "./dialect.js";
 import { measureAirDisclosure } from "./disclosure-cost.js";
+import { resolveEffectReferences, validateEffectContracts } from "./effects.js";
 import { applyHarObservedPosture } from "./har-posture.js";
 import {
   type AnvilManifest,
@@ -490,7 +491,16 @@ async function buildAir(
     op.input.schema = operationInputSchema(op);
   }
 
+  // Effect contracts name other operations by any manifest spelling; pin them
+  // to AIR ids, then check them across the whole surface (ADR-0030).
+  resolveEffectReferences(operations);
   const { operations: validated, diagnostics } = validate(operations);
+  diagnostics.push(
+    ...validateEffectContracts(
+      validated,
+      (doc.components?.schemas as Record<string, JsonSchema> | undefined) ?? {},
+    ),
+  );
 
   // Human-approval policy: a coarse default that escalates already-gated ops to
   // explicit human sign-off. Tightening only (it never removes a gate), so it

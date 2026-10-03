@@ -2,6 +2,14 @@
 # The Branchyard connector fixture (docs/branchyard.md). Operation names are
 # pinned so AIR ids read `github.issues.list`, `github.issues.create`, ... and
 # a grant can say `issues.*` or `pulls.list`.
+#
+# Each effectful operation states what undoing it means (ADR-0030):
+#   comments.create  reversible   — the inverse deletes the comment
+#   issues.create    compensable  — closing the issue cancels it, but it stays
+#   releases.create  irreversible — publishing notifies watchers; it has a
+#                                   draft form a person can review first
+# Everything left undeclared (issues.update, comments.delete, releases.update,
+# releases.delete) is irreversible with no undo, the conservative default.
 service:
   name: github
   display_name: GitHub Mini
@@ -20,6 +28,7 @@ operations:
     state: approved
   # Opening an issue is visible to other people: a mutation that needs
   # confirmation, so a grant must say `mode: write` and `confirm: allow`.
+  # It cannot be deleted through the API, only closed.
   createIssue:
     name: { resource: issues, verb: create }
     side_effect: mutation
@@ -31,4 +40,96 @@ operations:
       required: true
       risk: medium
       reason: Opening an issue notifies the repository's watchers.
+    effect:
+      class: compensable
+      compensate:
+        operation: updateIssue
+        arguments:
+          owner: request.owner
+          repo: request.repo
+          issue_number: response.number
+          state: { const: closed }
+    state: approved
+  updateIssue:
+    name: { resource: issues, verb: update }
+    confirmation:
+      required: true
+      reason: Changing an issue is visible to its watchers.
+    state: approved
+  listIssueComments:
+    name: { resource: comments, verb: list }
+    state: approved
+  # A comment can be deleted again, which leaves the issue as it was. The
+  # fixture's mock honours an Idempotency-Key header on it (GitHub itself
+  # does not), so a retried comment is not posted twice.
+  createIssueComment:
+    name: { resource: comments, verb: create }
+    idempotency:
+      strategy: key_supported
+      key_location: header
+      header: Idempotency-Key
+    confirmation:
+      required: false
+    effect:
+      class: reversible
+      inverse:
+        operation: deleteIssueComment
+        arguments:
+          owner: request.owner
+          repo: request.repo
+          comment_id: response.id
+    state: approved
+  deleteIssueComment:
+    name: { resource: comments, verb: delete }
+    state: approved
+  # Publishing a release notifies watchers and cannot be taken back. Its draft
+  # form is the same call with draft: true; publishing the draft is the
+  # promotion, deleting it the discard.
+  createRelease:
+    name: { resource: releases, verb: create }
+    confirmation:
+      required: true
+      risk: medium
+      reason: Publishing a release notifies the repository's watchers.
+    effect:
+      class: irreversible
+      lookup:
+        operation: getReleaseByTag
+        by: id
+        arguments:
+          owner: request.owner
+          repo: request.repo
+          tag: request.tag_name
+      draft:
+        operation: createRelease
+        arguments:
+          owner: request.owner
+          repo: request.repo
+          tag_name: request.tag_name
+          name: request.name?
+          body: request.body?
+          draft: { const: true }
+        handle: response.id
+        promote:
+          operation: updateRelease
+          arguments:
+            owner: request.owner
+            repo: request.repo
+            release_id: response.id
+            draft: { const: false }
+        discard:
+          operation: deleteRelease
+          arguments:
+            owner: request.owner
+            repo: request.repo
+            release_id: response.id
+    state: approved
+  updateRelease:
+    name: { resource: releases, verb: update }
+    state: approved
+  deleteRelease:
+    name: { resource: releases, verb: delete }
+    state: approved
+  getReleaseByTag:
+    name: { resource: releases, verb: get }
     state: approved

@@ -110,6 +110,9 @@ export const CONTRACT_SAFETY_PREDICATES: ReadonlySet<SemanticPredicate> =
     // forge completion) is exactly the kind of contradiction two overlays
     // must not resolve by array order.
     "asyncContract",
+    // What undoing an effect means is a contract two overlays must not settle
+    // by array order either.
+    "effectContract",
     // Same contested-only footing: how long a connection may be held open is a
     // resource-safety fact two overlays must not settle by array order.
     "stream",
@@ -243,6 +246,8 @@ export function manifestToOverlay(manifest: AnvilManifest): PolicyOverlay {
     // Hand-supplied completion contract, carried verbatim — `applyOperationManifest`
     // owns merging it onto whatever `normalize.ts` already derived.
     if (m.async_contract) assertions.push(set(ref, "asyncContract", m.async_contract));
+    // The effect contract, carried verbatim; `applyOperationManifest` writes it.
+    if (m.effect) assertions.push(set(ref, "effectContract", m.effect));
     // Observation-window ceilings, carried verbatim — `applyOperationManifest`
     // owns the "resize, never create" rule against the compiled contract.
     if (m.pagination) assertions.push(set(ref, "pagination", m.pagination));
@@ -364,6 +369,9 @@ export function projectOperationManifest(
 
   const asyncContract = v<OperationManifest["async_contract"]>("asyncContract");
   if (asyncContract) m.async_contract = asyncContract;
+
+  const effectContract = v<OperationManifest["effect"]>("effectContract");
+  if (effectContract) m.effect = effectContract;
 
   const pagination = v<OperationManifest["pagination"]>("pagination");
   if (pagination) m.pagination = pagination;

@@ -1,6 +1,7 @@
 import type { AirDocument, AsyncContract, DisclosureCost, JsonSchema, Operation } from "@anvil/air";
 import {
   asyncContractSentence,
+  effectContractMeta,
   mcpToolAnnotations,
   mcpToolDescription,
   operationInputSchema,
@@ -192,8 +193,17 @@ function toolSurface(
       "anvil/principal": operation.auth.principal,
       "anvil/operation_id": operation.id,
       ...asyncMeta,
+      ...effectMeta(operation),
     },
   };
+}
+
+/** The declared effect contract, mirrored from `@anvil/mcp-runtime`'s `effectToolMeta`. */
+function effectMeta(operation: Operation): Record<string, unknown> {
+  const contract = effectContractMeta(operation);
+  return contract
+    ? { "anvil/effect_class": contract.class, "anvil/effect_contract": contract }
+    : {};
 }
 
 /**

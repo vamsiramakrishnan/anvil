@@ -3,9 +3,10 @@ info:
   title: GitHub Mini
   version: 1.0.0
   description: >-
-    A four-operation, GitHub-shaped API used as the Branchyard connector
-    fixture: list, get and create issues, and list pull requests in one
-    repository.
+    A small, GitHub-shaped API used as the Branchyard connector fixture:
+    issues (list, get, create, update), issue comments (list, create,
+    delete), releases (create, update, delete, get by tag), and pull
+    requests (list) in one repository.
 servers:
   - url: https://api.github.example
 components:
@@ -29,6 +30,21 @@ components:
         number: { type: integer }
         title: { type: string }
         state: { type: string, enum: [open, closed, merged] }
+    Comment:
+      type: object
+      required: [id, body]
+      properties:
+        id: { type: integer }
+        body: { type: string }
+    Release:
+      type: object
+      required: [id, tag_name, draft]
+      properties:
+        id: { type: integer }
+        tag_name: { type: string }
+        name: { type: string }
+        body: { type: string }
+        draft: { type: boolean }
     Error:
       type: object
       properties:
@@ -100,6 +116,177 @@ paths:
               schema: { $ref: "#/components/schemas/Issue" }
         "404":
           description: No such issue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+    patch:
+      operationId: updateIssue
+      summary: Update an issue
+      description: Change an issue's title, body, or state (open or closed).
+      parameters:
+        - { name: owner, in: path, required: true, schema: { type: string } }
+        - { name: repo, in: path, required: true, schema: { type: string } }
+        - { name: issue_number, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                body: { type: string }
+                state: { type: string, enum: [open, closed] }
+      responses:
+        "200":
+          description: The updated issue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Issue" }
+        "404":
+          description: No such issue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /repos/{owner}/{repo}/issues/{issue_number}/comments:
+    get:
+      operationId: listIssueComments
+      summary: List an issue's comments
+      description: List the comments on one issue, oldest first.
+      parameters:
+        - { name: owner, in: path, required: true, schema: { type: string } }
+        - { name: repo, in: path, required: true, schema: { type: string } }
+        - { name: issue_number, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200":
+          description: The comments.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Comment" }
+    post:
+      operationId: createIssueComment
+      summary: Comment on an issue
+      description: Add a comment to one issue.
+      parameters:
+        - { name: owner, in: path, required: true, schema: { type: string } }
+        - { name: repo, in: path, required: true, schema: { type: string } }
+        - { name: issue_number, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body: { type: string }
+      responses:
+        "201":
+          description: The created comment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comment" }
+  /repos/{owner}/{repo}/issues/comments/{comment_id}:
+    delete:
+      operationId: deleteIssueComment
+      summary: Delete a comment
+      description: Delete one issue comment.
+      parameters:
+        - { name: owner, in: path, required: true, schema: { type: string } }
+        - { name: repo, in: path, required: true, schema: { type: string } }
+        - { name: comment_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "204":
+          description: Deleted.
+        "404":
+          description: No such comment.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /repos/{owner}/{repo}/releases:
+    post:
+      operationId: createRelease
+      summary: Create a release
+      description: >-
+        Create a release for a tag. A published release (draft false)
+        notifies the repository's watchers; a draft is visible only to
+        collaborators until it is published.
+      parameters:
+        - { name: owner, in: path, required: true, schema: { type: string } }
+        - { name: repo, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tag_name]
+              properties:
+                tag_name: { type: string }
+                name: { type: string }
+                body: { type: string }
+                draft: { type: boolean }
+      responses:
+        "201":
+          description: The created release.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Release" }
+  /repos/{owner}/{repo}/releases/{release_id}:
+    patch:
+      operationId: updateRelease
+      summary: Update a release
+      description: Change a release; setting draft to false publishes it.
+      parameters:
+        - { name: owner, in: path, required: true, schema: { type: string } }
+        - { name: repo, in: path, required: true, schema: { type: string } }
+        - { name: release_id, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                body: { type: string }
+                draft: { type: boolean }
+      responses:
+        "200":
+          description: The updated release.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Release" }
+    delete:
+      operationId: deleteRelease
+      summary: Delete a release
+      description: Delete one release (its tag stays).
+      parameters:
+        - { name: owner, in: path, required: true, schema: { type: string } }
+        - { name: repo, in: path, required: true, schema: { type: string } }
+        - { name: release_id, in: path, required: true, schema: { type: integer } }
+      responses:
+        "204":
+          description: Deleted.
+  /repos/{owner}/{repo}/releases/tags/{tag}:
+    get:
+      operationId: getReleaseByTag
+      summary: Get a release by its tag
+      description: Read the release for one tag.
+      parameters:
+        - { name: owner, in: path, required: true, schema: { type: string } }
+        - { name: repo, in: path, required: true, schema: { type: string } }
+        - { name: tag, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: The release.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Release" }
+        "404":
+          description: No release for that tag.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }

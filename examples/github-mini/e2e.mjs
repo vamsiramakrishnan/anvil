@@ -17,7 +17,16 @@
 //    Python SDK in gateway mode (GITHUB_TOKEN is set to a wrong value and
 //    must not be read), and asks for issues.create, which must be refused
 //    policy_denied without reaching the upstream;
-// 8. checks the audit log has exactly those two lines.
+// 8. checks the audit log has exactly those two lines;
+// 9. with a second turn's token granting github:write (confirm allowed),
+//    drives the effect contract (ADR-0030) over MCP and REST: a comment
+//    created with `_meta.idempotency_key` reports its inverse (the key reached
+//    the upstream), and the inverse, called over REST under the same grant,
+//    deletes it; an issue created over REST reports its compensation
+//    (`X-Anvil-Effect`), which closes it; a release staged with
+//    `_meta.stage` is created as a draft and promoted by the call the report
+//    names; a read reports the `read` default; and the audit lines carry the
+//    effect class and ledger id.
 //
 // Prints one JSON summary line and exits 0 when every check holds.
 import { spawn } from "node:child_process";
@@ -99,6 +108,55 @@ function hermetic(env) {
     out[key] = value;
   }
   return out;
+}
+
+/**
+ * A minimal MCP Streamable HTTP client: initialize, then tools/call with an
+ * optional `_meta`. Answers may come back as JSON or as one SSE event.
+ */
+async function mcpSession(url, token) {
+  const headers = {
+    authorization: `Bearer ${token}`,
+    "content-type": "application/json",
+    accept: "application/json, text/event-stream",
+  };
+  let id = 0;
+  const post = async (message) => {
+    const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(message) });
+    const sid = res.headers.get("mcp-session-id");
+    if (sid) headers["mcp-session-id"] = sid;
+    const text = await res.text();
+    if (!text.trim()) return undefined;
+    const payload = (res.headers.get("content-type") ?? "").includes("text/event-stream")
+      ? text
+          .split("\n")
+          .filter((line) => line.startsWith("data:"))
+          .map((line) => line.slice(5).trim())
+          .at(-1)
+      : text;
+    return JSON.parse(payload);
+  };
+  const init = await post({
+    jsonrpc: "2.0",
+    id: ++id,
+    method: "initialize",
+    params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "e2e", version: "1" } },
+  });
+  headers["mcp-protocol-version"] = init.result.protocolVersion;
+  await post({ jsonrpc: "2.0", method: "notifications/initialized" });
+  return {
+    async call(name, args, meta) {
+      const answer = await post({
+        jsonrpc: "2.0",
+        id: ++id,
+        method: "tools/call",
+        params: { name, arguments: args, ...(meta ? { _meta: meta } : {}) },
+      });
+      if (answer.error) throw new Error(`${name}: ${answer.error.message}`);
+      return answer.result;
+    },
+    close: () => fetch(url, { method: "DELETE", headers }).then((res) => res.text()),
+  };
 }
 
 const checks = [];
@@ -289,6 +347,149 @@ print(json.dumps({"issues": issues, "refused": refused}))
     create,
   );
   check("audit: one line per call", audit.length === 3, audit.length);
+
+  // 9. Effects (ADR-0030), on a turn granted github:write.
+  const writeGrant = [{ connector: "github", operations: ["*"], mode: "write", confirm: "allow" }];
+  const writeToken = mint(yard, {
+    iss: ISSUER,
+    aud: mcpUrl,
+    sub: SUB,
+    by_tenant: "e2e",
+    by_branch: "main",
+    by_turn: "2",
+    by_grants: writeGrant,
+  });
+  const mcp = await mcpSession(mcpUrl, writeToken);
+  const restCall = async (tool, args, { key, stage } = {}) => {
+    const res = await fetch(`http://127.0.0.1:${port}/call/${tool}`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${writeToken}`,
+        "content-type": "application/json",
+        ...(key ? { "idempotency-key": key } : {}),
+      },
+      body: JSON.stringify({ arguments: args, ...(stage ? { stage: true } : {}) }),
+    });
+    const header = res.headers.get("x-anvil-effect");
+    return { status: res.status, body: await res.json(), effect: header ? JSON.parse(header) : null };
+  };
+  const repo = { owner: "octo", repo: "hello" };
+
+  // A reversible effect: comment, with the ledger id as the idempotency key.
+  const LEDGER_ID = "01JBRANCHYARDLEDGER00000001";
+  const commented = await mcp.call(
+    "github__github_create_comment",
+    { ...repo, issue_number: 2, body: "Looks good." },
+    { idempotency_key: LEDGER_ID },
+  );
+  const commentEffect = commented._meta?.effect;
+  check(
+    "mcp: comment reports its inverse",
+    !commented.isError &&
+      commentEffect?.class === "reversible" &&
+      commentEffect.idempotency_key === LEDGER_ID &&
+      commentEffect.undo?.kind === "inverse" &&
+      commentEffect.undo.tool === "github__github_delete_comment" &&
+      JSON.stringify(commentEffect.undo.arguments) ===
+        JSON.stringify({ owner: "octo", repo: "hello", comment_id: 100 }),
+    commentEffect,
+  );
+  check(
+    "the idempotency key reached the upstream",
+    mock.requests.some(
+      (r) => r.method === "POST" && r.path.endsWith("/comments") && r.idempotency_key === LEDGER_ID,
+    ),
+    mock.requests.filter((r) => r.method === "POST"),
+  );
+  // The undo is an ordinary call under the same grant, over REST here. Its
+  // arguments are the report's; the confirmation a deletion needs is the
+  // caller's to give, never the report's.
+  const undone = await restCall(commentEffect?.undo?.tool ?? "missing", {
+    ...commentEffect?.undo?.arguments,
+    confirm: true,
+  });
+  check(
+    "rest: the inverse deletes the comment under the same grant",
+    undone.status === 200 && mock.state.comments.length === 0 && undone.effect?.class === "irreversible",
+    { status: undone.status, body: undone.body, effect: undone.effect, comments: mock.state.comments },
+  );
+
+  // A compensable effect over REST: the report rides in X-Anvil-Effect.
+  const opened = await restCall("github__github_create_issue", { ...repo, title: "From a branch", confirm: true });
+  const compensation = opened.effect?.undo;
+  check(
+    "rest: issue reports its compensation in X-Anvil-Effect",
+    opened.status === 200 &&
+      opened.body?.number === 3 &&
+      opened.effect?.class === "compensable" &&
+      compensation?.kind === "compensate" &&
+      compensation.tool === "github__github_update_issue" &&
+      JSON.stringify(compensation.arguments) ===
+        JSON.stringify({ owner: "octo", repo: "hello", issue_number: 3, state: "closed" }),
+    opened,
+  );
+  const compensated = await mcp.call(compensation?.tool ?? "missing", { ...compensation?.arguments, confirm: true });
+  check(
+    "mcp: the compensation closes the issue",
+    !compensated.isError && mock.state.issues.find((i) => i.number === 3)?.state === "closed",
+    compensated,
+  );
+
+  // An irreversible effect with a draft form: stage, then promote.
+  const staged = await mcp.call(
+    "github__github_create_release",
+    { ...repo, tag_name: "v1.0.0", name: "One", confirm: true },
+    { stage: true },
+  );
+  const stagedEffect = staged._meta?.effect;
+  const draft = mock.state.releases[0];
+  check(
+    "mcp: stage creates a draft and names its promotion",
+    !staged.isError &&
+      draft?.draft === true &&
+      stagedEffect?.class === "irreversible" &&
+      stagedEffect.undo === null &&
+      stagedEffect.staged?.handle === draft.id &&
+      stagedEffect.staged.promote?.tool === "github__github_update_release" &&
+      stagedEffect.staged.promote.arguments.draft === false &&
+      stagedEffect.staged.discard?.tool === "github__github_delete_release",
+    { stagedEffect, releases: mock.state.releases },
+  );
+  const promoted = await mcp.call(stagedEffect?.staged?.promote?.tool ?? "missing", {
+    ...stagedEffect?.staged?.promote?.arguments,
+    confirm: true,
+  });
+  check(
+    "mcp: promote publishes the release",
+    !promoted.isError && mock.state.releases[0]?.draft === false,
+    { promoted, releases: mock.state.releases },
+  );
+
+  // An operation that declares nothing gets the default: a read is `read`.
+  const listed = await restCall("github__github_list_issue", repo);
+  check(
+    "rest: an undeclared read reports class read and no undo",
+    listed.status === 200 && listed.effect?.class === "read" && listed.effect.undo === null,
+    listed.effect,
+  );
+  await mcp.close();
+
+  const effectAudit = readFileSync(auditFile, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line))
+    .slice(3);
+  const commentLine = effectAudit.find((line) => line.operation === "github.comments.create");
+  const stagedLine = effectAudit.find((line) => line.staged_for === "github.releases.create");
+  check(
+    "audit: effect class and ledger id",
+    commentLine?.effect_class === "reversible" &&
+      commentLine.ledger_id === LEDGER_ID &&
+      commentLine.by_turn === "2" &&
+      stagedLine?.operation === "github.releases.create" &&
+      effectAudit.every((line) => typeof line.effect_class === "string"),
+    effectAudit,
+  );
 } finally {
   gateway?.kill("SIGTERM");
   await mock.close();

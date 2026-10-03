@@ -1432,6 +1432,76 @@
       "tests": [
         "packages/console/src/server/workbench.test.ts"
       ]
+    },
+    {
+      "id": "effects/stage-never-falls-through",
+      "file": "packages/mcp-runtime/src/server.ts",
+      "control": "A call with _meta.stage must perform the draft form or be refused; it may never perform the real effect. Skipping the stage dispatch must be caught by the no-draft refusal test, which asserts nothing reached the upstream.",
+      "find": "        if (stage) {",
+      "replace": "        if (false) {",
+      "tests": [
+        "packages/mcp-runtime/src/server.effects.test.ts"
+      ]
+    },
+    {
+      "id": "effects/key-only-through-a-carrier",
+      "file": "packages/mcp-runtime/src/effects.ts",
+      "control": "A caller's _meta.idempotency_key goes upstream only through a declared carrier. Inverting the guard must be caught by the forwarding and no-carrier tests.",
+      "find": "  if (key === undefined || !operationForwardsIdempotencyKey(op)) return { ok: true };",
+      "replace": "  if (key === undefined || operationForwardsIdempotencyKey(op)) return { ok: true };",
+      "tests": [
+        "packages/mcp-runtime/src/server.effects.test.ts"
+      ]
+    },
+    {
+      "id": "effects/fleet-forwards-effect-meta",
+      "file": "packages/mcp-runtime/src/fleet.ts",
+      "control": "A fleet must hand the caller's effect controls to the bundle, or the key never reaches the upstream and staging silently performs the real effect.",
+      "find": "          const meta = forwardedEffectMeta(extra._meta);",
+      "replace": "          const meta = forwardedEffectMeta(undefined);",
+      "tests": [
+        "packages/mcp-runtime/src/server.effects.test.ts"
+      ]
+    },
+    {
+      "id": "effects/mapping-all-or-nothing",
+      "file": "packages/air/src/effect-contract.ts",
+      "control": "A follow-up whose required argument names nothing must be unavailable, never called with a gap. Treating every path as optional must be caught.",
+      "find": "      if (typeof source === \"string\" && source.endsWith(\"?\")) continue;",
+      "replace": "      continue;",
+      "tests": [
+        "packages/air/src/effect-contract.test.ts"
+      ]
+    },
+    {
+      "id": "effects/compiler-missing-operation",
+      "file": "packages/compiler/src/effects.ts",
+      "control": "An effect contract naming an operation the service does not have is refused. Resolving a missing reference to the operation itself must be caught.",
+      "find": "      const found = byId.get(ref);",
+      "replace": "      const found = byId.get(ref) ?? op;",
+      "tests": [
+        "packages/compiler/src/effects.test.ts"
+      ]
+    },
+    {
+      "id": "effects/compiler-drops-rejected-contract",
+      "file": "packages/compiler/src/effects.ts",
+      "control": "An operation whose effect contract has an error is served with no undo. Keeping the rejected declarations must be caught.",
+      "find": "    if (errors.length > 0) {",
+      "replace": "    if (false) {",
+      "tests": [
+        "packages/compiler/src/effects.test.ts"
+      ]
+    },
+    {
+      "id": "effects/report-names-upstream-key",
+      "file": "packages/runtime/src/executor.ts",
+      "control": "The effect report names the idempotency key that actually went upstream. Dropping it must be caught by the MCP effect tests.",
+      "find": "        upstreamKey = key;",
+      "replace": "",
+      "tests": [
+        "packages/mcp-runtime/src/server.effects.test.ts"
+      ]
     }
   ]
 }

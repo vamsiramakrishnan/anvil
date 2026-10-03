@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AgentProjection } from "./agent-projection.js";
 import { authMechanicsIssues, TlsClientMaterialRefs } from "./auth-mechanics.js";
 import { BusinessSurface } from "./business-contract.js";
+import { EffectContractShape } from "./effect-schema.js";
 import {
   AuthPrincipal,
   AuthType,
@@ -608,6 +609,8 @@ export const Effect = z.object({
   risk: RiskLevel.default("low"),
   /** Whether the effect can be undone. Irreversible mutations always confirm. */
   reversible: z.boolean().default(true),
+  /** The effect contract (class, inverse, compensate, lookup, draft; ADR-0030). */
+  ...EffectContractShape,
 });
 export type Effect = z.infer<typeof Effect>;
 

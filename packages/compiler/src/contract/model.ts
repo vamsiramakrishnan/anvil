@@ -111,6 +111,10 @@ export const SemanticPredicate = z.enum([
   // completes), so splitting it would let two overlays each supply half of a
   // contract that was never coherent as a pair.
   "asyncContract",
+  // the effect contract (class, inverse, compensate, lookup, draft) — one
+  // combined predicate for the same reason: an inverse's mapping is coherent
+  // only with the class and the lookup it was written beside.
+  "effectContract",
   // how a paginated read is paged — one combined predicate (a style without
   // its carrier param was never coherent as a pair)
   "pagination",

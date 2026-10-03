@@ -3,6 +3,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { EFFECT_REQUEST_META_KEYS } from "./effects.js";
 import { buildMcpServer, type McpBuildOptions } from "./server.js";
 
 /**
@@ -286,10 +287,22 @@ export async function buildFleetServer(
         // registerTool's handler type byte-for-byte (both are "the same shape
         // MCP defines", typed two different ways in the SDK) — the cast below is
         // narrower than a bare `any` return type would be.
-        async (args: Record<string, unknown>) => {
-          const result = await client.callTool({ name: tool.name, arguments: args });
+        //
+        // The caller's effect controls (`_meta.idempotency_key`, `_meta.stage`)
+        // ride along to the bundle (and nothing else from `_meta`: a progress
+        // token, say, belongs to this hop). The effect report the bundle
+        // returns names follow-up tools by the bundle's own names; they are
+        // rewritten to the names a caller dials here.
+        async (args: Record<string, unknown>, extra: { _meta?: Record<string, unknown> }) => {
+          const meta = forwardedEffectMeta(extra._meta);
+          const result = await client.callTool({
+            name: tool.name,
+            arguments: args,
+            ...(meta ? { _meta: meta } : {}),
+          });
+          const routed = singleBundle ? result : prefixEffectTools(result, bundle.id);
           // biome-ignore lint/suspicious/noExplicitAny: see the comment above this handler.
-          return result as any;
+          return routed as any;
         },
       );
     }
@@ -320,6 +333,50 @@ export async function buildFleetServer(
     readyz: () => ({ ready: readiness.every((b) => b.ready), bundles: readiness }),
     close: async () => {
       for (const close of closers) await close();
+    },
+  };
+}
+
+function forwardedEffectMeta(
+  meta: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!meta) return undefined;
+  const out: Record<string, unknown> = {};
+  for (const key of EFFECT_REQUEST_META_KEYS) {
+    if (meta[key] !== undefined) out[key] = meta[key];
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+/** Rewrite the tool names inside a result's `_meta.effect` to this fleet's wire names. */
+function prefixEffectTools<T>(result: T, bundleId: string): T {
+  const meta = (result as { _meta?: Record<string, unknown> })._meta;
+  const effect = meta?.effect as Record<string, unknown> | undefined;
+  if (!effect || typeof effect !== "object") return result;
+  const rename = (call: unknown) =>
+    call && typeof call === "object" && typeof (call as { tool?: unknown }).tool === "string"
+      ? { ...call, tool: fleetToolName(bundleId, (call as { tool: string }).tool) }
+      : call;
+  const staged = effect.staged as Record<string, unknown> | undefined;
+  return {
+    ...result,
+    _meta: {
+      ...meta,
+      effect: {
+        ...effect,
+        undo: rename(effect.undo),
+        lookup: rename(effect.lookup),
+        ...(effect.compensate !== undefined ? { compensate: rename(effect.compensate) } : {}),
+        ...(staged
+          ? {
+              staged: {
+                ...staged,
+                promote: rename(staged.promote),
+                discard: rename(staged.discard),
+              },
+            }
+          : {}),
+      },
     },
   };
 }
