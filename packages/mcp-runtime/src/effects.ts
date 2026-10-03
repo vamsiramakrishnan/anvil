@@ -17,8 +17,10 @@ import {
   type ExecuteResult,
   execute,
 } from "@anvil/runtime";
+import { z } from "zod";
 import { dryRunResult, responseResult } from "./output-schema.js";
 import { resultText } from "./truncation.js";
+import { operationZodShape } from "./zodshape.js";
 
 /**
  * The effect contract on the MCP serving path (ADR-0030). A caller may send,
@@ -232,9 +234,25 @@ export async function stageDraftCall(
   }
   const keyed = applyIdempotencyKey(draftOp, draftInput, call.ledgerId);
   if (!keyed.ok) return deps.fail(keyed.envelope, op);
+  // The staged call was validated against this tool's schema, not the
+  // draft's: the mapped input gets the same check the draft tool's own
+  // callers get before anything reaches the upstream.
+  const checked = z.strictObject(operationZodShape(draftOp)).safeParse(draftInput);
+  if (!checked.success) {
+    const issue = checked.error.issues[0];
+    return deps.fail(
+      effectRefusal(
+        op,
+        "validation_error",
+        `The draft of '${op.id}' does not fit '${draftOp.id}''s input${issue ? ` at '${issue.path.join(".")}': ${issue.message}` : ""}; nothing was called.`,
+        { code: "effect/draft_input_invalid", draft_operation: draftOp.id },
+      ),
+      op,
+    );
+  }
   const result = await execute(
     draftOp,
-    { input: draftInput, dryRun: call.dryRun },
+    { input: checked.data as Record<string, unknown>, dryRun: call.dryRun },
     {
       ...deps.contextFor(draftOp),
       signal: call.signal,

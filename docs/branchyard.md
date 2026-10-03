@@ -362,11 +362,14 @@ A path is dotted names and `[n]` indices (`response.items[0].id`). A trailing
 names nothing makes the follow-up unavailable for that call. `anvil compile`
 refuses (`effect/*` errors) a reference to a missing operation, a mapping that
 misses a required argument, names an argument the target does not take, or
-sets its `confirm` or idempotency key, a path the schema does not declare, a
+sets its `confirm` or idempotency key, a value whose type the target input
+cannot take, a path the schema does not declare, a
 reversible class with no inverse, a compensable class with no compensation,
 and a lookup by key on an operation that sends no key. An operation whose
 declaration has an error is served as `irreversible` with no undo until it is
-fixed.
+fixed, and requires confirmation. An operation whose draft form requires
+confirmation requires it too, so a staged call can pass `confirm: true` on to
+the draft.
 
 ### What a call returns
 
@@ -407,7 +410,8 @@ the key upstream through it; otherwise it is not sent, and the report's
 - **Stage**: `_meta.stage: true` (MCP) or `"stage": true` in the REST body on
   an operation with a draft form performs the draft instead. The answer is
   the draft, and `_meta.effect.staged` holds its `handle` and the `promote` and
-  `discard` calls. An operation without a draft form is refused
+  `discard` calls. The mapped draft input is checked against the draft tool's
+  schema first (`validation_error`, `effect/draft_input_invalid`). An operation without a draft form is refused
   (`unsupported_operation`, `effect/no_draft_form`) and nothing is called.
 - **Promote**: call `staged.promote.tool` with its arguments. That call is
   the real effect, with its own report.

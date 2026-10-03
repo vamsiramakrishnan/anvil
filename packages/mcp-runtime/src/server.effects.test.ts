@@ -148,6 +148,23 @@ const OPS = [
     input: { body: fields(["title", "string"], ["draft", "boolean"]) },
   }),
   operation({
+    id: "gh.memos.create",
+    sourceRef: { kind: "openapi", path: "/memos", method: "post" },
+    effect: {
+      kind: "mutation",
+      class: "irreversible",
+      draft: {
+        operation: "gh.memos.create",
+        // A hand-written AIR document the compiler never checked: a number
+        // mapped into a string field.
+        arguments: { title: { const: 1 }, draft: { const: true } },
+        handle: "response.id",
+        promote: { operation: "gh.memos.create", arguments: {} },
+      },
+    },
+    input: { body: fields(["title", "string", true], ["draft", "boolean"]) },
+  }),
+  operation({
     id: "gh.issues.send",
     sourceRef: { kind: "openapi", path: "/issues/send", method: "post" },
     effect: { kind: "mutation", action: "send" },
@@ -413,6 +430,8 @@ describe("stage: true", () => {
     expect(await detailCode("gh_posts_create", { title: "t" })).toBe("effect/draft_unavailable");
     // The draft needs a value the staged call did not give.
     expect(await detailCode("gh_notes_create", {})).toBe("effect/draft_argument_missing");
+    // The mapped draft input fails the draft tool's own input schema.
+    expect(await detailCode("gh_memos_create", { title: "t" })).toBe("effect/draft_input_invalid");
     expect(requests).toHaveLength(0);
     await client.close();
   });

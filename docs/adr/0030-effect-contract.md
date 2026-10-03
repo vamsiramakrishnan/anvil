@@ -72,7 +72,11 @@ compensable one a compensation, and neither class appears where it does not
 belong (a read with a non-read class, an irreversible effect with an
 inverse); every mapped argument is an input of the target, every required
 input is mapped (not from an optional path), and no mapping sets a safety
-control (`confirm`, the idempotency key: those are the caller's); every path
+control (`confirm`, the idempotency key: those are the caller's); a mapped
+value's type (a literal's, or the type the source schema declares at a path)
+fits the target input's declared type (`effect/mapping_type_mismatch`; an
+integer fits a number, nothing else converts, and undeclared types are not
+judged); every path
 parses, reads only the roots its place allows (a lookup by key cannot read
 the response it exists to replace; a draft reads only the request), and
 names something the request or response schema declares (`missing` when the
@@ -81,7 +85,13 @@ schema declares its properties and not this one; an opaque schema is an
 that sends a key upstream; a deadline has exactly one form. An operation whose
 contract has an error is served as `irreversible` (or `read`) with every
 follow-up removed and a review note, so the gateway never offers an undo the
-compiler could not prove callable. A follow-up that is not approved is a
+compiler could not prove callable. Because confirmation was classified while
+the contract still promised an undo, a rejected mutation's confirmation is
+tightened to required (an irreversible write confirms) and its input schema
+republished. An operation whose draft form needs confirmation must take a
+confirm input itself, since a staged call can confirm the draft only through
+it: the compiler requires confirmation on it (`effect/confirmation_for_draft`,
+a warning) when a manifest waived it. A follow-up that is not approved is a
 warning: callers will be refused it until it is.
 
 **4. The gateway reports the effect of every operation call.** The MCP
@@ -136,7 +146,9 @@ other call.
 **7. Staging performs the draft form.** `_meta.stage: true` on an operation
 with a `draft` performs the draft operation instead (it may be the operation
 itself with a draft flag, such as a release created with `draft: true`),
-under that operation's own gates; the caller's `confirm` carries to it. The
+under that operation's own gates; the caller's `confirm` carries to it, and
+the mapped input is validated against the draft tool's own input schema
+before anything runs (`effect/draft_input_invalid`). The
 answer is the draft's response, and `_meta.effect` describes the staged
 effect (its class, no undo) plus `staged: {draft_operation, handle, promote,
 discard}`. Calling `promote` performs the real effect; `discard` throws the

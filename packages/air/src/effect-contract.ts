@@ -255,6 +255,72 @@ export function effectPathInSchema(
   return "unverifiable";
 }
 
+/**
+ * The subschema `segments` name inside `schema`, when it can be found without
+ * guessing: through `$ref`s, declared `properties`, array `items`, and the
+ * first `allOf` branch that has it. Undefined otherwise.
+ */
+export function effectSchemaAtPath(
+  schema: JsonSchema | undefined,
+  segments: ReadonlyArray<string | number>,
+  defs: Record<string, JsonSchema> = {},
+  depth = 0,
+): JsonSchema | undefined {
+  if (!schema || depth > 32) return undefined;
+  const resolved = refTarget(schema, defs);
+  if (!resolved) return undefined;
+  if (segments.length === 0) return resolved;
+  const [head, ...rest] = segments;
+  if (typeof head === "number") {
+    const items = resolved.items;
+    return items && typeof items === "object" && !Array.isArray(items)
+      ? effectSchemaAtPath(items as JsonSchema, rest, defs, depth + 1)
+      : undefined;
+  }
+  const properties = resolved.properties as Record<string, JsonSchema> | undefined;
+  if (properties && Object.hasOwn(properties, head as string)) {
+    return effectSchemaAtPath(properties[head as string], rest, defs, depth + 1);
+  }
+  for (const branch of (resolved.allOf as JsonSchema[] | undefined) ?? []) {
+    const found = effectSchemaAtPath(branch, segments, defs, depth + 1);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+type JsonType = "string" | "number" | "integer" | "boolean" | "object" | "array" | "null";
+
+/** The JSON types a schema admits, when it says; undefined when it does not. */
+export function effectSchemaTypes(schema: JsonSchema | undefined): Set<JsonType> | undefined {
+  if (!schema) return undefined;
+  const type = schema.type;
+  if (typeof type === "string") return new Set([type as JsonType]);
+  if (Array.isArray(type) && type.length > 0) return new Set(type as JsonType[]);
+  const literals =
+    "const" in schema ? [schema.const] : Array.isArray(schema.enum) ? schema.enum : undefined;
+  return literals ? new Set(literals.map(effectValueType)) : undefined;
+}
+
+/** The JSON type of one value. */
+export function effectValueType(value: unknown): JsonType {
+  if (value === null) return "null";
+  if (Array.isArray(value)) return "array";
+  if (typeof value === "number") return Number.isInteger(value) ? "integer" : "number";
+  return typeof value as JsonType;
+}
+
+/**
+ * Whether a value of one of `source` types can go where `target` types are
+ * accepted. An integer is a number; nothing else converts.
+ */
+export function effectTypesCompatible(source: Set<JsonType>, target: Set<JsonType>): boolean {
+  for (const type of source) {
+    if (target.has(type)) return true;
+    if (type === "integer" && target.has("number")) return true;
+  }
+  return false;
+}
+
 /** A resolved follow-up call: what to call, and with exactly what. */
 export interface EffectCall {
   operation: string;

@@ -227,6 +227,68 @@ describe("the effect contract in the compiler", () => {
     expect(air.diagnostics.map((d) => d.code)).toContain("effect/operation_not_approved");
   });
 
+  it("requires confirmation once a rejected contract leaves a keyed write with no undo", async () => {
+    // Keyed and reversible, the write needs no confirmation; once its contract
+    // is rejected it is irreversible, and an irreversible write confirms.
+    const keyed =
+      "    idempotency: { strategy: key_supported, key_location: header, header: Idempotency-Key }\n";
+    const good = await withComment(`${keyed}    effect:
+      class: reversible
+      inverse: { operation: deleteIssueComment, arguments: { owner: request.owner, repo: request.repo, comment_id: response.id } }
+`);
+    expect(opOf(good, "github.comments.create").confirmation.required).toBe(false);
+    const air = await withComment(`${keyed}    effect:
+      class: reversible
+      inverse: { operation: deleteIssueComment, arguments: { owner: request.owner, repo: request.repo } }
+`);
+    const comment = opOf(air, "github.comments.create");
+    expect(comment.effect.reversible).toBe(false);
+    expect(comment.confirmation.required).toBe(true);
+    expect(comment.input.schema?.required).toContain("confirm");
+  });
+
+  it("refuses a mapped value whose type the target cannot take", async () => {
+    const literal = await withComment(`    effect:
+      class: reversible
+      inverse: { operation: deleteIssueComment, arguments: { owner: request.owner, repo: request.repo, comment_id: { const: "abc" } } }
+`);
+    expect(effectCodes(literal)).toEqual(["effect/mapping_type_mismatch"]);
+    const path = await withComment(`    effect:
+      class: reversible
+      inverse: { operation: deleteIssueComment, arguments: { owner: request.owner, repo: request.repo, comment_id: request.body } }
+`);
+    expect(effectCodes(path)).toEqual(["effect/mapping_type_mismatch"]);
+    const integerIntoNumber = await withComment(`    effect:
+      class: reversible
+      inverse: { operation: deleteIssueComment, arguments: { owner: request.owner, repo: request.repo, comment_id: response.id } }
+`);
+    expect(effectCodes(integerIntoNumber)).toEqual([]);
+  });
+
+  it("requires the staged operation to take the confirmation its draft needs", async () => {
+    // An irreversible write confirms by default; the manifest waives it here,
+    // but its draft (opening an issue) still needs a confirmation the staged
+    // call must be able to carry.
+    const air =
+      await withComment(`    idempotency: { strategy: key_supported, key_location: header, header: Idempotency-Key }
+    confirmation: { required: false }
+    effect:
+      class: irreversible
+      draft:
+        operation: createIssue
+        arguments: { owner: request.owner, repo: request.repo, title: request.body }
+        handle: response.number
+        promote: { operation: updateIssue, arguments: { owner: request.owner, repo: request.repo, issue_number: response.number } }
+`);
+    expect(effectCodes(air)).toEqual([]);
+    expect(opOf(air, "github.issues.create").confirmation.required).toBe(true);
+    const comment = opOf(air, "github.comments.create");
+    expect(comment.effect.draft).toBeDefined();
+    expect(comment.confirmation.required).toBe(true);
+    expect(comment.input.schema?.required).toContain("confirm");
+    expect(air.diagnostics.map((d) => d.code)).toContain("effect/confirmation_for_draft");
+  });
+
   it("refuses an unknown key in the manifest's effect block", async () => {
     await expect(withComment("    effect: { class: reversible, undo: x }\n")).rejects.toThrow();
   });

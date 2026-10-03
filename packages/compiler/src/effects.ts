@@ -5,6 +5,10 @@ import {
   type EffectPathRoot,
   effectClassOf,
   effectPathInSchema,
+  effectSchemaAtPath,
+  effectSchemaTypes,
+  effectTypesCompatible,
+  effectValueType,
   idempotencyModeUsesCarrier,
   type JsonSchema,
   type Operation,
@@ -342,7 +346,20 @@ export function validateEffectContracts(
           );
           continue;
         }
-        if (typeof source !== "string") continue;
+        const targetTypes = effectSchemaTypes(properties[argument]);
+        if (typeof source !== "string") {
+          if (
+            targetTypes &&
+            !effectTypesCompatible(new Set([effectValueType(source.const)]), targetTypes)
+          ) {
+            flag(
+              "error",
+              "effect/mapping_type_mismatch",
+              `Operation '${op.id}' ${ctx.where}.${argument} is ${JSON.stringify(source.const)}, which '${ctx.target.id}' cannot take as ${argument} (${[...targetTypes].join(" | ")}).`,
+            );
+          }
+          continue;
+        }
         const path = parseEffectPath(source);
         if ("error" in path) {
           flag(
@@ -361,6 +378,19 @@ export function validateEffectContracts(
           continue;
         }
         checkPath(`${ctx.where}.${argument}`, source, path.root, path.segments, ctx);
+        if (path.root !== "idempotency_key" && targetTypes) {
+          const sourceSchema = path.root === "request" ? ctx.request : ctx.response;
+          const sourceTypes = effectSchemaTypes(
+            effectSchemaAtPath(sourceSchema, path.segments, schemas),
+          );
+          if (sourceTypes && !effectTypesCompatible(sourceTypes, targetTypes)) {
+            flag(
+              "error",
+              "effect/mapping_type_mismatch",
+              `Operation '${op.id}' ${ctx.where}.${argument}: '${source}' is ${[...sourceTypes].join(" | ")}, but '${ctx.target.id}' takes ${argument} as ${[...targetTypes].join(" | ")}.`,
+            );
+          }
+        }
       }
       const required = (targetSchema.required ?? []) as string[];
       for (const name of required) {
@@ -545,9 +575,44 @@ export function validateEffectContracts(
       delete op.effect.draft;
       const note = `Effect contract rejected (${errors.length} error(s)); served as ${safeClass} with no undo until it is fixed: ${errors[0]}`;
       if (!op.reviewNotes.includes(note)) op.reviewNotes.push(note);
+      // Confirmation was classified while the contract still promised an undo.
+      // An irreversible write confirms, so tighten it to match (never loosen).
+      if (op.effect.kind === "mutation") {
+        requireConfirmation(
+          op,
+          `This operation's effect contract was rejected; it cannot be undone.`,
+        );
+      }
+    } else if (e.draft) {
+      // A staged call carries the caller's confirmation to the draft through
+      // this operation's own confirm input; the input must exist for that.
+      const draftOp = byId.get(e.draft.operation);
+      if (draftOp?.confirmation.required && !op.confirmation.required) {
+        requireConfirmation(
+          op,
+          `Staging this operation performs '${draftOp.id}', which needs confirmation.`,
+        );
+        flag(
+          "warning",
+          "effect/confirmation_for_draft",
+          `Operation '${op.id}' now requires confirmation: its draft form '${draftOp.id}' does, and a staged call can confirm it only through this operation's own confirm input.`,
+        );
+      }
     }
   }
   return diagnostics;
+}
+
+/** Require confirmation (keeping any stricter setting) and republish the input schema. */
+function requireConfirmation(op: Operation, reason: string): void {
+  if (op.confirmation.required) return;
+  op.confirmation = {
+    ...op.confirmation,
+    required: true,
+    risk: op.confirmation.risk ?? op.effect.risk,
+    reason: op.confirmation.reason ?? reason,
+  };
+  op.input.schema = operationInputSchema(op);
 }
 
 /** Whether `name` is one of the operation's synthesized safety controls (not a real input). */

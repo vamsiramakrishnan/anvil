@@ -1502,6 +1502,46 @@
       "tests": [
         "packages/mcp-runtime/src/server.effects.test.ts"
       ]
+    },
+    {
+      "id": "effects/rejected-contract-confirms",
+      "file": "packages/compiler/src/effects.ts",
+      "control": "An operation whose effect contract is rejected is served as irreversible, so its confirmation is tightened to match. Skipping the tightening must be caught: a keyed write would stay callable without confirmation and with no undo.",
+      "find": "      if (op.effect.kind === \"mutation\") {\n        requireConfirmation(",
+      "replace": "      if (false) {\n        requireConfirmation(",
+      "tests": [
+        "packages/compiler/src/effects.test.ts"
+      ]
+    },
+    {
+      "id": "effects/mapping-types-checked",
+      "file": "packages/compiler/src/effects.ts",
+      "control": "A mapped value whose type the target input cannot take is refused at compile time. Dropping the path type check must be caught.",
+      "find": "          if (sourceTypes && !effectTypesCompatible(sourceTypes, targetTypes)) {",
+      "replace": "          if (false) {",
+      "tests": [
+        "packages/compiler/src/effects.test.ts"
+      ]
+    },
+    {
+      "id": "effects/draft-needs-staged-confirm",
+      "file": "packages/compiler/src/effects.ts",
+      "control": "An operation whose draft form needs confirmation must itself take a confirm input, or a staged call can never confirm the draft.",
+      "find": "      if (draftOp?.confirmation.required && !op.confirmation.required) {",
+      "replace": "      if (false) {",
+      "tests": [
+        "packages/compiler/src/effects.test.ts"
+      ]
+    },
+    {
+      "id": "effects/draft-input-validated",
+      "file": "packages/mcp-runtime/src/effects.ts",
+      "control": "A staged call's mapped draft input is validated against the draft tool's own schema before the mutation runs. Skipping it lets a mistyped value reach the upstream.",
+      "find": "  if (!checked.success) {",
+      "replace": "  if (false) {",
+      "tests": [
+        "packages/mcp-runtime/src/server.effects.test.ts"
+      ]
     }
   ]
 }
