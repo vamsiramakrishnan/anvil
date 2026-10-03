@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { appendFileSync, chmodSync, closeSync, existsSync, openSync } from "node:fs";
+import type { EffectClass } from "@anvil/air";
 import type { GrantDecision, GrantEntry } from "./grants.js";
 import type { ExecutionRecord } from "./observability.js";
 import type { Principal } from "./policy.js";
@@ -37,6 +38,12 @@ export interface AuditLine {
   rule: string | null;
   dry_run: boolean;
   trace_id: string;
+  /** The operation's effect class (ADR-0030): `read`, `reversible`, `compensable`, or `irreversible`. */
+  effect_class: EffectClass;
+  /** The caller's effect-ledger id for this call (the idempotency key it sent), or null. */
+  ledger_id: string | null;
+  /** On a staged call (`stage: true`), the operation whose draft form this call performed. */
+  staged_for: string | null;
 }
 
 export type AuditSink = (line: AuditLine) => void;
@@ -113,6 +120,9 @@ export interface AuditedCall {
   record: ExecutionRecord;
   error: { code: string; details?: unknown } | undefined;
   upstreamStatus: number | undefined;
+  effectClass: EffectClass;
+  ledgerId?: string | undefined;
+  stagedFor?: string | undefined;
 }
 
 /**
@@ -151,6 +161,9 @@ export function auditCall(sink: AuditSink, call: AuditedCall): void {
         typeof detailCode === "string" && detailCode.startsWith("policy/grant") ? detailCode : null,
       dry_run: record.outcome === "dry_run",
       trace_id: record.traceId,
+      effect_class: call.effectClass,
+      ledger_id: call.ledgerId ?? null,
+      staged_for: call.stagedFor ?? null,
     });
   } catch {
     // An audit sink never fails the call it describes.

@@ -2,6 +2,8 @@ import type { AirDocument, AsyncContract, Operation } from "@anvil/air";
 import {
   agentFieldName,
   asyncContractSentence,
+  effectContractMeta,
+  effectUndoSentence,
   evidenceConfidence,
   kebabCase,
   queryPolicySentence,
@@ -622,6 +624,8 @@ function operationsRef(
   const asyncByOperationId = new Map(asyncOps.map((surface) => [surface.op.id, surface]));
   const pending = ops.filter((op) => op.state !== "approved");
 
+  const cliCommandOf = (id: string) =>
+    ops.find((candidate) => candidate.id === id)?.cli.command ?? id;
   const buildApprovedRows = (approvedOps: Operation[]) => {
     return approvedOps.map((op) => {
       const flags = [
@@ -670,6 +674,12 @@ function operationsRef(
         );
       } else if (op.longRunning) {
         metadataLines.push("- Long-running: returns before completion; poll for status");
+      }
+
+      // What undoing it means, only where declared (ADR-0030): an undeclared
+      // operation's entry stays as it was.
+      if (op.effect.kind === "mutation" && effectContractMeta(op)) {
+        metadataLines.push(`- Undo: ${effectUndoSentence(op, cliCommandOf)}`);
       }
 
       // Archetype search hint

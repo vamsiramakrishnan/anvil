@@ -42,6 +42,16 @@ export const OperationAction = z.enum([
 ]);
 export type OperationAction = z.infer<typeof OperationAction>;
 
+/**
+ * What undoing an effect means, decided by the operation (never guessed by a
+ * caller): `reversible` — a true inverse leaves the world as it was;
+ * `compensable` — a cancelling action exists but leaves a trace (close, not
+ * delete; refund); `irreversible` — no undo; `read` — changes nothing. The
+ * contract with Branchyard's effect ledger (ADR-0030).
+ */
+export const EffectClass = z.enum(["read", "reversible", "compensable", "irreversible"]);
+export type EffectClass = z.infer<typeof EffectClass>;
+
 /** Read-family actions — those that (descriptively) have no side effect. */
 export const READ_ACTIONS: readonly OperationAction[] = [
   "list",

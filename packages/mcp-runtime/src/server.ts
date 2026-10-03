@@ -26,6 +26,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { ledgerWithJobIndexing, peekWebhookStatus } from "./async-completion.js";
 import {
+  applyIdempotencyKey,
+  callEffectReport,
+  effectToolMeta,
+  readEffectRequest,
+  stageDraftCall,
+  withEffectMeta,
+} from "./effects.js";
+import {
   type ConfirmingTool,
   elicitOperationConfirmation,
   elicitWorkflowConfirmation,
@@ -240,6 +248,9 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
   // workflow's own steps must still resolve, and the ladder still reads the
   // grouping from the document, not from what happened to register.
   const servedOps = ops.filter((op) => !workflowSurface.superseded.has(op.id));
+  // An effect report only ever points a caller at a tool this server serves.
+  const servedToolNames = new Map(servedOps.map((op) => [op.id, op.mcp.toolName]));
+  const toolFor = (operationId: string) => servedToolNames.get(operationId);
 
   // Precomputed in one pass over `ops`, before any tool registers, for three
   // reasons registration itself needs:
@@ -338,6 +349,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           "anvil/principal": op.auth.principal,
           "anvil/operation_id": op.id,
           ...asyncContractMeta(asyncContract),
+          ...effectToolMeta(op),
         },
       },
       async (args: Record<string, unknown>, extra: ToolCallExtra) => {
@@ -354,6 +366,26 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         const projection = takeProjectionArg(input);
         const { budget, tokens: budgetTokens } = resolveResultBudget(options, op);
         const report = progressReporter(extra);
+
+        // The caller's effect controls (ADR-0030, effects.ts). A staged call
+        // performs the draft form and never this operation's own upstream call.
+        const effectRequest = readEffectRequest(op, extra._meta);
+        if (!effectRequest.ok) return errorResult(effectRequest.envelope, op, budget);
+        const { idempotencyKey: ledgerId, stage } = effectRequest.request;
+        if (stage) {
+          return stageDraftCall(
+            { op, input, dryRun, ledgerId, signal: extra.signal },
+            {
+              opsById,
+              toolFor,
+              contextFor: options.contextFor,
+              fail: (envelope, failed) => errorResult(envelope, failed, budget),
+              truncate: (text, served) => truncateResultText(text, served, budget),
+            },
+          );
+        }
+        const keyed = applyIdempotencyKey(op, input, ledgerId);
+        if (!keyed.ok) return errorResult(keyed.envelope, op, budget);
 
         // Parse-check the projection BEFORE the upstream call. A malformed
         // expression is the caller's mistake, and there is no reason to make an
@@ -379,7 +411,11 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         input = elicited.input;
         const execContext = recordingElicitation(
           // The client's cancellation of THIS request aborts the upstream call.
-          { ...options.contextFor(op), signal: extra.signal },
+          {
+            ...options.contextFor(op),
+            signal: extra.signal,
+            ...(ledgerId !== undefined ? { ledgerId } : {}),
+          },
           elicited.decision,
         );
         // Any operation with a resolved AsyncContract indexes its job handle
@@ -425,6 +461,10 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         }
 
         const result = await execute(op, { input, dryRun }, callContext);
+        // What this call did to the world, and how to undo or find it.
+        const effect = callEffectReport(op, input, result, toolFor);
+        const reported = <T extends object>(toolResult: T): T =>
+          effect ? withEffectMeta(toolResult, effect) : toolResult;
         if (result.outcome === "success") {
           const raw = result.data ?? null;
           // One poll, one progress mark: done when the contract's own state
@@ -440,7 +480,8 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           let data = raw;
           if (projection !== undefined) {
             const projected = applyProjection(raw, projection, op, `trace_${randomUUID()}`);
-            if (!projected.ok) return errorResult(projected.envelope, op, budget);
+            // The effect happened even though the view failed: still report it.
+            if (!projected.ok) return reported(errorResult(projected.envelope, op, budget));
             data = projected.data ?? null;
           }
 
@@ -457,9 +498,11 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           // The structured channel follows the published output schema: a
           // projected view under its reserved key, a response validated against
           // the declared shape (output-schema.ts).
-          return projection !== undefined
-            ? projectedResult(text, data)
-            : responseResult(text, data, declaredOutput);
+          return reported(
+            projection !== undefined
+              ? projectedResult(text, data)
+              : responseResult(text, data, declaredOutput),
+          );
         }
         if (result.outcome === "dry_run") {
           // The plan is a preview of the wire request, not response data, so a
@@ -470,7 +513,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
           text = truncateResultText(text, op, budget);
           return dryRunResult(text, result.plan);
         }
-        return errorResult(result.envelope, op, budget);
+        return reported(errorResult(result.envelope, op, budget));
       },
     );
     opTools.set(op.id, registered);

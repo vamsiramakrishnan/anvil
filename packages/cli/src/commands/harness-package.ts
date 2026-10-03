@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { type AirDocument, isDirectlyCallable } from "@anvil/air";
+import { type AirDocument, effectClassOf, isDirectlyCallable, type Operation } from "@anvil/air";
 import type { GrantEntry } from "@anvil/runtime";
 import type { Command } from "commander";
 import { harnessCliSource, harnessOperations } from "../harness-cli-source.js";
@@ -174,6 +174,36 @@ function servicePurpose(air: AirDocument): string {
   return summaries.length > 0 ? `${title}: ${summaries.join("; ")}.` : `${title}.`;
 }
 
+/** The Effect column of a harness skill: what the call does, and whether it can be undone (ADR-0030). */
+function effectLabel(op: Operation): string {
+  switch (effectClassOf(op)) {
+    case "read":
+      return "read";
+    case "reversible":
+      return "write, can be undone";
+    case "compensable":
+      return "write, can be compensated (not undone)";
+    default:
+      return op.effect.draft
+        ? "write, cannot be undone (has a draft form)"
+        : "write, cannot be undone";
+  }
+}
+
+/** The undo a reversible or compensable operation declares. */
+function declaredUndo(
+  op: Operation,
+): { kind: "inverse" | "compensate"; operation: string } | undefined {
+  const effectClass = effectClassOf(op);
+  if (effectClass === "reversible" && op.effect.inverse) {
+    return { kind: "inverse", operation: op.effect.inverse.operation };
+  }
+  if (effectClass === "compensable" && op.effect.compensate) {
+    return { kind: "compensate", operation: op.effect.compensate.operation };
+  }
+  return undefined;
+}
+
 function skillMd(
   air: AirDocument,
   connector: string,
@@ -185,8 +215,10 @@ function skillMd(
   const purpose = servicePurpose(air);
   const rows = ops.map((op) => {
     const method = op.id;
-    const python = air.operations.find((o) => o.id === method)?.canonicalName ?? method;
-    return `| \`${connector} ${op.command.join(" ")}\` | \`${python}\` | ${op.effect}${op.confirm.required ? ", needs confirm" : ""} | ${op.title} |`;
+    const operation = air.operations.find((o) => o.id === method);
+    const python = operation?.canonicalName ?? method;
+    const effect = operation ? effectLabel(operation) : op.effect;
+    return `| \`${connector} ${op.command.join(" ")}\` | \`${python}\` | ${effect}${op.confirm.required ? ", needs confirm" : ""} | ${op.title} |`;
   });
   const firstRead = ops.find((op) => op.effect === "read");
   const requiredFlags = (op: (typeof ops)[number]) =>
@@ -234,6 +266,9 @@ ${rows.join("\n")}
   \`confirm=True\`. Pass it only when the task asks for that effect.
 - Where an operation takes an idempotency key, reuse the same key to retry the
   same intent; never invent a new one for a retry.
+- "Cannot be undone" means exactly that: once it runs, nothing takes it back.
+  Where a write can be undone or compensated, the call's result names the
+  undo (\`_meta.effect.undo\`); undoing is an ordinary call under this grant.
 
 ## When a call is refused
 
@@ -386,13 +421,20 @@ async function runPackageHarness(
       python: "python >= 3.9 (standard library only)",
       typescript: "a TypeScript 5 build (tsc) or a runtime that strips types; node >= 18 for fetch",
     },
-    operations: harnessOperations(air).map((op) => ({
-      id: op.id,
-      tool: `${connector}__${op.tool}`,
-      cli: `${connector} ${op.command.join(" ")}`,
-      effect: op.effect,
-      confirm: op.confirm.required,
-    })),
+    operations: harnessOperations(air).map((op) => {
+      const operation = air.operations.find((o) => o.id === op.id) as Operation;
+      const undo = declaredUndo(operation);
+      return {
+        id: op.id,
+        tool: `${connector}__${op.tool}`,
+        cli: `${connector} ${op.command.join(" ")}`,
+        effect: op.effect,
+        effect_class: effectClassOf(operation),
+        ...(undo ? { undo: { kind: undo.kind, operation: undo.operation } } : {}),
+        ...(operation.effect.draft ? { draft: true } : {}),
+        confirm: op.confirm.required,
+      };
+    }),
   };
   writeFileSync(join(out, "harness.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   io.out(

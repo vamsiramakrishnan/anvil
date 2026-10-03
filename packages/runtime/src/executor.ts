@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   agentPropKey,
+  effectClassOf,
   FLEET_POLICY_CODE,
   type IdempotencyCarrierBinding,
   idempotencyKeyMatchesOperation,
@@ -82,10 +83,12 @@ export interface DryRunPlan {
   confirmationRequired: boolean;
 }
 
-export type ExecuteResult =
+/** `idempotencyKey`: the key that went upstream, when one did (the effect report names it). */
+export type ExecuteResult = (
   | { outcome: "success"; status: number; data: unknown; record: ExecutionRecord }
   | { outcome: "error"; envelope: ErrorEnvelope; record: ExecutionRecord }
-  | { outcome: "dry_run"; plan: DryRunPlan; record: ExecutionRecord };
+  | { outcome: "dry_run"; plan: DryRunPlan; record: ExecutionRecord }
+) & { idempotencyKey?: string };
 
 export interface ExecuteContext {
   /** A compiled business gateway owns the durable intent ledger; clients must not cache its refusals. */
@@ -130,6 +133,10 @@ export interface ExecuteContext {
   connector?: string;
   /** One audit line per call (audit.ts). Absent = no audit. */
   audit?: AuditSink;
+  /** The caller's effect-ledger id (its idempotency key, ADR-0030), for the audit line. */
+  ledgerId?: string;
+  /** On a staged call: the operation whose draft form this call performs. */
+  stagedFor?: string;
   observer?: Observer;
   ledger?: IdempotencyLedger;
   allowedHosts?: string[];
@@ -674,13 +681,21 @@ export async function execute(
   // Filled in by the grant gate and the send loop, for the audit line.
   let grantDecision: GrantDecision | undefined;
   let upstreamStatus: number | undefined;
+  let upstreamKey: string | undefined;
   const finish = (result: ExecuteResult): ExecuteResult => {
     result.record.latencyMs = now() - start;
+    if (upstreamKey !== undefined && result.outcome !== "dry_run")
+      result.idempotencyKey = upstreamKey;
     (ctx.observer ?? noopObserver).onRecord(result.record);
     if (ctx.audit) {
       const error = result.outcome === "error" ? result.envelope.error : undefined;
       const call = { principal, connector: ctx.connector, input, grant: grantDecision };
-      auditCall(ctx.audit, { ...call, record: result.record, error, upstreamStatus });
+      const effect = {
+        effectClass: effectClassOf(op),
+        ledgerId: ctx.ledgerId,
+        stagedFor: ctx.stagedFor,
+      };
+      auditCall(ctx.audit, { ...call, ...effect, record: result.record, error, upstreamStatus });
     }
     return result;
   };
@@ -1340,6 +1355,7 @@ export async function execute(
       record.retryCount = attempt - 1;
       try {
         throwIfCancelled(ctx.signal);
+        upstreamKey = key;
         const res = await ctx.transport.send(request);
         lastResponse = res;
         upstreamStatus = res.status;

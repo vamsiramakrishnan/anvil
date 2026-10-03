@@ -20,6 +20,7 @@ import { analyzeTemplate, lexicalFamily } from "@anvil/grammar";
 import { z } from "zod";
 import { decideAuthorizationCodeApproval, manifestReviewAnnotation } from "./auth-approval.js";
 import { classifyAuth, classifyConfirmation, classifyEffect, classifyRetry } from "./classify.js";
+import { applyEffectPatch, ManifestEffect } from "./effects.js";
 import {
   applyPaginationPatch,
   applyParamsPatch,
@@ -260,6 +261,8 @@ export const OperationManifest = z.strictObject({
   side_effect: z.enum(["read", "mutation"]).optional(),
   risk: z.enum(["none", "low", "medium", "high", "financial", "destructive"]).optional(),
   reversible: z.boolean().optional(),
+  /** The effect contract: class, inverse, compensate, lookup, draft (ADR-0030, effects.ts). */
+  effect: ManifestEffect.optional(),
   display_name: z.string().optional(),
   description: z.string().optional(),
   /**
@@ -873,6 +876,7 @@ export function applyOperationManifest(original: Operation, m: OperationManifest
   }
   if (m.risk) op.effect.risk = m.risk;
   if (m.reversible !== undefined) op.effect.reversible = m.reversible;
+  if (m.effect) applyEffectPatch(op, m.effect, m.reversible !== undefined);
   if (m.action) op.effect.action = m.action;
   if (m.display_name) op.displayName = m.display_name;
   if (m.description) op.description = m.description;

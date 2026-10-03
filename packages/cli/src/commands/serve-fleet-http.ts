@@ -17,8 +17,10 @@ import { type Principal, resolvePrincipalForBearer, withInboundIdentity } from "
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { CliIO } from "../io.js";
+import { json, readSmallJson } from "./fleet-http-io.js";
 import { auditSinkFromEnv, buildGatewayRuntime, type GatewayRuntime } from "./gateway.js";
 import { prepareFleetForWorkspace } from "./serve.js";
+import { handleRestCall } from "./serve-fleet-rest.js";
 
 /**
  * `anvil serve mcp <workspace> --fleet --http <port> [--host <host>]`: the
@@ -194,11 +196,6 @@ async function authorize(
   };
 }
 
-function json(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
-  res.end(JSON.stringify(body));
-}
-
 function jsonRpcError(res: ServerResponse, status: number, code: number, message: string): void {
   json(res, status, { jsonrpc: "2.0", error: { code, message }, id: null });
 }
@@ -337,6 +334,23 @@ export async function startFleetHttp(
   const sweep = setInterval(() => pruneIdle(), SESSION_SWEEP_MS);
   sweep.unref();
 
+  // A caller's principal, resolved by the composition root exactly as the
+  // deployed HTTP server resolves it: the branchyard token's own principal;
+  // else the verified inbound identity when inbound auth produced one
+  // (bearer, then issuer:subject, subject, email), else the bearer alone.
+  // Unconfigured directory → undefined → execute()'s anonymous default;
+  // configured directory + an unnamed caller → undefined +
+  // directoryConfigured → execute() refuses fail-closed
+  // (policy/principal_unresolved).
+  const principalOf = (auth: Extract<Authorized, { ok: true }>): Principal | undefined =>
+    auth.principal
+      ? auth.principal
+      : auth.identity
+        ? prepared.principalFor(auth.identity)
+        : principalDirectoryConfigured
+          ? resolvePrincipalForBearer(config.principals, auth.bearer)
+          : undefined;
+
   const server: Server = createServer(async (req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     if (url.pathname === "/healthz") {
@@ -355,6 +369,20 @@ export async function startFleetHttp(
     }
     if (gateway && url.pathname.startsWith("/connect/")) {
       return handleConnect(req, res, url, inbound, gateway);
+    }
+    if (url.pathname.startsWith("/call/")) {
+      if (shuttingDown) return json(res, 503, { error: { code: "shutting_down" } });
+      const auth = await authorize(req, res, inbound);
+      if (!auth.ok) return;
+      return handleRestCall(req, res, url, {
+        principal: principalOf(auth),
+        identity: auth.identity,
+        build: (principal) =>
+          prepared.build({
+            principal,
+            ...(gateway ? { gateway: { credentials: gateway.credentials } } : {}),
+          }),
+      });
     }
     if (url.pathname !== "/mcp") {
       return json(res, 404, { error: { code: "not_found", message: "No such route." } });
@@ -403,13 +431,7 @@ export async function startFleetHttp(
       // execute()'s anonymous default; configured directory + an unnamed
       // caller → undefined + directoryConfigured → execute() refuses
       // fail-closed (policy/principal_unresolved).
-      const principal = auth.principal
-        ? auth.principal
-        : auth.identity
-          ? prepared.principalFor(auth.identity)
-          : principalDirectoryConfigured
-            ? resolvePrincipalForBearer(config.principals, auth.bearer)
-            : undefined;
+      const principal = principalOf(auth);
       let fleet: FleetServer;
       try {
         fleet = await prepared.build({
@@ -491,43 +513,6 @@ export async function startFleetHttp(
     server.closeAllConnections?.();
   };
   return { ok: true, handle: { host: options.host, port, bundleIds, close } };
-}
-
-const CONNECT_BODY_MAX_BYTES = 64 * 1024;
-
-function readSmallJson(req: IncomingMessage): Promise<Record<string, unknown> | undefined> {
-  return new Promise((resolve) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    let done = false;
-    const finish = (value: Record<string, unknown> | undefined) => {
-      if (done) return;
-      done = true;
-      resolve(value);
-    };
-    req.on("data", (chunk: Buffer | string) => {
-      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      size += bytes.length;
-      if (size > CONNECT_BODY_MAX_BYTES) {
-        req.resume();
-        return finish(undefined);
-      }
-      chunks.push(bytes);
-    });
-    req.once("end", () => {
-      try {
-        const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
-        finish(
-          value && typeof value === "object" && !Array.isArray(value)
-            ? (value as Record<string, unknown>)
-            : undefined,
-        );
-      } catch {
-        finish(undefined);
-      }
-    });
-    req.once("error", () => finish(undefined));
-  });
 }
 
 function text(value: unknown): string | undefined {

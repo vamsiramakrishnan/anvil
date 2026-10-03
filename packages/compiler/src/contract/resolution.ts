@@ -181,6 +181,12 @@ function baseValue(op: Operation, predicate: SemanticPredicate): unknown {
       return op.querySchema;
     case "asyncContract":
       return op.asyncContract;
+    case "effectContract": {
+      const { class: effectClass, inverse, compensate, lookup, draft } = op.effect;
+      return effectClass || inverse || compensate || lookup || draft
+        ? { class: effectClass, inverse, compensate, lookup, draft }
+        : undefined;
+    }
   }
 }
 
