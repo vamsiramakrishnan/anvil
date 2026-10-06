@@ -18,6 +18,7 @@ export * from "./bundle-transaction.js";
 export * from "./capability-view.js";
 export * from "./catalog.js";
 export * from "./certify.js";
+export * from "./compose/index.js";
 export * from "./conformance.js";
 export * from "./deploy.js";
 export * from "./deploy-github-actions.js";

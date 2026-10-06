@@ -18,6 +18,9 @@ import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 
+/** Where a harness home keeps the composite (`@anvil/generators`' COMPOSE_DIR). */
+const COMPOSE_DIR_NAME = "_compose";
+
 /**
  * Harness packaging for Branchyard (docs/branchyard.md, ADR-0029):
  *
@@ -142,6 +145,36 @@ export function registerConnectors(parent: Command, ctx: CommandContext): void {
         opts: { grants: string; out: string; skillsRoot?: string; workspace?: string },
       ) => {
         ctx.code = await runConnectorsIndex(bundles, opts, ctx.io);
+      },
+    );
+  connectors
+    .command("compose")
+    .summary(
+      "Write the composite SDK: every connector behind one client, and flows (DAGs) across them.",
+    )
+    .description(
+      "Writes <out>/SKILL.md, compose.json, python/anvil_compose and typescript/ for the given bundles. The composite wraps each connector's own generated SDK (it calls their methods, so every gate still applies) and adds Flow: step, map, when, plan, validate, dry_run, run and compensate. With --layout harness (the default) the connector SDKs are the packages `anvil package harness` wrote under --skills-root; with --layout bundle they are each bundle's own sdk/.",
+    )
+    .argument("<bundles...>", "compiled bundle directories")
+    .requiredOption(
+      "--out <dir>",
+      "the composite directory to write (replaced if it holds a previous composite)",
+    )
+    .option(
+      "--skills-root <dir>",
+      "the directory holding the packaged connectors, one per connector id (default: the directory of --out)",
+    )
+    .option(
+      "--workspace <dir>",
+      "the workspace the gateway serves; each bundle's connector id is its path there, folded as the fleet folds it (default: each bundle served alone, named by its directory)",
+    )
+    .option("--layout <layout>", "harness | bundle", "harness")
+    .action(
+      async (
+        bundles: string[],
+        opts: { out: string; skillsRoot?: string; workspace?: string; layout: string },
+      ) => {
+        ctx.code = await runConnectorsCompose(bundles, opts, ctx.io);
       },
     );
 }
@@ -511,6 +544,19 @@ async function runConnectorsIndex(
       ].join("\n"),
     );
   }
+  const granted = entries.length;
+  const composite = join(skillsRoot, COMPOSE_DIR_NAME, "SKILL.md");
+  if (entries.length > 1 && existsSync(composite)) {
+    const path = (relative(dirname(out), composite) || "SKILL.md").split("\\").join("/");
+    entries.push(
+      [
+        "## Spanning connectors",
+        "",
+        "- **Use when:** one task reads from one connector and acts in another.",
+        `- **Skill:** \`${path}\` — one client for every connector above, and flows: a DAG of their calls you can plan, validate and dry-run before anything is sent.`,
+      ].join("\n"),
+    );
+  }
   const text = `# Connectors
 
 These connectors are granted to this branch. Each one is called through the
@@ -522,6 +568,91 @@ ${entries.length > 0 ? entries.join("\n\n") : "_No connectors are granted to thi
 `;
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, text, "utf8");
-  io.out(`Wrote ${out} (${entries.length} granted connector(s)).`);
+  io.out(
+    `Wrote ${out} (${granted} granted connector(s)${entries.length > granted ? ", with the composite" : ""}).`,
+  );
+  return 0;
+}
+
+/** Module specifier from `<composite>/typescript/src` to a file, posix-style. */
+function moduleSpecifier(fromDir: string, file: string): string {
+  const rel = relative(fromDir, file).split("\\").join("/");
+  return rel.startsWith(".") ? rel : `./${rel}`;
+}
+
+async function runConnectorsCompose(
+  bundles: string[],
+  opts: { out: string; skillsRoot?: string; workspace?: string; layout: string },
+  io: CliIO,
+): Promise<number> {
+  if (opts.layout !== "harness" && opts.layout !== "bundle") {
+    io.err(`anvil: --layout is harness or bundle, not '${opts.layout}'.`);
+    return 1;
+  }
+  const { generateComposite, resolveBundleDir, COMPOSE_DIR } = await import("@anvil/generators");
+  const out = resolve(opts.out);
+  const skillsRoot = resolve(opts.skillsRoot ?? dirname(out));
+  const tsDir = join(out, "typescript", "src");
+  const sources: Parameters<typeof generateComposite>[0][number][] = [];
+  for (const bundle of bundles) {
+    let bundleDir: string;
+    let air: AirDocument;
+    try {
+      bundleDir = resolveBundleDir(bundle);
+      air = await loadBundleAir(bundleDir);
+    } catch (error) {
+      io.err(`anvil: ${bundle} is not a compiled bundle: ${(error as Error).message}`);
+      return 1;
+    }
+    const connector = await servedConnectorId(bundleDir, opts.workspace);
+    if (connector === undefined) return notServed(io, bundle, opts.workspace as string);
+    if (connector === COMPOSE_DIR) {
+      io.err(`anvil: connector id '${COMPOSE_DIR}' is reserved for the composite itself.`);
+      return 1;
+    }
+    if (callable(air).length === 0) {
+      io.err(`anvil: ${bundle} has no approved, callable operations; there is nothing to compose.`);
+      return 1;
+    }
+    const sdkBase =
+      opts.layout === "harness" ? join(skillsRoot, connector) : join(bundleDir, "sdk");
+    if (opts.layout === "harness" && !existsSync(join(sdkBase, "harness.json"))) {
+      io.err(
+        `anvil: ${sdkBase} is not a harness package; run \`anvil package harness ${bundle} --out ${sdkBase}\` first, or pass --skills-root.`,
+      );
+      return 1;
+    }
+    sources.push({
+      connector,
+      air,
+      pythonPath: relative(out, join(sdkBase, "python")).split("\\").join("/") || ".",
+      typescriptImport: moduleSpecifier(tsDir, join(sdkBase, "typescript", "src", "index.js")),
+    });
+  }
+  let files: Record<string, string>;
+  try {
+    files = generateComposite(sources);
+  } catch (error) {
+    io.err(`anvil: ${(error as Error).message}`);
+    return 1;
+  }
+  if (existsSync(out)) {
+    const entries = readdirSync(out);
+    if (entries.length > 0 && !entries.includes("compose.json")) {
+      io.err(
+        `anvil: ${out} exists and is not a composite; refusing to replace it. Choose an empty or new --out.`,
+      );
+      return 1;
+    }
+    rmSync(out, { recursive: true, force: true });
+  }
+  for (const [path, text] of Object.entries(files)) {
+    const target = join(out, path);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, text, "utf8");
+  }
+  io.out(
+    `Composed ${sources.length} connector(s) (${sources.map((s) => s.connector).join(", ")}) to ${out}.`,
+  );
   return 0;
 }
