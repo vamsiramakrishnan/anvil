@@ -40,6 +40,16 @@ pnpm anvil sdk generated/payments \
 The command writes `typescript/`, `python/`, `manifest.json`, and `README.md`
 under `clients/payments`.
 
+## Compose several clients
+
+`anvil connectors compose <bundle...> --out <dir>` writes one composite SDK
+(Python `anvil_compose`, TypeScript `typescript/src`) over several bundles'
+clients. It adds `Flow`, a DAG of calls across connectors with `plan`,
+`validate`, `dry_run`, `run`, and `compensate`. Pass `--layout bundle` to
+compose each bundle's own `sdk/`. The default layout composes Branchyard
+harness packages. See [Serving Branchyard harnesses](branchyard.md#spanning-connectors-the-composite)
+and [ADR-0031](adr/0031-composite-sdk-and-flows.md).
+
 ## Build a generated client
 
 Each language directory is independently vendorable. Runtime code uses only

@@ -298,6 +298,52 @@ connectors index --grants <file> --out INDEX.md [--workspace <dir>]
 same connector id: what it is for, when to use it, what is granted, and where
 its `SKILL.md` is.
 
+## Spanning connectors: the composite
+
+When a branch is granted more than one connector, Branchyard also runs:
+
+```bash
+$ANVIL connectors compose --workspace "$WORK/workspace" --out "$WORK/home/connectors/_compose" \
+  "$WORK/workspace/github" "$WORK/workspace/jira"
+```
+
+It writes a composite beside the connector packages
+([ADR-0031](adr/0031-composite-sdk-and-flows.md)): one client for every
+composed connector, and **flows**, which are DAGs of their calls. Run it
+before `connectors index`. The index then adds a "Spanning connectors" entry
+that points at `_compose/SKILL.md`.
+
+```python
+from anvil_compose import Composite, item      # PYTHONPATH=<home>/connectors/_compose/python
+
+c = Composite()                                # gateway mode, from ANVIL_GATEWAY_*
+flow = c.flow("triage")
+issues = flow.step("issues", "github.issues.list", owner="octo", repo="hello")
+flow.map("comment", "github.comments.create", over=issues,
+         args={"owner": "octo", "repo": "hello", "issue_number": item("number"), "body": "triaged"})
+print(flow.plan())        # nodes, edges, waves; nothing sent
+print(flow.validate())    # an error here stops run() before any call
+run = flow.run()          # dependency order; stops at the first failure
+if not run.ok:
+    print(run.compensation)                    # each completed write's undo, newest first
+    flow.compensate(run, confirm=True)         # only when the task wants it undone
+```
+
+Each step is an ordinary call to that connector's SDK, under this branch's
+grant, so a refused step fails the run exactly as a direct call would. The
+same flow as JSON (`anvil.compose-flow/v1`) runs with
+`python -m anvil_compose run FLOW.json [--dry-run]`. `typescript/src/` exports
+the same API. Step 10 of `examples/github-mini/e2e.mjs` runs a flow through the
+gateway, fails it on purpose, and compensates.
+
+| Meta method | What it does | Sends? |
+| --- | --- | --- |
+| `step` / `map` / `when=` | Build the DAG; `ref(step, path)` and `item(path)` read earlier results. | no |
+| `plan()` / `validate()` / `mermaid()` / `to_json()` | Read the DAG. | no |
+| `dry_run()` | Every step through its SDK's gates with `dry_run`. | no |
+| `run()` | Call the steps. | yes |
+| `compensate(run, confirm=)` | Run the undo calls a failed run lists. | yes |
+
 ## Effects and undo
 
 Every operation call through the gateway reports what it did to the world and

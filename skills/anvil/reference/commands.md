@@ -1552,6 +1552,19 @@ Options:
 - `--skills-root <dir>` — the directory holding the packaged connectors, as INDEX.md should name it (default: the directory of --out)
 - `--workspace <dir>` — the workspace the gateway serves; each bundle's connector id is its path there, folded as the fleet folds it (default: each bundle served alone, named by its directory)
 
+#### `anvil connectors compose`
+`anvil connectors compose [options] <bundles...>`
+
+Write the composite SDK: every connector behind one client, and flows (DAGs) across them.
+
+Writes <out>/SKILL.md, compose.json, python/anvil_compose and typescript/ for the given bundles. The composite wraps each connector's own generated SDK (it calls their methods, so every gate still applies) and adds Flow: step, map, when, plan, validate, dry_run, run and compensate. With --layout harness (the default) the connector SDKs are the packages `anvil package harness` wrote under --skills-root; with --layout bundle they are each bundle's own sdk/.
+
+Options:
+- `--out <dir>` — the composite directory to write (replaced if it holds a previous composite)
+- `--skills-root <dir>` — the directory holding the packaged connectors, one per connector id (default: the directory of --out)
+- `--workspace <dir>` — the workspace the gateway serves; each bundle's connector id is its path there, folded as the fleet folds it (default: each bundle served alone, named by its directory)
+- `--layout <layout>` — harness | bundle
+
 ### `anvil skill`
 `anvil skill [options] [out-dir]`
 

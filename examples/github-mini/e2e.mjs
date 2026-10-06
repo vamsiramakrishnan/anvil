@@ -490,6 +490,76 @@ print(json.dumps({"issues": issues, "refused": refused}))
       effectAudit.every((line) => typeof line.effect_class === "string"),
     effectAudit,
   );
+
+  // 10. The composite (ADR-0031): a flow through the same gateway, on the
+  // write turn. It comments on every open issue, then fails on a missing
+  // issue; the run names the inverse of each comment, and compensate()
+  // deletes them, newest first, through the gateway.
+  await run(process.execPath, [
+    anvil,
+    "connectors",
+    "compose",
+    bundle,
+    "--out",
+    join(home, "_compose"),
+  ]);
+  const writeTokenFile = join(work, "turn-2.token");
+  writeFileSync(writeTokenFile, writeToken, { mode: 0o600 });
+  const before = mock.state.comments.length;
+  const flowScript = `
+import json
+from anvil_compose import Composite, item
+c = Composite()
+flow = c.flow("triage")
+issues = flow.step("issues", "github.issues.list", owner="octo", repo="hello")
+flow.map("comment", "github.comments.create", over=issues,
+         args={"owner": "octo", "repo": "hello", "issue_number": item("number"), "body": "triaged"})
+flow.step("missing", "github.issues.get", owner="octo", repo="hello", issue_number=999, after=["comment"])
+findings = flow.validate()
+run = flow.run()
+undone = flow.compensate(run, confirm=True)
+print(json.dumps({"findings": findings, "run": run.to_json(), "undone": [o["status"] for o in undone]}))
+`;
+  const flowOut = JSON.parse(
+    (
+      await run(python, ["-c", flowScript], {
+        env: {
+          ...hermetic(process.env),
+          PYTHONPATH: join(home, "_compose", "python"),
+          ANVIL_GATEWAY_URL: mcpUrl,
+          ANVIL_GATEWAY_TOKEN_FILE: writeTokenFile,
+        },
+      })
+    ).trim(),
+  );
+  const undoPlan = flowOut.run.compensation;
+  const issueCount = flowOut.run.steps.issues.result.length;
+  check(
+    "compose: a flow runs through the gateway and stops at the failing step",
+    flowOut.findings.length === 0 &&
+      flowOut.run.status === "failed" &&
+      flowOut.run.failed_step === "missing" &&
+      issueCount > 1 &&
+      flowOut.run.steps.comment.result.length === issueCount,
+    flowOut.run,
+  );
+  check(
+    "compose: the run names each comment's inverse, newest first",
+    undoPlan.length === issueCount &&
+      undoPlan.every(
+        (entry) =>
+          entry.undo?.kind === "inverse" && entry.undo.operation === "github.comments.delete",
+      ) &&
+      undoPlan[0].undo.arguments.comment_id > undoPlan[1].undo.arguments.comment_id,
+    undoPlan,
+  );
+  check(
+    "compose: compensate() undoes them through the gateway",
+    flowOut.undone.length === issueCount &&
+      flowOut.undone.every((status) => status === "ok") &&
+      mock.state.comments.length === before,
+    { undone: flowOut.undone, comments: mock.state.comments },
+  );
 } finally {
   gateway?.kill("SIGTERM");
   await mock.close();
