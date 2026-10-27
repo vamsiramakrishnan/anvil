@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +12,8 @@ import {
   readBundleDir,
   writeBundle,
 } from "@anvil/generators";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { afterAll, describe, expect, it } from "vitest";
 import { ensureBundleNodeModules } from "./bundle-driver.js";
 import { LiveReport, liveIdentityGate, liveIdentityReadiness, runLiveConformance } from "./live.js";
@@ -35,12 +37,20 @@ afterAll(() => {
   for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 });
 
-async function buildBundle(variant?: string): Promise<string> {
+async function buildBundle(
+  variant?: string,
+  options: { anonymousCustomer?: boolean } = {},
+): Promise<string> {
   const air = await compile({
     spec: read("payments/openapi.yaml"),
     manifest: read("payments/anvil.yaml"),
     serviceId: "payments",
   });
+  if (options.anonymousCustomer) {
+    const customer = air.operations.find((operation) => operation.id === "payments.customers.get");
+    if (!customer) throw new Error("fixture: no customer operation");
+    customer.auth = { ...customer.auth, type: "none", scopes: [] };
+  }
   if (variant) {
     const operation = air.operations[0];
     if (operation) operation.description = `${operation.description} ${variant}`;
@@ -114,6 +124,66 @@ async function startRuntime(dir: string, mockBase: string): Promise<string> {
 }
 
 describe("live conformance (against the generated Cloud Run server)", () => {
+  it("publishes Zod 4 schemas and executes a tool through the bundled server", async () => {
+    const dir = await buildBundle(undefined, { anonymousCustomer: true });
+    const scenariosPath = join(dir, "mock", "scenarios.json");
+    const scenarios = JSON.parse(readFileSync(scenariosPath, "utf8")) as {
+      name: string;
+      body: unknown;
+      [key: string]: unknown;
+    }[];
+    const expected = scenarios.find((scenario) => scenario.name === "get_customer_success");
+    if (!expected) throw new Error("fixture: no customer success scenario");
+    const invalid = { id: 42, email: "customer@example.com" };
+    scenarios.push({ ...expected, name: "customer_invalid_output", body: invalid });
+    writeFileSync(scenariosPath, JSON.stringify(scenarios));
+    const mockBase = await startMock(dir);
+    const base = await startRuntime(dir, mockBase);
+    const client = new Client({ name: "bundled-schema-test", version: "1" });
+    await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp`)));
+    try {
+      const { tools } = await client.listTools();
+      const customer = tools.find((tool) => tool.name === "payments_get_customer");
+      expect(customer).toBeDefined();
+      expect(customer?.inputSchema).toMatchObject({
+        type: "object",
+        properties: { customer_id: { type: "string" } },
+        required: expect.arrayContaining(["customer_id"]),
+      });
+      expect(customer?.outputSchema).toMatchObject({
+        type: "object",
+        properties: { id: { type: "string" }, email: { type: "string" } },
+      });
+
+      // Check the upstream payload, not just a successful JSON-RPC response.
+      const result = await client.callTool({
+        name: "payments_get_customer",
+        arguments: { customer_id: "cus_schema" },
+      });
+      expect(result.isError, JSON.stringify(result)).toBeFalsy();
+      expect(result.structuredContent).toEqual(expected.body);
+
+      // The bundled runtime must detect off-contract upstream output and put it
+      // under its documented unvalidated view, rather than silently certifying it.
+      const selected = await fetch(`${mockBase}/__anvil/scenario`, {
+        method: "POST",
+        body: JSON.stringify({ name: "customer_invalid_output" }),
+      });
+      expect(selected.ok).toBe(true);
+      const offContract = await client.callTool({
+        name: "payments_get_customer",
+        arguments: { customer_id: "cus_schema" },
+      });
+      expect(offContract.isError).toBeFalsy();
+      expect(offContract.structuredContent).toEqual({ anvil_unvalidated: invalid });
+      expect(JSON.stringify(offContract.content)).toContain(
+        "did not match the declared response schema",
+      );
+    } finally {
+      await client.close();
+    }
+  }, 120_000);
+
   it("upgrades only a successful explicitly evidenced delegated read", async () => {
     const air = await compile({
       spec: read("payments/openapi.yaml"),
