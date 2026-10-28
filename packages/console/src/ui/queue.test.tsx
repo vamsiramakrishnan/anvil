@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+// @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createConsoleApi } from "./api.js";
@@ -33,7 +33,7 @@ const button = (name: RegExp) =>
 const press = (key: string) => act(async () => fireEvent.keyDown(window, { key }));
 
 beforeEach(() => {
-  // jsdom has no <dialog> implementation; mirror the open attribute so the key map test can see it.
+  // happy-dom may not implement <dialog>; mirror the open attribute so the key map test can see it.
   HTMLDialogElement.prototype.showModal = function showModal() {
     this.setAttribute("open", "");
   };

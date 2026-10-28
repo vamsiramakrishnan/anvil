@@ -1,4 +1,4 @@
-// @vitest-environment jsdom
+// @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 import { CONSOLE_ROUTES } from "../contract.js";
 import { ConsoleApiError, createConsoleApi, type Fetcher, readConsoleToken } from "./api.js";

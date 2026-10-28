@@ -1,0 +1,9 @@
+{
+  "name": "zod-to-json-schema",
+  "version": "0.0.0-anvil",
+  "private": true,
+  "description": "Stand-in for the retired zod-to-json-schema. The MCP SDK imports it only to convert zod 3 schemas; anvil uses zod 4, which the SDK converts natively.",
+  "type": "module",
+  "main": "./index.js",
+  "exports": { ".": "./index.js" }
+}
