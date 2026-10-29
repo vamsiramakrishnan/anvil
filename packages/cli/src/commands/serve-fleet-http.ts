@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import {
+  branchyardCredentialOwner,
   branchyardPrincipal,
   branchyardSessionFingerprint,
   createGuardedServer,
@@ -408,7 +409,7 @@ export async function startFleetHttp(
         build: (principal) =>
           prepared.build({
             principal,
-            ...(gateway ? { gateway: { credentials: gateway.credentials } } : {}),
+            ...(gateway ? { gateway: { credentials: gateway.credentials, mcp: gateway.mcp } } : {}),
           }),
       });
     }
@@ -464,7 +465,7 @@ export async function startFleetHttp(
       try {
         fleet = await prepared.build({
           principal,
-          ...(gateway ? { gateway: { credentials: gateway.credentials } } : {}),
+          ...(gateway ? { gateway: { credentials: gateway.credentials, mcp: gateway.mcp } } : {}),
         });
       } catch {
         return jsonRpcError(res, 500, -32603, "MCP session initialization failed.");
@@ -612,9 +613,13 @@ async function handleConnect(
       },
     });
   }
-  const sub = claims.sub as string;
+  const sub = branchyardCredentialOwner(claims);
+  if (!sub)
+    return json(res, 401, {
+      error: { code: "invalid_token", message: "Missing credential owner." },
+    });
   if (url.pathname === "/connect/status" && req.method === "GET") {
-    return json(res, 200, { sub, connections: gateway.vault.list(sub) });
+    return json(res, 200, { sub: claims.sub, connections: gateway.vault.list(sub) });
   }
   if (req.method !== "POST") {
     return json(res, 404, { error: { code: "not_found", message: "No such route." } });
@@ -631,7 +636,11 @@ async function handleConnect(
     return json(res, 400, { error: { code: "invalid_request", message: "Name a connector." } });
   }
   if (url.pathname === "/connect/start") {
-    const started = gateway.connect.start({ sub, connector, ...(account ? { account } : {}) });
+    const started = await gateway.connect.begin({
+      sub,
+      connector,
+      ...(account ? { account } : {}),
+    });
     if (!started.ok) {
       return json(res, started.status, { error: { code: started.code, message: started.message } });
     }

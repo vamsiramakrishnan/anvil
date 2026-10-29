@@ -176,6 +176,7 @@ interface PreparedBundle {
  */
 interface GatewaySessionDeps {
   credentials: CredentialResolver;
+  mcp?: import("@anvil/runtime").McpUpstream;
 }
 
 export type PreparedFleet =
@@ -341,7 +342,7 @@ export async function prepareFleetForWorkspace(
             measuredAccuracy: bundle.measuredAccuracy,
             contextFor: () => ({
               ...boot.contextDeps,
-              ...(gateway ? { credentials: gateway.credentials } : {}),
+              ...(gateway ? { credentials: gateway.credentials, mcp: gateway.mcp } : {}),
               serviceId: bundle.air.service.id,
               baseUrl: bundle.baseUrl,
               authProfile: bundle.authProfile,

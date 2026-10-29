@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import {
+  branchyardCredentialOwner,
   branchyardPrincipal,
   branchyardSessionFingerprint,
   type InboundAuthConfig,
@@ -80,10 +81,16 @@ describe("branchyard inbound auth", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(branchyardPrincipal(result.claims)).toEqual({
-      id: "local:ada",
+      id: branchyardCredentialOwner(claims),
       scopes: ["*"],
       grants: [{ connector: "github", operations: ["issues.*"], mode: "read" }],
-      attribution: { tenant: "t1", branch: "feature-x", turn: "7" },
+      attribution: {
+        subject: "local:ada",
+        issuer: claims.iss,
+        tenant: "t1",
+        branch: "feature-x",
+        turn: "7",
+      },
     });
   });
 
@@ -95,6 +102,8 @@ describe("branchyard inbound auth", () => {
     ["no expiry", { exp: undefined }, "expiration"],
     ["over an hour", { exp: NOW + 7200 }, "one hour"],
     ["issued in the future", { iat: NOW + 600 }, "future"],
+    ["no tenant", { by_tenant: undefined }, "by_tenant"],
+    ["empty tenant", { by_tenant: "" }, "by_tenant"],
     ["no subject", { sub: undefined }, "subject"],
     ["malformed grant", { by_grants: [{ connector: "github", mode: "read" }] }, "by_grants"],
     ["grant not a list", { by_grants: "github:read" }, "by_grants"],
@@ -180,6 +189,24 @@ describe("branchyard inbound auth", () => {
       jwksUri: pathToFileURL(join(dir, "missing.json")).href,
     });
     expect(result).toMatchObject({ ok: false, status: 401, error: "invalid_token" });
+  });
+
+  it("namespaces connect and turn owners by authenticated issuer, tenant and subject", () => {
+    const original = branchyardCredentialOwner(claims);
+    expect(original).toMatch(/^by:v1:[a-f0-9]{64}$/);
+    expect(branchyardCredentialOwner({ ...claims, by_purpose: "connect", by_grants: [] })).toBe(
+      original,
+    );
+    expect(branchyardPrincipal(claims)?.id).toBe(original);
+    for (const changed of [
+      { ...claims, iss: "branchyard:other" },
+      { ...claims, by_tenant: "t2" },
+      { ...claims, sub: "another" },
+    ]) {
+      expect(branchyardCredentialOwner(changed)).not.toBe(original);
+      expect(branchyardSessionFingerprint(changed)).not.toBe(branchyardSessionFingerprint(claims));
+    }
+    expect(branchyardCredentialOwner({ ...claims, by_tenant: undefined })).toBeUndefined();
   });
 
   it("keys a session to one token: a new turn's token is a new session", () => {

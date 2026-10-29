@@ -5,8 +5,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { airToJson, loadAirDocument, Operation } from "@anvil/air";
+import { ConnectionVault } from "@anvil/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { afterEach, describe, expect, it } from "vitest";
 import { runAnvilCli } from "../anvil-cli.js";
 import { bufferIO } from "../io.js";
@@ -287,6 +291,113 @@ describe("the Branchyard gateway", () => {
       ok: false,
       message: expect.stringContaining("ANVIL_VAULT_KEY_FILE"),
     });
+  });
+
+  it("dispatches a reviewed adopted tool through the actual gateway using its own upstream credential", async () => {
+    const calls: unknown[] = [];
+    const receivedTokens: string[] = [];
+    const upstream = await listen(
+      createServer(async (req, res) => {
+        receivedTokens.push(String(req.headers.authorization));
+        if (req.headers.authorization !== "Bearer fixture-upstream-token") {
+          req.resume();
+          res.writeHead(401);
+          res.end();
+          return;
+        }
+        let raw = "";
+        for await (const chunk of req) raw += chunk;
+        const body: unknown = raw ? JSON.parse(raw) : undefined;
+        const sdk = new McpServer(
+          { name: "actual-upstream", version: "1" },
+          { capabilities: { tools: {} } },
+        );
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+          enableJsonResponse: true,
+        });
+        sdk.setRequestHandler(CallToolRequestSchema, async (request) => {
+          calls.push(request.params);
+          return { content: [{ type: "text", text: "upstream-executed" }] };
+        });
+        res.on("close", () => {
+          void sdk.close();
+        });
+        await sdk.connect(transport);
+        await transport.handleRequest(req, res, body);
+      }),
+    );
+    const y = await yard(0, { singleBundle: true });
+    const operation = op({
+      id: "github.issues.list",
+      tool: "list_issues",
+      kind: "read",
+      auth: { type: "jwt_bearer", scopes: [] },
+    });
+    operation.sourceRef = { kind: "mcp", operationId: "captured.original.name" };
+    writeBundle(join(y.workspace, "github"), "github", upstream, [operation]);
+    y.env.ANVIL_CONNECT_GITHUB_MCP_URL = `${upstream}/mcp`;
+    y.env.ANVIL_CONNECT_GITHUB_MCP_AUTH = "static";
+    const { port } = await startGateway(y, 0);
+    await post(port, "/connect/api-key", y.connectToken(), {
+      connector: "github",
+      api_key: "fixture-upstream-token",
+    });
+    const caller = await client(port, y.mint(githubRead));
+    const response = await caller.callTool({ name: "github__list_issues", arguments: {} });
+    expect(response.isError).toBeFalsy();
+    expect(JSON.stringify(response)).toContain("upstream-executed");
+    expect(calls).toEqual([{ name: "captured.original.name", arguments: {} }]);
+    expect(receivedTokens.length).toBeGreaterThan(0);
+    expect(receivedTokens.every((token) => token === "Bearer fixture-upstream-token")).toBe(true);
+  });
+
+  it("keeps same-subject tenant connections and sessions isolated without legacy fallback", async () => {
+    const y = await yard(0);
+    const legacyVault = new ConnectionVault(join(y.root, "vault"), Buffer.alloc(32, 5));
+    legacyVault.put({
+      sub: "local:ada",
+      connector: "github",
+      account: "default",
+      kind: "static",
+      status: "active",
+      secret: "fixture-legacy-must-not-leak",
+      createdAt: "2026-10-28",
+      updatedAt: "2026-10-28",
+    });
+    const gateway = await startGateway(y, 0);
+    const port = gateway.port;
+    const ada = await client(port, y.mint(githubRead));
+    const other = await client(port, y.mint(githubRead, { by_tenant: "t2" }));
+    expect(envelope(await ada.callTool({ name: "github__list_issues", arguments: {} })).code).toBe(
+      "auth_required",
+    );
+    expect(y.upstream.hits).toHaveLength(0);
+    await post(port, "/connect/api-key", y.connectToken(), {
+      connector: "github",
+      api_key: "fixture-tenant-one",
+    });
+    expect(
+      (await ada.callTool({ name: "github__list_issues", arguments: {} })).isError,
+    ).toBeFalsy();
+    expect(
+      envelope(await other.callTool({ name: "github__list_issues", arguments: {} })).code,
+    ).toBe("auth_required");
+    await post(port, "/connect/api-key", y.connectToken({ by_tenant: "t2" }), {
+      connector: "github",
+      api_key: "fixture-tenant-two",
+    });
+    expect(
+      (await other.callTool({ name: "github__list_issues", arguments: {} })).isError,
+    ).toBeFalsy();
+    expect(
+      (await ada.callTool({ name: "github__list_issues", arguments: {} })).isError,
+    ).toBeFalsy();
+    expect(y.upstream.hits.map((hit) => hit.authorization)).toEqual([
+      "Bearer fixture-tenant-one",
+      "Bearer fixture-tenant-two",
+      "Bearer fixture-tenant-one",
+    ]);
   });
 
   it("rejects a missing or foreign token before any session exists", async () => {

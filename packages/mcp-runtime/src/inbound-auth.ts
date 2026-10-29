@@ -598,6 +598,9 @@ function branchyardClaimsProblem(
     if (claims.iat > now + leeway) return "Token was issued in the future.";
   }
   if (!optionalText(claims.jti)) return "Token jti is invalid.";
+  if (typeof claims.by_tenant !== "string" || claims.by_tenant.length === 0) {
+    return "Token by_tenant is required.";
+  }
   for (const key of ["by_tenant", "by_branch", "by_turn"] as const) {
     if (!optionalText(claims[key])) return `Token ${key} is invalid.`;
   }
@@ -616,8 +619,24 @@ function branchyardClaimsProblem(
   return undefined;
 }
 
+/** Credential namespace for verified claims only; no subject-only legacy fallback. */
+export function branchyardCredentialOwner(claims: InboundClaims): string | undefined {
+  if (
+    typeof claims.iss !== "string" ||
+    !claims.iss ||
+    typeof claims.by_tenant !== "string" ||
+    !claims.by_tenant ||
+    typeof claims.sub !== "string" ||
+    !claims.sub
+  )
+    return undefined;
+  return `by:v1:${createHash("sha256")
+    .update(JSON.stringify([claims.iss, claims.by_tenant, claims.sub]))
+    .digest("hex")}`;
+}
+
 /**
- * The principal a verified branchyard token names: `id` is `sub`, the grant
+ * The principal a verified branchyard token names: `id` is the isolated owner, the grant
  * is `by_grants`, and `by_tenant`/`by_branch`/`by_turn` ride along for audit.
  * Scopes are every scope: the grant, not a scope list, is what limits this
  * caller, and it is checked per operation before any upstream call. A token
@@ -626,17 +645,21 @@ function branchyardClaimsProblem(
 export function branchyardPrincipal(claims: InboundClaims): Principal | undefined {
   // A connect token is the person at the connect routes, never a caller of tools.
   if (claims.by_purpose !== undefined) return undefined;
+  const owner = branchyardCredentialOwner(claims);
+  if (!owner) return undefined;
   const grants = parseGrants(claims.by_grants);
   if (typeof claims.sub !== "string" || claims.sub.length === 0 || grants === undefined) {
     return undefined;
   }
   const text = (value: unknown) => (typeof value === "string" ? value : undefined);
   const attribution = {
+    subject: claims.sub,
+    issuer: claims.iss,
     ...(text(claims.by_tenant) ? { tenant: text(claims.by_tenant) } : {}),
     ...(text(claims.by_branch) ? { branch: text(claims.by_branch) } : {}),
     ...(text(claims.by_turn) ? { turn: text(claims.by_turn) } : {}),
   };
-  return { id: claims.sub, scopes: ["*"], grants, attribution };
+  return { id: owner, scopes: ["*"], grants, attribution };
 }
 
 /**
@@ -650,6 +673,7 @@ export function branchyardSessionFingerprint(claims: InboundClaims): string {
       JSON.stringify({
         iss: claims.iss,
         sub: claims.sub,
+        tenant: claims.by_tenant,
         jti: claims.jti,
         turn: claims.by_turn,
         exp: claims.exp,

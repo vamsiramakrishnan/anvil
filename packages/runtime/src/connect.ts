@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { AirDocument, AuthRequirement } from "@anvil/air";
 import { DEFAULT_ACCOUNT } from "./grants.js";
+import { type McpOAuthConfig, VaultMcpOAuth } from "./mcp-oauth.js";
 import { isSendableOAuthEndpoint } from "./oauth-endpoint.js";
 import {
   type ConnectionVault,
@@ -27,6 +28,8 @@ import {
  */
 export interface ConnectorAuthProfile {
   connector: string;
+  /** Protected MCP uses SDK discovery and a resource-bound account. */
+  mcp?: McpOAuthConfig;
   /** `oauth`: authorization code. `static`: an API key or personal token. `none`: nothing to connect. */
   kind: "oauth" | "static" | "none" | "unsupported";
   authType: AuthRequirement["type"];
@@ -159,6 +162,7 @@ const MAX_PENDING = 1000;
 
 export class ConnectFlow {
   private readonly pending = new Map<string, PendingConnect>();
+  private readonly pendingMcp = new Map<string, { provider: VaultMcpOAuth; expiresAt: number }>();
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
   private readonly ttl: number;
@@ -172,6 +176,55 @@ export class ConnectFlow {
   /** The profile for a served connector, or undefined. */
   profile(connector: string): ConnectorAuthProfile | undefined {
     return this.options.profiles.get(connector);
+  }
+
+  /** Begin either the ordinary API flow or protected MCP discovery through the SDK. */
+  async begin(input: {
+    sub: string;
+    connector: string;
+    account?: string;
+  }): Promise<ConnectStartResult> {
+    const profile = this.options.profiles.get(input.connector);
+    if (!profile?.mcp) return this.start(input);
+    this.prune();
+    if (this.pending.size + this.pendingMcp.size >= MAX_PENDING) {
+      return {
+        ok: false,
+        status: 503,
+        code: "too_many_pending",
+        message: "Too many pending connections.",
+      };
+    }
+    const provider = new VaultMcpOAuth(
+      this.options.vault,
+      { ...input, account: input.account ?? DEFAULT_ACCOUNT },
+      profile.mcp,
+      this.options.redirectUri,
+      true,
+      this.fetchImpl,
+      this.now,
+    );
+    const expiresAt = this.now() + this.ttl;
+    // Reserve before discovery so concurrent starts cannot exceed the bound.
+    this.pendingMcp.set(provider.stateValue, { provider, expiresAt });
+    try {
+      await provider.authorize();
+      if (!provider.authorizationUrl) throw new Error("No consent URL.");
+      return {
+        ok: true,
+        kind: "oauth",
+        url: provider.authorizationUrl,
+        expiresAt: new Date(expiresAt).toISOString(),
+      };
+    } catch {
+      this.pendingMcp.delete(provider.stateValue);
+      return {
+        ok: false,
+        status: 503,
+        code: "connector_not_configured",
+        message: "Protected MCP OAuth discovery or client configuration failed.",
+      };
+    }
   }
 
   /** Begin connecting `connector` for `sub`: an authorization URL, or the key-submission route. */
@@ -217,7 +270,7 @@ export class ConnectFlow {
       };
     }
     this.prune();
-    if (this.pending.size >= MAX_PENDING) {
+    if (this.pending.size + this.pendingMcp.size >= MAX_PENDING) {
       return {
         ok: false,
         status: 503,
@@ -260,6 +313,44 @@ export class ConnectFlow {
     error?: string;
   }): Promise<ConnectCallbackResult> {
     this.prune();
+    const mcp = params.state ? this.pendingMcp.get(params.state) : undefined;
+    if (mcp && params.state) {
+      this.pendingMcp.delete(params.state);
+      if (
+        !params.code ||
+        params.error ||
+        (params.iss !== undefined && params.iss !== mcp.provider.config.issuer)
+      ) {
+        return {
+          ok: false,
+          status: 400,
+          code: "authorization_denied",
+          message: "Invalid MCP authorization callback.",
+        };
+      }
+      try {
+        const owner = mcp.provider.account;
+        const outcome = await this.options.vault.withLock(
+          owner.sub,
+          owner.connector,
+          owner.account,
+          () => mcp.provider.authorize(params.code),
+        );
+        if (outcome !== "AUTHORIZED") throw new Error("Consent incomplete.");
+        return {
+          ok: true,
+          connector: mcp.provider.account.connector,
+          account: mcp.provider.account.account,
+        };
+      } catch {
+        return {
+          ok: false,
+          status: 502,
+          code: "token_exchange_failed",
+          message: "The MCP provider refused the authorization code.",
+        };
+      }
+    }
     const pending = params.state ? this.pending.get(params.state) : undefined;
     if (!params.state || !pending) {
       return {
@@ -414,6 +505,9 @@ export class ConnectFlow {
 
   private prune(): void {
     const now = this.now();
+    for (const [state, pending] of this.pendingMcp) {
+      if (pending.expiresAt <= now) this.pendingMcp.delete(state);
+    }
     for (const [state, pending] of this.pending) {
       if (pending.expiresAt <= now) this.pending.delete(state);
     }

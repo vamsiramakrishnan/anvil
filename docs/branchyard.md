@@ -177,15 +177,16 @@ from the Anvil checkout.
 | `ANVIL_AUDIT_FILE` | Append one JSON line per call here (created 0600). Unset: no audit log. |
 | `ANVIL_GATEWAY_PUBLIC_URL` | The base for `/connect/callback` when it differs from the audience's origin. |
 | `ANVIL_CONNECT_<CONNECTOR>_CLIENT_ID`, `_CLIENT_SECRET` | The gateway's OAuth client for one connector. `_AUTHORIZATION_ENDPOINT`, `_TOKEN_ENDPOINT`, `_ISSUER`, `_SCOPES` override what AIR declares. Both endpoints, from either source, must be HTTPS (plain HTTP only to `127.0.0.1`): otherwise `/connect/start` answers `503 connector_not_configured`, a stored connection's refresh fails as `connector/refresh_failed`, and nothing is sent to the token endpoint. Neither request follows a redirect. |
+| `ANVIL_CONNECT_<CONNECTOR>_MCP_URL`, `_MCP_AUTH` | Reviewed upstream Streamable HTTP MCP endpoint and explicit auth mode: `oauth`, `workload`, `static`, or `none`. OAuth requires `_ISSUER` and `_CLIENT_ID`, with optional `_CLIENT_SECRET` and `_SCOPES`. |
 | `ANVIL_ALLOWED_HOSTS` | The upstream egress allowlist, as for every serving surface. |
 
 ### Token
 
 A compact JWT, `alg: EdDSA`, with `kid` in the header. The gateway checks the
 signature, `iss`, `aud`, `exp` (and refuses one more than an hour away), `nbf`,
-`iat` (not in the future), and requires `sub` and a well-formed `by_grants`.
-`by_tenant`, `by_branch`, and `by_turn` are optional strings, recorded in the
-audit log. Any failure is a `401` with `WWW-Authenticate`. A session belongs to
+`iat` (not in the future), and requires nonempty `sub` and `by_tenant` plus a
+well-formed `by_grants`. `by_branch` and `by_turn` are optional strings, recorded
+in the audit log. Any failure is a `401` with `WWW-Authenticate`. A session belongs to
 one token: a different token presenting its session id gets `403`.
 
 There are two kinds of token, told apart by `by_purpose`:
@@ -235,6 +236,84 @@ the upstream:
 
 The `auth_required` messages name the connector and account and never carry a
 link; the link goes to the person through `/connect/start`.
+
+### Credential ownership and migration
+
+Connect and turn tokens select the same credential owner:
+`by:v1:` followed by lowercase SHA-256 of UTF-8 JSON `[iss, by_tenant, sub]`.
+These are verified claims, never request-body fields. Vault coordinates,
+encryption AAD, refresh locks and pending OAuth state use that owner. Inbound
+session fingerprints also include the tenant. Audit `sub` retains the actual
+signed subject; the execution principal ID uses the isolated owner.
+
+Older subject-only records are never adopted implicitly. Reconnect accounts
+under the new namespace after upgrading. Two tenants with the same `sub`, or
+two configured issuers using the same vault, cannot read each other's accounts.
+There is no lookup fallback to an old record.
+
+### Workload ADC and adopted MCP execution
+
+The Branchyard gateway resolves an approved operation's
+`auth.type: workload_identity` and `secretSource: workload_identity` through
+Google's official `google-auth-library`. Normal ADC discovery supports external
+account WIF files, attached metadata credentials and supported impersonation
+configurations. Set `GOOGLE_APPLICATION_CREDENTIALS` to the deployment's ADC
+configuration when needed. Scopes come from reviewed AIR; `auth.audience` or
+`auth.provider.resource` requests an audience-bound ID token on credential types
+that the Google library supports for ID tokens. Unsupported types fail closed.
+The provider caches within connector, profile, scopes and audience. A missing
+human account never falls back to the gateway's workload identity.
+
+For an adopted MCP connector, deploy an explicit endpoint and auth mode:
+
+```sh
+export ANVIL_CONNECT_DOCS_MCP_URL=https://mcp.example.com/mcp
+export ANVIL_CONNECT_DOCS_MCP_AUTH=oauth
+export ANVIL_CONNECT_DOCS_ISSUER=https://login.example.com
+export ANVIL_CONNECT_DOCS_CLIENT_ID=registered-client-id
+export ANVIL_CONNECT_DOCS_SCOPES=documents.read
+```
+
+Use the actual fleet connector prefix in place of `DOCS`. Register the gateway's
+`/connect/callback` with that issuer, then use the existing human connect flow.
+The official MCP SDK discovers protected-resource and authorization-server
+metadata and performs PKCE, code exchange and refresh. The discovered resource
+and issuer must match configuration exactly. Authorization and token endpoints
+must stay on the configured issuer origin unless the deployer lists additional
+exact origins in `ANVIL_CONNECT_<CONNECTOR>_OAUTH_ALLOWED_ORIGINS`, separated by
+commas or spaces. Use this for an IdP whose token endpoint has a different origin.
+Discovery may contact only those reviewed origins and the resource origin. No redirect carries credentials to another host.
+This release requires a pre-registered OAuth client; it does not dynamically
+register clients. Missing registration or consent remains a deployment dependency.
+
+The encrypted account stores MCP tokens with their resource and issuer. An
+expiring token refreshes through the SDK under the existing account lock,
+retaining rotated refresh tokens. Only connect-purpose requests initiate consent.
+A turn cannot start a new flow or expand scopes. A 401 or 403 during an upstream
+call returns a refusal without automatic replay; reconnect or inspect the
+upstream outcome before retrying an effectful operation.
+
+After the normal approval, principal, grant, confirmation, policy and effect
+gates, the runtime calls the exact tool name captured in `sourceRef.operationId`.
+It uses an official SDK session owned by that one call and closes it afterward.
+An MCP result with `isError` is a failure. Public tool renaming does not change
+the captured upstream binding. The incoming Branchyard bearer is never an
+upstream credential. Native OAuth scopes, IAM and document permissions remain
+upstream checks; a Branchyard grant cannot confer them.
+
+`workload` requires the approved AIR workload contract; `static` resolves the
+selected account in the vault; `none` requires `auth.type: none`. Unsupported
+or unconfigured MCP operations still fail the wire gate. This path implements
+Streamable HTTP; upstream stdio execution is outside this gateway capability.
+
+MCP execution supports `none` and `natural` idempotency contracts. AIR HTTP
+idempotency carriers are rejected before credential acquisition: the MCP
+`tools/call` adapter cannot truthfully claim it sent those HTTP carrier keys.
+
+Hermetic coverage uses actual SDK MCP servers and local OAuth/STS fixtures,
+including refresh rotation, resource/issuer mismatch, tenant collisions,
+subject-only migration refusal and zero upstream calls on policy denial.
+Not done: live WIF, real human consent or real upstream service qualification.
 
 ### Connect routes
 

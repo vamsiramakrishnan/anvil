@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { type AuthRequirement, effectiveAuthCarrier } from "@anvil/air";
+import type { OAuthTokens } from "@modelcontextprotocol/sdk/shared/auth.js";
 import {
   type AuthMaterial,
   apiKeyMaterial,
@@ -19,6 +20,7 @@ import {
   type CredentialResolver,
 } from "./auth.js";
 import { AnvilError } from "./errors.js";
+import type { GoogleWorkloadCredentials } from "./google-workload.js";
 import { DEFAULT_ACCOUNT } from "./grants.js";
 import { isSendableOAuthEndpoint } from "./oauth-endpoint.js";
 
@@ -47,6 +49,8 @@ export interface StoredConnection {
   /** Epoch milliseconds when `accessToken` expires, when the provider said. */
   expiresAt?: number;
   scope?: string;
+  /** Resource-bound MCP OAuth tokens; never read as a generic REST bearer. */
+  mcp?: { resource: string; issuer: string; tokens: OAuthTokens };
   createdAt: string;
   updatedAt: string;
 }
@@ -361,14 +365,20 @@ const REFRESH_SKEW_MS = 60_000;
 export class VaultCredentialResolver implements CredentialResolver {
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
+  private readonly workload: GoogleWorkloadCredentials | undefined;
 
   constructor(
     private readonly vault: ConnectionVault,
     private readonly oauthClientFor: (connector: string) => OAuthClientConfig | undefined,
-    opts: { fetchImpl?: typeof fetch; now?: () => number } = {},
+    opts: {
+      fetchImpl?: typeof fetch;
+      now?: () => number;
+      workload?: GoogleWorkloadCredentials;
+    } = {},
   ) {
     this.fetchImpl = opts.fetchImpl ?? fetch;
     this.now = opts.now ?? Date.now;
+    this.workload = opts.workload;
   }
 
   expectedCredentials(): string[] {
@@ -376,7 +386,7 @@ export class VaultCredentialResolver implements CredentialResolver {
   }
 
   async resolve(
-    _profile: string,
+    profile: string,
     auth: AuthRequirement,
     callCtx: CredentialCallContext = {},
   ): Promise<AuthMaterial | null> {
@@ -389,6 +399,9 @@ export class VaultCredentialResolver implements CredentialResolver {
         "This call has no person and connector to resolve a connected account for.",
         { code: "connector/unresolved" },
       );
+    }
+    if (auth.type === "workload_identity" && this.workload) {
+      return this.workload.resolve(connector, profile, auth);
     }
     if (auth.type === "mtls" || auth.type === "workload_identity") {
       throw new CredentialUnavailableError(
