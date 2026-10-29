@@ -313,7 +313,13 @@ idempotency carriers are rejected before credential acquisition: the MCP
 Hermetic coverage uses actual SDK MCP servers and local OAuth/STS fixtures,
 including refresh rotation, resource/issuer mismatch, tenant collisions,
 subject-only migration refusal and zero upstream calls on policy denial.
-Not done: live WIF, real human consent or real upstream service qualification.
+Live qualification, 29 October 2026: the compiled gateway obtained GKE workload
+credentials and called a TLS-protected SDK MCP fixture backed by real Google
+Storage IAM. The allowed identity listed the test object; the denied identity
+received a native 403. Native Branchyard Google ID-token admission also passed
+its audience, subject, and scope checks. See the [dated record](qualification/2026-10-29-gke-wif-mcp.md).
+Not done: live human OAuth consent or refresh, a production MCP provider, or a
+model-driven turn in this qualification.
 
 ### Connect routes
 
