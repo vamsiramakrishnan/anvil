@@ -1,17 +1,18 @@
 import { mkdtempSync, rmSync } from "node:fs";
-import { createServer, type Server as HttpServer } from "node:http";
+import { createServer, type Server as HttpServer, type IncomingHttpHeaders } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Operation } from "@anvil/air";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectFlow, type ConnectorAuthProfile } from "./connect.js";
 import { type ExecuteContext, execute } from "./executor.js";
 import type { McpOAuthConfig } from "./mcp-oauth.js";
 import { type McpConnectionConfig, McpUpstream } from "./mcp-upstream.js";
-import { MockTransport } from "./transport.js";
+import { denyPolicy, type PolicyContext } from "./policy.js";
+import { type HttpRequest, MockTransport } from "./transport.js";
 import { ConnectionVault, VaultCredentialResolver } from "./vault.js";
 
 const cleanups: Array<() => void | Promise<void>> = [];
@@ -35,6 +36,7 @@ async function listen(server: HttpServer): Promise<string> {
 async function upstream() {
   const calls: unknown[] = [];
   const headers: string[] = [];
+  const requestHeaders: IncomingHttpHeaders[] = [];
   const forms: URLSearchParams[] = [];
   let resource = "";
   let origin = "";
@@ -97,6 +99,7 @@ async function upstream() {
       return;
     }
     headers.push(String(req.headers.authorization ?? ""));
+    requestHeaders.push({ ...req.headers });
     let raw = "";
     for await (const chunk of req) raw += chunk;
     const body: unknown = raw ? JSON.parse(raw) : undefined;
@@ -139,6 +142,7 @@ async function upstream() {
     origin,
     calls,
     headers,
+    requestHeaders,
     forms,
     deny: (status: 401 | 403) => {
       denied = status;
@@ -166,6 +170,7 @@ function fixture(
   resource: string,
   mode: "oauth" | "static" = "oauth",
   allowedOrigins: string[] = [],
+  fetchImpl: typeof fetch = fetch,
 ) {
   const dir = mkdtempSync(join(tmpdir(), "anvil-mcp-"));
   cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
@@ -210,7 +215,7 @@ function fixture(
     vault,
     credentials,
     "http://127.0.0.1/callback",
-    fetch,
+    fetchImpl,
     () => now,
   );
   const operation = Operation.parse({
@@ -235,7 +240,7 @@ function fixture(
     connector: "docs",
     serviceId: "docs",
     baseUrl: "https://not-the-mcp-endpoint.invalid",
-    allowedHosts: ["127.0.0.1"],
+    allowedHosts: [new URL(resource).hostname],
     env: "dev",
     transport: new MockTransport(() => {
       throw new Error("REST dispatch forbidden.");
@@ -273,6 +278,276 @@ async function consent(flow: ConnectFlow, sub = "owner-1") {
 }
 
 describe("reviewed protected upstream MCP", () => {
+  it.each([
+    "oauth",
+    "static",
+  ] as const)("sends chained policy argument and header edits over the SDK wire with %s auth", async (mode) => {
+    const server = await upstream();
+    const f = fixture(server.resource, mode);
+    if (mode === "oauth") await consent(f.flow);
+    else {
+      f.vault.put({
+        sub: "owner-1",
+        connector: "docs",
+        account: "default",
+        kind: "static",
+        secret: "fixture-access",
+        status: "active",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    }
+    const result = await execute(
+      f.operation,
+      { input: { title: "private", secret: "remove" } },
+      {
+        ...f.context,
+        policy: {
+          preAuth: ({ request }) => {
+            if (!request) throw new Error("Missing request.");
+            request.headers["X-Policy"] = "pre-auth";
+            request.body = JSON.stringify({
+              name: "captured.tool",
+              arguments: { title: "sanitized" },
+            });
+          },
+          preExecute: ({ request }) => {
+            if (!request || typeof request.body !== "string") throw new Error("Missing request.");
+            expect(request.headers["X-Policy"]).toBe("pre-auth");
+            const body = JSON.parse(request.body);
+            expect(body.arguments).toEqual({ title: "sanitized" });
+            body.arguments.reviewed = true;
+            request.body = JSON.stringify(body);
+            request.headers["X-Policy"] = "reviewed";
+            request.headers["X-Review-Id"] = "policy-123";
+          },
+        },
+      },
+    );
+    expect(result.outcome).toBe("success");
+    expect(server.calls).toEqual([
+      { name: "captured.tool", arguments: { title: "sanitized", reviewed: true } },
+    ]);
+    expect(server.requestHeaders.length).toBeGreaterThan(0);
+    expect(
+      server.requestHeaders.every(
+        (h) => h["x-policy"] === "reviewed" && h["x-review-id"] === "policy-123",
+      ),
+    ).toBe(true);
+    expect(
+      server.headers.every((h) => h === `Bearer fixture-access${mode === "oauth" ? "-1" : ""}`),
+    ).toBe(true);
+    // A following call must not inherit either policy arguments or headers.
+    expect(await execute(f.operation, { input: { title: "next" } }, f.context)).toMatchObject({
+      outcome: "success",
+    });
+    expect(server.calls.at(-1)).toEqual({ name: "captured.tool", arguments: { title: "next" } });
+    expect(server.requestHeaders.at(-1)?.["x-policy"]).toBeUndefined();
+  });
+
+  const unsupportedEdits: Array<[string, (request: HttpRequest) => void]> = [
+    [
+      "invalid endpoint",
+      (r) => {
+        r.url = "private-invalid-url";
+      },
+    ],
+    [
+      "endpoint",
+      (r) => {
+        r.url += "/different";
+      },
+    ],
+    [
+      "query",
+      (r) => {
+        r.url += "?different=1";
+      },
+    ],
+    [
+      "method",
+      (r) => {
+        r.method = "tools/list";
+      },
+    ],
+    [
+      "tool",
+      (r) => {
+        r.body = JSON.stringify({ name: "unapproved.tool", arguments: {} });
+      },
+    ],
+    [
+      "invalid JSON",
+      (r) => {
+        r.body = "private malformed body";
+      },
+    ],
+    [
+      "non-object arguments",
+      (r) => {
+        r.body = JSON.stringify({ name: "captured.tool", arguments: [] });
+      },
+    ],
+    [
+      "extra envelope fields",
+      (r) => {
+        r.body = JSON.stringify({ name: "captured.tool", arguments: {}, unexpected: true });
+      },
+    ],
+    [
+      "TLS",
+      (r) => {
+        r.tls = { cert: "private-cert", key: "private-key" };
+      },
+    ],
+    [
+      "stream bounds",
+      (r) => {
+        r.streamBound = { maxEvents: 1, maxSeconds: 1 };
+      },
+    ],
+    [
+      "authorization",
+      (r) => {
+        r.headers.aUtHoRiZaTiOn = "Bearer private-policy-token";
+      },
+    ],
+    [
+      "SDK session",
+      (r) => {
+        r.headers["Mcp-Session-Id"] = "foreign-session";
+      },
+    ],
+    [
+      "SDK content type",
+      (r) => {
+        r.headers["Content-Type"] = "text/plain";
+      },
+    ],
+    [
+      "invalid header",
+      (r) => {
+        r.headers["X-Policy"] = "private-\r\nvalue";
+      },
+    ],
+    [
+      "invalid timeout",
+      (r) => {
+        r.timeoutMs = -1;
+      },
+    ],
+  ];
+  describe.each(["preAuth", "preExecute"] as const)("%s MCP policy", (hook) => {
+    it.each(
+      unsupportedEdits,
+    )("rejects unsupported %s edits without upstream dispatch", async (_name, edit) => {
+      const server = await upstream();
+      const f = fixture(server.resource);
+      await consent(f.flow);
+      const result = await execute(
+        f.operation,
+        { input: {} },
+        {
+          ...f.context,
+          policy: {
+            [hook]: ({ request }: { request?: HttpRequest }) => {
+              if (!request) throw new Error("Missing request.");
+              edit(request);
+            },
+          },
+        },
+      );
+      expect(result).toMatchObject({
+        outcome: "error",
+        envelope: { error: { code: "policy_denied", operation: "docs.read" } },
+      });
+      expect(JSON.stringify(result)).not.toContain("private-");
+      expect(server.headers).toEqual([]);
+      expect(server.calls).toEqual([]);
+    });
+
+    it("retains explicit denials", async () => {
+      const server = await upstream();
+      const f = fixture(server.resource);
+      await consent(f.flow);
+      const result = await execute(
+        f.operation,
+        { input: {} },
+        {
+          ...f.context,
+          policy: { [hook]: (ctx: PolicyContext) => denyPolicy(ctx, "Fixture denial.") },
+        },
+      );
+      expect(result).toMatchObject({
+        outcome: "error",
+        envelope: { error: { code: "policy_denied" } },
+      });
+      expect(server.headers).toEqual([]);
+      expect(server.calls).toEqual([]);
+    });
+  });
+
+  it("rejects credential-header collisions case-insensitively before SDK dispatch", async () => {
+    const server = await upstream();
+    const f = fixture(server.resource, "static");
+    const fetchImpl = vi.fn(fetch);
+    f.context.mcp = new McpUpstream(
+      new Map([["docs", { kind: "static", url: server.resource }]]),
+      f.vault,
+      { resolve: async () => ({ headers: { "X-Api-Key": "private-vault-key" } }) },
+      "http://127.0.0.1/callback",
+      fetchImpl,
+    );
+    const result = await execute(
+      f.operation,
+      { input: {} },
+      {
+        ...f.context,
+        policy: {
+          preExecute: ({ request }) => {
+            if (!request) throw new Error("Missing request.");
+            request.headers["x-api-key"] = "private-hook-key";
+          },
+        },
+      },
+    );
+    expect(result).toMatchObject({
+      outcome: "error",
+      envelope: { error: { code: "policy_denied" } },
+    });
+    expect(JSON.stringify(result)).not.toContain("private-");
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["https://mcp.example.com", "https://mcp.example.com/"],
+    ["https://MCP.example.com/mcp", "https://mcp.example.com/mcp"],
+    ["https://mcp.example.com:443/mcp?tenant=one", "https://mcp.example.com/mcp?tenant=one"],
+  ])("dispatches the canonical endpoint for %s", async (configured, canonical) => {
+    const server = await upstream();
+    const forward: typeof fetch = vi.fn((_url, init) => fetch(server.resource, init));
+    const f = fixture(configured, "static", [], forward);
+    f.vault.put({
+      sub: "owner-1",
+      connector: "docs",
+      account: "default",
+      kind: "static",
+      secret: "fixture-access",
+      status: "active",
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+    expect(await execute(f.operation, { input: {} }, f.context)).toMatchObject({
+      outcome: "success",
+    });
+    expect(server.calls).toEqual([{ name: "captured.tool", arguments: {} }]);
+    expect(forward).toHaveBeenCalled();
+    for (const [url, init] of vi.mocked(forward).mock.calls) {
+      expect(String(url)).toBe(canonical);
+      expect(init?.redirect).toBe("error");
+    }
+  });
+
   it("uses SDK discovery, PKCE and the exact captured tool binding; refresh rotates in the vault", async () => {
     const server = await upstream();
     const f = fixture(server.resource);

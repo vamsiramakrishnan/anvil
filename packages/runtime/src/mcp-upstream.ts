@@ -2,11 +2,16 @@ import type { AuthRequirement, Operation } from "@anvil/air";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { AuthMaterial, CredentialCallContext, CredentialResolver } from "./auth.js";
-import { DEFAULT_UPSTREAM_TIMEOUT_MS } from "./config.js";
+import { parseUpstreamTimeoutMs } from "./config.js";
 import { DEFAULT_ACCOUNT } from "./grants.js";
 import { type McpOAuthConfig, VaultMcpOAuth } from "./mcp-oauth.js";
 import { isSendableOAuthEndpoint } from "./oauth-endpoint.js";
-import { type HttpResponse, MAX_UPSTREAM_RESPONSE_BYTES, TransportError } from "./transport.js";
+import {
+  type HttpRequest,
+  type HttpResponse,
+  MAX_UPSTREAM_RESPONSE_BYTES,
+  TransportError,
+} from "./transport.js";
 import { type ConnectionVault, CredentialUnavailableError } from "./vault.js";
 
 /** A deployer-selected credential kind. Missing human credentials never select workload auth. */
@@ -22,11 +27,59 @@ export interface McpBinding {
   toolName: string;
 }
 export interface PreparedMcpCall {
-  send(
-    input: Record<string, unknown>,
-    signal?: AbortSignal,
-    timeoutMs?: number,
-  ): Promise<HttpResponse>;
+  send(request: HttpRequest): Promise<HttpResponse>;
+}
+
+/** A hook requested a change this transport cannot honor without changing authority. */
+export class McpRequestPolicyError extends Error {}
+
+const SDK_HEADERS = new Set([
+  "authorization",
+  "accept",
+  "content-type",
+  "mcp-session-id",
+  "mcp-protocol-version",
+  "last-event-id",
+]);
+
+function policyRequest(request: HttpRequest, binding: McpBinding, material: AuthMaterial) {
+  const refuse = (): never => {
+    throw new McpRequestPolicyError(
+      "MCP policy hooks may edit arguments and custom headers, but must preserve the approved " +
+        "endpoint, tools/call method, tool name, credential headers and SDK headers. " +
+        "TLS, stream bounds and extra call-envelope fields are unsupported.",
+    );
+  };
+  try {
+    if (
+      new URL(request.url).href !== binding.url ||
+      request.method !== "tools/call" ||
+      request.tls !== undefined ||
+      request.streamBound !== undefined ||
+      typeof request.body !== "string"
+    )
+      return refuse();
+    const body: unknown = JSON.parse(request.body);
+    if (body === null || typeof body !== "object" || Array.isArray(body)) return refuse();
+    const call = body as Record<string, unknown>;
+    if (
+      call.name !== binding.toolName ||
+      call.arguments === null ||
+      typeof call.arguments !== "object" ||
+      Array.isArray(call.arguments) ||
+      Object.keys(call).some((key) => key !== "name" && key !== "arguments")
+    )
+      return refuse();
+    const headers = new Headers(material.headers);
+    for (const [name, value] of new Headers(request.headers)) {
+      if (SDK_HEADERS.has(name) || headers.has(name)) return refuse();
+      headers.set(name, value);
+    }
+    return { arguments: call.arguments as Record<string, unknown>, headers };
+  } catch {
+    // Never echo malformed JSON, header values or a rewritten URL into diagnostics.
+    return refuse();
+  }
 }
 
 /** SDK sessions are owned by one call, so neither credentials nor grants survive into another caller. */
@@ -43,7 +96,7 @@ export class McpUpstream {
   binding(op: Operation, connector?: string): McpBinding | undefined {
     const config = connector ? this.configurations.get(connector) : undefined;
     if (op.sourceRef.kind !== "mcp" || !op.sourceRef.operationId || !config) return undefined;
-    return { url: config.url, toolName: op.sourceRef.operationId };
+    return { url: new URL(config.url).href, toolName: op.sourceRef.operationId };
   }
 
   async prepare(
@@ -55,12 +108,16 @@ export class McpUpstream {
     const connector = context.connector;
     const owner = context.principalId;
     const config = connector ? this.configurations.get(connector) : undefined;
-    if (!config || !connector || !owner || config.url !== binding.url) {
+    if (!config || !connector || !owner) {
       throw new CredentialUnavailableError("No configured MCP credential owner.", {
         code: "connector/unresolved",
       });
     }
     const account = context.account ?? DEFAULT_ACCOUNT;
+    const endpoint = new URL(config.url);
+    if (endpoint.href !== binding.url || !isSendableOAuthEndpoint(endpoint.href)) {
+      throw this.unavailable(connector, account);
+    }
     let material: AuthMaterial = {};
     let provider: VaultMcpOAuth | undefined;
     switch (config.kind) {
@@ -97,17 +154,22 @@ export class McpUpstream {
       }
     }
     return {
-      send: async (
-        input,
-        signal,
-        timeoutMs = DEFAULT_UPSTREAM_TIMEOUT_MS,
-      ): Promise<HttpResponse> => {
+      send: async (request): Promise<HttpResponse> => {
+        // Consume the exact request that passed both hooks, before opening an SDK session.
+        const call = policyRequest(request, binding, material);
+        let timeoutMs: number;
+        try {
+          timeoutMs = parseUpstreamTimeoutMs(request.timeoutMs);
+        } catch {
+          throw new McpRequestPolicyError("MCP policy request has an invalid upstream timeout.");
+        }
         const deadline = AbortSignal.timeout(timeoutMs);
+        const signal = request.signal;
         const bounded = signal ? AbortSignal.any([signal, deadline]) : deadline;
         let deniedStatus: 401 | 403 | undefined;
         const guardedFetch: typeof fetch = async (url, init) => {
           const target = url instanceof Request ? url.url : String(url);
-          if (target !== config.url || !isSendableOAuthEndpoint(target))
+          if (target !== endpoint.href || !isSendableOAuthEndpoint(target))
             throw this.unavailable(connector, account);
           const response = await this.fetchImpl(url, {
             ...init,
@@ -141,9 +203,9 @@ export class McpUpstream {
           return new Response(body, { status: response.status, headers: response.headers });
         };
         const client = new Client({ name: "anvil-upstream", version: "0.1.0" });
-        const transport = new StreamableHTTPClientTransport(new URL(config.url), {
+        const transport = new StreamableHTTPClientTransport(endpoint, {
           authProvider: provider,
-          requestInit: { headers: material.headers },
+          requestInit: { headers: call.headers },
           fetch: guardedFetch,
           reconnectionOptions: {
             maxRetries: 0,
@@ -155,7 +217,7 @@ export class McpUpstream {
         try {
           await client.connect(transport, { signal: bounded, timeout: timeoutMs });
           const result = await client.callTool(
-            { name: binding.toolName, arguments: input },
+            { name: binding.toolName, arguments: call.arguments },
             undefined,
             { signal: bounded, timeout: timeoutMs },
           );

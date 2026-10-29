@@ -44,7 +44,7 @@ import {
 import type { InboundIdentity } from "./inbound-identity.js";
 import { jobSecondaryKey } from "./job-index.js";
 import { checkLimits, type LimitsGate } from "./limits.js";
-import type { McpUpstream, PreparedMcpCall } from "./mcp-upstream.js";
+import { McpRequestPolicyError, type McpUpstream, type PreparedMcpCall } from "./mcp-upstream.js";
 import { type ExecutionRecord, noopObserver, type Observer } from "./observability.js";
 import { bindParam } from "./param-serialization.js";
 import {
@@ -1240,10 +1240,12 @@ export async function execute(
       request = applyAuth(request, material);
     }
 
-    record.upstreamEndpoint = `${request.method} ${new URL(request.url).pathname}`;
-    record.requestBytes = requestByteLength(request.body);
-
     await runHook(ctx.policy?.preExecute, request);
+
+    record.upstreamEndpoint = mcpBinding
+      ? `tools/call ${new URL(mcpBinding.url).pathname}`
+      : `${request.method} ${new URL(request.url).pathname}`;
+    record.requestBytes = requestByteLength(request.body);
 
     // 7a. Fail closed on required idempotency without a *durable* ledger outside
     // `dev`. Cloud Run scales horizontally; an in-memory (or absent) ledger
@@ -1351,9 +1353,7 @@ export async function execute(
       try {
         throwIfCancelled(ctx.signal);
         upstreamKey = key;
-        const res = mcpCall
-          ? await mcpCall.send(fingerprintInput, ctx.signal, ctx.timeoutMs)
-          : await ctx.transport.send(request);
+        const res = mcpCall ? await mcpCall.send(request) : await ctx.transport.send(request);
         lastResponse = res;
         upstreamStatus = res.status;
         record.responseBytes = byteLen(res.body);
@@ -1518,6 +1518,16 @@ export async function execute(
     await runHook(ctx.policy?.postExecute, request, lastResponse);
     return fail(finalError ?? unknownError(op.id, traceId));
   } catch (err) {
+    if (err instanceof McpRequestPolicyError) {
+      return fail(
+        new AnvilError({
+          code: "policy_denied",
+          message: err.message,
+          operation: op.id,
+          traceId,
+        }),
+      );
+    }
     if (err instanceof CredentialUnavailableError) return fail(err.toAnvilError(op.id, traceId));
     if (err instanceof AnvilError) return fail(err);
     return fail(unknownError(op.id, traceId, err));
