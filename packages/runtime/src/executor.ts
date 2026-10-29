@@ -18,6 +18,7 @@ import { type AuditSink, auditCall } from "./audit.js";
 import {
   type AuthMaterial,
   applyAuth,
+  authMaterialOverwritesIdempotencyCarrier,
   type CredentialResolver,
   credentialProfileName,
 } from "./auth.js";
@@ -43,6 +44,7 @@ import {
 import type { InboundIdentity } from "./inbound-identity.js";
 import { jobSecondaryKey } from "./job-index.js";
 import { checkLimits, type LimitsGate } from "./limits.js";
+import type { McpUpstream, PreparedMcpCall } from "./mcp-upstream.js";
 import { type ExecutionRecord, noopObserver, type Observer } from "./observability.js";
 import { bindParam } from "./param-serialization.js";
 import {
@@ -98,6 +100,8 @@ export interface ExecuteContext {
   serviceId: string;
   baseUrl: string;
   credentials?: CredentialResolver;
+  /** Reviewed upstream MCP bindings, executed only after the common policy gates. */
+  mcp?: McpUpstream;
   authProfile?: string;
   /**
    * The validated inbound caller identity for THIS request, when the serving
@@ -616,22 +620,6 @@ function safeLedgerReference(reference: string | undefined): string | undefined 
     : undefined;
 }
 
-function authMaterialOverwritesIdempotencyCarrier(
-  material: AuthMaterial,
-  carrier: IdempotencyCarrierBinding | undefined,
-): boolean {
-  if (!carrier) return false;
-  if (carrier.mechanism === "header") {
-    return Object.keys(material.headers ?? {}).some(
-      (name) => name.toLowerCase() === carrier.key.toLowerCase(),
-    );
-  }
-  if (carrier.mechanism === "query") {
-    return Object.hasOwn(material.query ?? {}, carrier.key);
-  }
-  return false;
-}
-
 /** Execute a single AIR operation with all safety guarantees applied. */
 export async function execute(
   op: Operation,
@@ -731,12 +719,9 @@ export async function execute(
       return fail(unapprovedOperationError(op, traceId));
     }
 
-    // 0b. Transport gate — the approval gate asks whether this operation may be
-    // called; this asks whether *this runtime* can make the call faithfully. A
-    // source whose wire protocol is not HTTP+JSON reaches here with a coordinate
-    // Anvil invented, and building a request from it would put a well-formed lie
-    // on the wire. Refuse unless an operator declared a facade that serves it.
-    const wireError = wireGateError(op, traceId, ctx.protocolFacade);
+    // 0b. Only dispatch protocols this runtime can faithfully execute.
+    const mcpBinding = ctx.mcp?.binding(op, ctx.connector);
+    const wireError = mcpBinding ? undefined : wireGateError(op, traceId, ctx.protocolFacade);
     if (wireError) return fail(wireError);
     if (ctx.protocolFacade !== undefined) {
       const decision = wireFacadeDecision(op, ctx.protocolFacade);
@@ -772,7 +757,13 @@ export async function execute(
       );
     }
 
-    const carrierResolution = resolveIdempotencyCarrier(op);
+    const carrierResolution =
+      mcpBinding && !["none", "natural"].includes(op.idempotency.mode)
+        ? {
+            ok: false as const,
+            issue: "MCP tools/call cannot transmit AIR HTTP idempotency carriers",
+          }
+        : resolveIdempotencyCarrier(op);
     if (!carrierResolution.ok) {
       return fail(
         new AnvilError({
@@ -1120,10 +1111,8 @@ export async function execute(
         }),
       );
     }
-    // Resolved once and shared by request construction and response decoding:
-    // a call must be read back by the same protocol it was written in.
     const codec = codecFor(op, ctx.protocolFacade !== undefined);
-    if (!codec) {
+    if (!codec && !mcpBinding) {
       return fail(
         new AnvilError({
           code: "unsupported_operation",
@@ -1136,14 +1125,14 @@ export async function execute(
         }),
       );
     }
-    const baseRequest = buildRequest(
-      op,
-      input,
-      ctx.baseUrl,
-      carrier,
-      key,
-      ctx.protocolFacade !== undefined,
-    );
+    const baseRequest: HttpRequest = mcpBinding
+      ? {
+          method: "tools/call",
+          url: mcpBinding.url,
+          headers: {},
+          body: JSON.stringify({ name: mcpBinding.toolName, arguments: fingerprintInput }),
+        }
+      : buildRequest(op, input, ctx.baseUrl, carrier, key, ctx.protocolFacade !== undefined);
     if (ctx.timeoutMs) baseRequest.timeoutMs = ctx.timeoutMs;
     if (ctx.signal) baseRequest.signal = ctx.signal;
 
@@ -1156,7 +1145,7 @@ export async function execute(
         idempotencyMode: op.idempotency.mode,
         hasIdempotencyKey: Boolean(key),
       });
-      const dryRunRetriesEnabled = retrySafe && ctx.retries !== false;
+      const dryRunRetriesEnabled = !mcpBinding && retrySafe && ctx.retries !== false;
       return finish({
         outcome: "dry_run",
         plan: {
@@ -1193,7 +1182,15 @@ export async function execute(
     // 7. Auth binding.
     let request = baseRequest;
     await runHook(ctx.policy?.preAuth, request);
-    if (op.auth.type !== "none") {
+    let mcpCall: PreparedMcpCall | undefined;
+    if (mcpBinding && ctx.mcp) {
+      mcpCall = await ctx.mcp.prepare(
+        mcpBinding,
+        op.auth,
+        credentialProfileName(ctx.authProfile ?? "default", op.auth),
+        grantCredentialContext(principal, ctx.connector, grantDecision),
+      );
+    } else if (op.auth.type !== "none") {
       const profile = credentialProfileName(ctx.authProfile ?? "default", op.auth);
       let material: AuthMaterial | null;
       try {
@@ -1337,7 +1334,7 @@ export async function execute(
       idempotencyMode: op.idempotency.mode,
       hasIdempotencyKey: Boolean(key),
     });
-    const retriesEnabled = retrySafe && ctx.retries !== false;
+    const retriesEnabled = !mcpBinding && retrySafe && ctx.retries !== false;
     const maxAttempts = retriesEnabled ? op.retries.maxAttempts : 1;
 
     let attempt = 0;
@@ -1354,11 +1351,13 @@ export async function execute(
       try {
         throwIfCancelled(ctx.signal);
         upstreamKey = key;
-        const res = await ctx.transport.send(request);
+        const res = mcpCall
+          ? await mcpCall.send(fingerprintInput, ctx.signal, ctx.timeoutMs)
+          : await ctx.transport.send(request);
         lastResponse = res;
         upstreamStatus = res.status;
         record.responseBytes = byteLen(res.body);
-        const fault = isFaultAware(codec) ? codec.faultIn(op, res) : undefined;
+        const fault = codec && isFaultAware(codec) ? codec.faultIn(op, res) : undefined;
         if (fault) {
           // A protocol can deliver a failure inside a successful HTTP
           // response — a SOAP Fault is the canonical case. The envelope
@@ -1389,7 +1388,7 @@ export async function execute(
           break;
         }
         if (res.status >= 200 && res.status < 300) {
-          const decoded = codec.decode(op, res);
+          const decoded: unknown = codec ? codec.decode(op, res) : JSON.parse(res.body);
           // A protocol can deliver a failure inside a successful HTTP response.
           // A SOAP Fault is the canonical case: the envelope arrived intact, so
           // the transport is satisfied, and the operation still did not happen.
@@ -1519,6 +1518,7 @@ export async function execute(
     await runHook(ctx.policy?.postExecute, request, lastResponse);
     return fail(finalError ?? unknownError(op.id, traceId));
   } catch (err) {
+    if (err instanceof CredentialUnavailableError) return fail(err.toAnvilError(op.id, traceId));
     if (err instanceof AnvilError) return fail(err);
     return fail(unknownError(op.id, traceId, err));
   }

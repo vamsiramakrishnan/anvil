@@ -1,7 +1,12 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { type AuthRequirement, effectiveAuthCarrier, type TlsClientMaterialRefs } from "@anvil/air";
+import {
+  type AuthRequirement,
+  effectiveAuthCarrier,
+  type IdempotencyCarrierBinding,
+  type TlsClientMaterialRefs,
+} from "@anvil/air";
 import type { InboundIdentity } from "./inbound-identity.js";
 import { isSendableOAuthEndpoint } from "./oauth-endpoint.js";
 import type { HttpRequest, TlsClientMaterial } from "./transport.js";
@@ -579,4 +584,21 @@ export function applyAuth(req: HttpRequest, material: AuthMaterial): HttpRequest
     url = u.toString();
   }
   return { ...req, headers, url, ...(material.tls ? { tls: material.tls } : {}) };
+}
+
+/** Whether auth would overwrite the reviewed idempotency carrier. */
+export function authMaterialOverwritesIdempotencyCarrier(
+  material: AuthMaterial,
+  carrier: IdempotencyCarrierBinding | undefined,
+): boolean {
+  if (!carrier) return false;
+  if (carrier.mechanism === "header") {
+    return Object.keys(material.headers ?? {}).some(
+      (name) => name.toLowerCase() === carrier.key.toLowerCase(),
+    );
+  }
+  if (carrier.mechanism === "query") {
+    return Object.hasOwn(material.query ?? {}, carrier.key);
+  }
+  return false;
 }

@@ -1,0 +1,151 @@
+{
+  "completedAt": "2026-10-29T00:30:19.176104+00:00",
+  "evidenceKind": "live",
+  "anvilCommit": "0f86655774f59e0219b51ea8fd9b3bea94da0425",
+  "branchyardIdentityCommit": "f92466fc",
+  "branchyardIntegrationCommit": "8e8cb678",
+  "versions": {
+    "node": "v22.23.4",
+    "gke": "1.35.8-gke.1796000",
+    "mcpSdk": "1.32.1",
+    "googleAuthLibrary": "11.3.1"
+  },
+  "runtime": {
+    "node": "v22.23.4",
+    "sourceCheckoutPresent": false,
+    "adcFileConfigured": false,
+    "gatewayEntrySha256": "127cb54d2ad6c31a2b4a7dc8102260e1cccab3c1fc1db17f4ccc268d00553c2e"
+  },
+  "image": "node:22-trixie@sha256:ead00acb9f552752e0fe17a428d692094ab5f9e021e7bb97202fa7b0cd702a04",
+  "binarySha256": {
+    "by": "25c227e2dc47f24666c3719a424944916874a77ca18b91d6dbc87afad829cb46",
+    "branchyard-server": "591f991b0dcd525a207e29c0db26db40fcfb09752c88594788979a90545212a2"
+  },
+  "checks": {
+    "gateway-allow": {
+      "role": "allow",
+      "assertions": [
+        {
+          "name": "grant denial",
+          "passed": true
+        },
+        {
+          "name": "confirmation denial",
+          "passed": true
+        },
+        {
+          "name": "policy gates make zero upstream requests",
+          "passed": true
+        },
+        {
+          "name": "WIF ADC protected MCP native IAM allow",
+          "passed": true
+        },
+        {
+          "name": "captured name retained",
+          "passed": true
+        }
+      ],
+      "upstream": {
+        "fixture": "live Google Storage IAM-backed MCP qualification",
+        "requests": 4,
+        "nativeStatuses": {
+          "200": 4
+        },
+        "toolNames": ["native.bucket.list"]
+      },
+      "localBranchyardTokenFixture": true
+    },
+    "gateway-deny": {
+      "role": "deny",
+      "assertions": [
+        {
+          "name": "grant denial",
+          "passed": true
+        },
+        {
+          "name": "confirmation denial",
+          "passed": true
+        },
+        {
+          "name": "policy gates make zero upstream requests",
+          "passed": true
+        },
+        {
+          "name": "WIF ADC protected MCP native IAM deny",
+          "passed": true
+        },
+        {
+          "name": "denied workload executes no tool",
+          "passed": true
+        }
+      ],
+      "upstream": {
+        "fixture": "live Google Storage IAM-backed MCP qualification",
+        "requests": 5,
+        "nativeStatuses": {
+          "200": 4,
+          "403": 1
+        },
+        "toolNames": ["native.bucket.list"]
+      },
+      "localBranchyardTokenFixture": true
+    },
+    "admission-allow": {
+      "role": "allow",
+      "assertions": [
+        {
+          "name": "real Google exact issuer subject audience admission",
+          "passed": true
+        },
+        {
+          "name": "native admission preserves configured read-only scope",
+          "passed": true
+        },
+        {
+          "name": "real Google wrong audience rejected",
+          "passed": true
+        }
+      ],
+      "realGoogleMetadataIdentity": true
+    },
+    "admission-deny": {
+      "role": "deny",
+      "assertions": [
+        {
+          "name": "real Google unmapped subject rejected",
+          "passed": true
+        }
+      ],
+      "realGoogleMetadataIdentity": true
+    }
+  },
+  "cleanup": {
+    "namespaceAbsent": true,
+    "bucketLookupStatus": 404,
+    "serviceAccountDeletesSucceeded": 2,
+    "serviceAccountsAbsentFromProjectList": true,
+    "staleImmediateIamLookupRetried": true,
+    "localPrivateMaterialRemoved": true,
+    "temporaryKubeconfigsRemoved": true,
+    "existingVmAccessed": false
+  },
+  "boundaries": {
+    "upstream": "Live SDK qualification fixture; actual Google Storage IAM controls data access, not listener hosting.",
+    "inboundGatewayTokens": "Locally signed Branchyard fixtures, independent of the real Google-admitted server checks.",
+    "notDone": [
+      "live human OAuth consent or refresh",
+      "Cloud Run authorization",
+      "production MCP provider",
+      "model-driven turn",
+      "Google-admitted server minting the gateway turn token"
+    ]
+  },
+  "redactions": [
+    "project identifier",
+    "cluster identifier",
+    "IAM account identifiers",
+    "credentials",
+    "private keys"
+  ]
+}

@@ -87,3 +87,18 @@ JWKS reachability, tool listing, and `/readyz` are useful diagnostics but are
 never accepted as IdP/OBO readiness proof. Any unattested artifact or uncovered
 group makes the separate `identity-live` gate fail and live conformance exit
 nonzero.
+
+## Branchyard gateway credentials
+
+The Branchyard fleet gateway has a separate resolver from the generic deployed
+runtime. Its approved `workload_identity` operations use official Google ADC,
+including external-account WIF, while human connections stay in the encrypted
+vault. It never substitutes a workload identity for an unconnected person.
+
+Adopted MCP tools execute through the official MCP SDK when the operator sets
+`ANVIL_CONNECT_<CONNECTOR>_MCP_URL` and `_MCP_AUTH`. Protected OAuth endpoints
+also require `_ISSUER` and `_CLIENT_ID`; use the existing human connect flow
+for consent. The SDK performs resource discovery, PKCE and vault-backed refresh.
+Only the exact captured upstream tool binding executes, after all existing
+permission and effect gates. See `docs/branchyard.md`
+for configuration, namespace migration, retry limits and evidence boundaries.

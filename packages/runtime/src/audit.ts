@@ -143,7 +143,7 @@ export function auditCall(sink: AuditSink, call: AuditedCall): void {
   try {
     sink({
       time: new Date().toISOString(),
-      sub: principal.id,
+      sub: principal.attribution?.subject ?? principal.id,
       by_tenant: principal.attribution?.tenant ?? null,
       by_branch: principal.attribution?.branch ?? null,
       by_turn: principal.attribution?.turn ?? null,

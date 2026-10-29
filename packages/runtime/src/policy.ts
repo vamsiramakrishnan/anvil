@@ -67,7 +67,13 @@ export interface Principal {
    */
   grants?: GrantEntry[];
   /** Where a Branchyard call comes from (`by_tenant`/`by_branch`/`by_turn`), for audit. */
-  attribution?: { tenant?: string; branch?: string; turn?: string };
+  attribution?: {
+    subject?: string;
+    issuer?: string;
+    tenant?: string;
+    branch?: string;
+    turn?: string;
+  };
 }
 
 /**
