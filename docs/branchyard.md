@@ -318,6 +318,12 @@ credentials and called a TLS-protected SDK MCP fixture backed by real Google
 Storage IAM. The allowed identity listed the test object; the denied identity
 received a native 403. Native Branchyard Google ID-token admission also passed
 its audience, subject, and scope checks. See the [dated record](qualification/2026-10-29-gke-wif-mcp.md).
+A [separate extension](qualification/2026-10-29-native-trust-chain.md) exercised
+real Google admission through an engine-issued connector token, the generated
+SDK, the default effect proxy, and the supervised gateway to native Storage IAM.
+The actual grant refusal proved the issuer–tenant–subject namespace and sent
+zero upstream requests. That extension used the repository's model-free fake
+ACP agent; no fixture signed the inbound gateway token.
 Not done: live human OAuth consent or refresh, a production MCP provider, or a
 model-driven turn in this qualification.
 

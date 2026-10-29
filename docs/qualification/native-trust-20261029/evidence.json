@@ -1,0 +1,174 @@
+{
+  "date": "2026-10-29",
+  "kind": "live model-free native two-repository trust integration",
+  "anvilCommit": "0f86655774f59e0219b51ea8fd9b3bea94da0425",
+  "branchyardIdentityCommit": "f92466fc",
+  "branchyardIntegrationCommit": "8e8cb678",
+  "versions": {
+    "node": "v22.23.4",
+    "gke": "1.35.8-gke.1796000",
+    "mcpSdk": "1.32.1",
+    "googleAuthLibrary": "11.3.1"
+  },
+  "allow": {
+    "nativeGoogleAdmission": true,
+    "nativeOperationState": "succeeded",
+    "assertions": [
+      {
+        "name": "engine provisioned private token file",
+        "passed": true
+      },
+      {
+        "name": "native server JWKS verifies engine-issued turn token",
+        "passed": true
+      },
+      {
+        "name": "verified external Google subject preserved through engine",
+        "passed": true
+      },
+      {
+        "name": "configured tenant preserved through engine",
+        "passed": true
+      },
+      {
+        "name": "configured broker issuer preserved through engine",
+        "passed": true
+      },
+      {
+        "name": "turn token names actual branch and turn",
+        "passed": true
+      },
+      {
+        "name": "turn token carries requested read grant",
+        "passed": true
+      },
+      {
+        "name": "native effect proxy remains enabled",
+        "passed": true
+      },
+      {
+        "name": "verified namespace helper binds issuer tenant subject",
+        "passed": true
+      },
+      {
+        "name": "generated SDK executes real IAM-backed MCP read",
+        "passed": true
+      },
+      {
+        "name": "actual captured upstream tool dispatched once",
+        "passed": true
+      },
+      {
+        "name": "Anvil rejects mutation under engine-issued read grant",
+        "passed": true
+      },
+      {
+        "name": "actual gateway refusal uses issuer tenant subject namespace",
+        "passed": true
+      },
+      {
+        "name": "denied mutation sends zero upstream requests",
+        "passed": true
+      }
+    ],
+    "namespace": "by:v1:a6582b7f9e5109c96de03a4528498790494550b9619544dffa99c58efdd4e3b5",
+    "subject": "google:ee802391696b7655d804d239ea9cf6c262a1804e25903eae55a845a4b31bbee0",
+    "tenant": "validation-20261029",
+    "issuer": "https://branchyard-20261029.by-atomic-wif-20261029.svc.cluster.local:8787",
+    "branch": "validation/trust-082dd590",
+    "turn": "1",
+    "nativeStatuses": {
+      "200": 4
+    },
+    "tokenPrinted": false,
+    "modelCalled": false
+  },
+  "deny": {
+    "unmappedGoogleCallerDenied": true,
+    "httpStatus": 401
+  },
+  "finalObservation": {
+    "auditMatchesAdmittedTurn": true,
+    "unmappedCallerCreatedNoGatewayCalls": true,
+    "stats": {
+      "fixture": "live Google Storage IAM-backed MCP qualification",
+      "requests": 4,
+      "nativeStatuses": {
+        "200": 4
+      },
+      "toolNames": ["native.bucket.list"]
+    },
+    "binaries": {
+      "by": "25c227e2dc47f24666c3719a424944916874a77ca18b91d6dbc87afad829cb46",
+      "branchyard-server": "591f991b0dcd525a207e29c0db26db40fcfb09752c88594788979a90545212a2",
+      "fake-acp-agent": "911b6f291ba2a49a252ca96743eb02a9437434b8026f3a3ec25df136809397b7"
+    }
+  },
+  "nativeAudit": [
+    {
+      "time": "2026-10-29T00:42:53.145Z",
+      "sub": "google:ee802391696b7655d804d239ea9cf6c262a1804e25903eae55a845a4b31bbee0",
+      "by_tenant": "validation-20261029",
+      "by_branch": "validation/trust-082dd590",
+      "by_turn": "1",
+      "connector": "storage",
+      "operation": "storage.list",
+      "decision": "allowed",
+      "grant": {
+        "index": 0,
+        "connector": "storage",
+        "operations": ["*"],
+        "mode": "read"
+      },
+      "upstream_status": 200,
+      "error_code": null,
+      "rule": null
+    },
+    {
+      "time": "2026-10-29T00:42:53.373Z",
+      "sub": "google:ee802391696b7655d804d239ea9cf6c262a1804e25903eae55a845a4b31bbee0",
+      "by_tenant": "validation-20261029",
+      "by_branch": "validation/trust-082dd590",
+      "by_turn": "1",
+      "connector": "storage",
+      "operation": "storage.confirmed_list",
+      "decision": "denied",
+      "grant": {
+        "index": 0,
+        "connector": "storage",
+        "operations": ["*"],
+        "mode": "read"
+      },
+      "upstream_status": null,
+      "error_code": "policy_denied",
+      "rule": "policy/grant_denied"
+    }
+  ],
+  "nativeBranch": {
+    "state": "no_changes",
+    "turns": 1,
+    "provider": "local",
+    "isolatedHome": true,
+    "processSandbox": false,
+    "harnessCommand": "existing repository fake-acp-agent (no model)"
+  },
+  "cleanup": {
+    "namespaceDeletedAndAbsent": true,
+    "bucketDeletedAndLookup404": true,
+    "allowServiceAccountDeletedAndAbsent": true,
+    "denyServiceAccountDeletedAndAbsent": true,
+    "projectAccountListEmptyForBothNames": true,
+    "tlsPrivateFilesRemoved": true,
+    "temporaryKubeconfigRemoved": true,
+    "existingClusterAndWorkloadsUnchanged": true,
+    "projectIamUnchanged": true,
+    "protectedVmUntouched": true
+  },
+  "notDone": [
+    "human Workspace OAuth consent or refresh",
+    "model-driven harness turn",
+    "production MCP hosting",
+    "Cloud Run authorization"
+  ],
+  "redaction": "Cloud project, cluster, and numeric account identifiers omitted. No credentials, private keys, or token contents exported."
+}
