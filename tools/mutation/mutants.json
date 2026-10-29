@@ -423,7 +423,7 @@
       "id": "soap/fault-is-not-a-result",
       "file": "packages/runtime/src/executor.ts",
       "control": "A soap:Fault is refused rather than returned as a result. Servers deliver one with HTTP 200 as readily as 500, so the status is not the answer \u2014 and reporting one as success would record a failed mutation in the idempotency ledger as completed.",
-      "find": "        const fault = isFaultAware(codec) ? codec.faultIn(op, res) : undefined;",
+      "find": "        const fault = codec && isFaultAware(codec) ? codec.faultIn(op, res) : undefined;",
       "replace": "        const fault = undefined;",
       "tests": [
         "packages/runtime/src/codec-soap.test.ts"
