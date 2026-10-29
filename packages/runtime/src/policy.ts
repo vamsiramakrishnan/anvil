@@ -13,6 +13,12 @@ export interface PolicyContext {
   input: Record<string, unknown>;
   traceId: string;
   authProfile?: string;
+  /**
+   * MCP uses a tools/call body `{ name, arguments }`. Hooks may edit arguments
+   * and custom headers. Endpoint, method, tool name, credential/SDK headers,
+   * TLS, stream bounds and extra envelope fields cannot be changed; unsupported
+   * edits fail with policy_denied before MCP dispatch.
+   */
   request?: HttpRequest;
   response?: HttpResponse;
   /** Append a decision to the execution record. */
