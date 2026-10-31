@@ -4,7 +4,7 @@
 //
 //   node tools/mutation/run.mjs                     all mutants
 //   node tools/mutation/run.mjs --filter import-    ids containing a substring
-//   node tools/mutation/run.mjs --shard 2/4         every 4th mutant, starting at the 2nd
+//   node tools/mutation/run.mjs --shard 2/4         the 2nd of 4 slices, dealt by test set
 //   node tools/mutation/run.mjs --list              print the roster, run nothing
 //
 // A mutant "dies" when its tests fail while it is applied. A mutant that
@@ -60,12 +60,16 @@ function parseArgs(argv) {
   return args;
 }
 
-// `--shard N/M` runs every Mth mutant of the roster starting at the Nth, so M
-// runners can split the gate and the shards together cover the roster exactly
-// once. Dealing by position in mutants.json (after --filter) rather than by
-// hashing ids keeps the split readable and stable across runs; adding a mutant
-// moves others between shards, which is fine, since every shard runs on every
-// change. Each shard still checks its own baselines and its own guards.
+// `--shard N/M` gives this runner the Nth of M slices of the roster, so M
+// runners can split the gate and the slices together cover the roster exactly
+// once. Mutants are dealt by test set, not one by one: every mutant of a set
+// lands on the same shard, so each shard runs each of its baselines once
+// (dealt one by one, four shards ran 181 baselines for 95 sets). Sets go
+// largest first to the shard holding the fewest mutants, which keeps the
+// shards about the same size. The split is a function of the roster alone:
+// adding a mutant can move others between shards, which is fine, since every
+// shard runs on every change. Each shard still checks its own baselines and
+// its own guards.
 function parseShard(value) {
   const m = /^([1-9]\d*)\/([1-9]\d*)$/.exec(value ?? "");
   if (!m) throw new Error(`--shard wants N/M with 1 <= N <= M, got: ${value}`);
@@ -77,7 +81,23 @@ function parseShard(value) {
 
 function shardOf(list, shard) {
   if (!shard) return list;
-  return list.filter((_, i) => i % shard.total === shard.index - 1);
+  const sets = new Map();
+  list.forEach((m, i) => {
+    const key = m.tests.join(" ");
+    if (!sets.has(key)) sets.set(key, []);
+    sets.get(key).push(i);
+  });
+  // Largest set first; ties keep roster order, so the deal is deterministic.
+  const groups = [...sets.values()].sort((a, b) => b.length - a.length || a[0] - b[0]);
+  const load = new Array(shard.total).fill(0);
+  const owner = new Array(list.length);
+  for (const group of groups) {
+    let lightest = 0;
+    for (let s = 1; s < shard.total; s++) if (load[s] < load[lightest]) lightest = s;
+    for (const i of group) owner[i] = lightest;
+    load[lightest] += group.length;
+  }
+  return list.filter((_, i) => owner[i] === shard.index - 1);
 }
 
 function countOccurrences(haystack, needle) {
