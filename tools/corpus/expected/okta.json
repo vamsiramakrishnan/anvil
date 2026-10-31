@@ -3,6 +3,10 @@
     "listUsers": { "toolName": "okta_list_users_direct", "effect": "read", "risk": "none" },
     "getUser": { "toolName": "okta_get_user_by_id", "effect": "read", "risk": "none" },
     "createUser": { "toolName": "okta_create_user_direct", "effect": "mutation", "risk": "medium" },
-    "deleteUser": { "toolName": "okta_delete_user_by_id", "effect": "mutation", "risk": "destructive" }
+    "deleteUser": { "toolName": "okta_delete_user_by_id", "effect": "mutation", "risk": "destructive" },
+    "getApplicationsCsvExport": { "toolName": "okta_export_csv_application", "effect": "read", "risk": "none" },
+    "listApplicationsBySearch": { "toolName": "okta_search_application", "effect": "read", "risk": "none" },
+    "previewPolicyBranchPromotion": { "toolName": "okta_preview_policy_branch_promotion", "effect": "read", "risk": "none" },
+    "restoreFromHistory": { "toolName": "okta_restore_policy_branch", "effect": "mutation", "risk": "medium" }
   }
 }
