@@ -9,6 +9,7 @@ import { registerCredentialBackend } from "./credentials.js";
 import { AnvilError } from "./errors.js";
 import type { LedgerFactory } from "./idempotency.js";
 import { InMemoryLedger, registerLedgerBackend } from "./idempotency.js";
+import { composeInvocationTransforms } from "./invocation.js";
 import type { Observer } from "./observability.js";
 import type { PolicyHook, PolicyHooks } from "./policy.js";
 import { denyPolicy } from "./policy.js";
@@ -52,10 +53,10 @@ export { composeObservers } from "./observability.js";
  * fails to import, exports a malformed shape, or tries to replace one of the
  * runtime's own backends refuses the boot rather than serving with a policy
  * the operator believes is installed and is not. What an extension can never
- * do is loosen a gate: hooks run inside `execute()` after the approval,
- * confirmation, idempotency, and principal gates have already refused, and
- * they can only deny (`denyPolicy`), record a decision, or shape the outbound
- * request. Asymmetric trust holds by construction.
+ * do is loosen a gate: approval and principal checks precede invocation
+ * transforms; confirmation, idempotency and egress checks remain on the dispatch
+ * path. Semantic transforms cannot edit confirmation or idempotency controls.
+ * Hooks can deny (`denyPolicy`), record a decision, or shape the outbound request.
  */
 
 /** What a module contributes. Every field is optional; `name` is not. */
@@ -317,7 +318,11 @@ export async function loadRuntimeExtensions(
  */
 export function composePolicyHooks(sets: readonly PolicyHooks[]): PolicyHooks | undefined {
   const composed: PolicyHooks = {};
-  let any = false;
+  const transforms = sets.flatMap((set) =>
+    set.transformInvocation ? [set.transformInvocation] : [],
+  );
+  if (transforms.length) composed.transformInvocation = composeInvocationTransforms(transforms);
+  let any = transforms.length > 0;
   for (const phase of POLICY_PHASES) {
     const hooks = sets.flatMap((s) => (s[phase] ? [s[phase] as PolicyHook] : []));
     if (hooks.length === 0) continue;
@@ -359,10 +364,13 @@ function validateExtension(value: unknown, specifier: string): RuntimeExtension 
       throw extensionError(specifier, "`policy` must be an object of hook functions");
     }
     for (const [phase, hook] of Object.entries(ext.policy as Record<string, unknown>)) {
-      if (!(POLICY_PHASES as readonly string[]).includes(phase)) {
+      if (
+        phase !== "transformInvocation" &&
+        !(POLICY_PHASES as readonly string[]).includes(phase)
+      ) {
         throw extensionError(
           specifier,
-          `\`policy.${phase}\` is not a hook phase (expected one of ${POLICY_PHASES.join(", ")})`,
+          `\`policy.${phase}\` is not a hook phase (expected transformInvocation or one of ${POLICY_PHASES.join(", ")})`,
         );
       }
       if (typeof hook !== "function") {

@@ -1,6 +1,7 @@
 import type { Operation } from "@anvil/air";
 import { AnvilError } from "./errors.js";
 import type { GrantEntry } from "./grants.js";
+import type { InvocationTransform } from "./invocation.js";
 import type { HttpRequest, HttpResponse } from "./transport.js";
 
 /**
@@ -29,6 +30,8 @@ export type PolicyHook = (ctx: PolicyContext) => void | Promise<void>;
 
 /** The six hook points from spec §14. Every one is optional. */
 export interface PolicyHooks {
+  /** Runs on semantic arguments before validation, fingerprinting, credentials and wire encoding. */
+  transformInvocation?: InvocationTransform;
   preValidate?: PolicyHook;
   preAuth?: PolicyHook;
   preExecute?: PolicyHook;

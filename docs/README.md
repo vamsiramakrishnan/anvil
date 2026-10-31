@@ -33,6 +33,7 @@ executed. Parsing and lowering can succeed while the wire path remains blocked.
 ## Use the result
 
 - [Business capabilities](business-capabilities.md): business contracts, private execution, and aligned agent interfaces.
+- [Verified capability extensions](verified-capability-upgrades.md): semantic bindings, metered evaluation, scoped discovery, assurance, recovery and qualified adapters.
 
 - [Client SDKs](client-sdks.md): TypeScript, Python, Go and Java applications.
 - [Target profiles](targets.md): platform-specific packaging and its limits.

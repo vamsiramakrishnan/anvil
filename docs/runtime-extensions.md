@@ -11,8 +11,9 @@ what a running bundle does.
 Extensions are operator-owned code in the operator's own process, like the
 credentials they run beside. They are never agent input. A hook can refuse a
 call, record a decision, or shape the outbound request. It cannot skip the
-approval, confirmation, idempotency, principal, or egress gates, which run
-before any hook.
+approval, confirmation, idempotency, principal, or egress gates. Approval and
+principal checks precede invocation transforms; confirmation, idempotency and
+egress checks still apply before dispatch.
 
 ## Configure
 
@@ -75,7 +76,7 @@ export default (api) => ({
 | Field | Contract |
 | --- | --- |
 | `name` | Required. Recorded on `/healthz` and in the boot log. Must be unique across loaded modules. |
-| `policy` | Any of the six hook phases: `preValidate`, `preAuth`, `preExecute`, `postExecute`, `postResponse`, `postError`. Hooks from several modules run in load order; the first refusal wins. |
+| `policy` | `transformInvocation` for validated semantic argument and custom-header edits, followed by the six request/response phases: `preValidate`, `preAuth`, `preExecute`, `postExecute`, `postResponse`, `postError`. Hooks from several modules run in load order; the first refusal wins. See [invocation transforms](verified-capability-upgrades.md#transform-semantic-invocations). |
 | `observer` | An `onRecord(record)` sink. It is fanned out beside the built-in sinks and dropped after its first throw, so a failing sink never takes down the serving path. |
 | `ledgers` | Durable idempotency backends by URI scheme. `firestore` is reserved. A backend must report `durable: true` for `/readyz` to pass outside `dev`. |
 | `credentials` | Credential storage backends by `ANVIL_CREDENTIALS` value. `env`, `secret_manager`, and `delegated` are reserved. |

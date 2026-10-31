@@ -41,7 +41,7 @@ describe("skill execution host", () => {
           process.stdout.write(JSON.stringify({id:'1', method:'invoke', operation:'read', input:{}})+'\\n');
         } else {
           if (message.outcome.value.id !== 'p1') process.exit(3);
-          process.stdout.write(JSON.stringify({method:'complete'})+'\\n');
+          process.stdout.write(JSON.stringify({method:'complete',usage:{provider:'fixture',model:'scripted',inputTokens:100,outputTokens:10,cachedInputTokens:20,costUsd:0.01}})+'\\n');
         }
       });`;
     const report = await runSkillTask({
@@ -58,6 +58,7 @@ describe("skill execution host", () => {
     expect(report.skillDigest).toHaveLength(64);
     expect(report.taskDigest).toHaveLength(64);
     expect(report.agent.metadata.harness).toBe("scripted-protocol-test");
+    expect(report.usage).toMatchObject({ provider: "fixture", inputTokens: 100, costUsd: 0.01 });
   });
 
   it("does not accept a completion message as evidence of task success", async () => {
