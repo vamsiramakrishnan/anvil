@@ -17,11 +17,46 @@ env:
   ASTRO_TELEMETRY_DISABLED: "1"
   TURBO_TELEMETRY_DISABLED: "1"
 
+# The jobs below run at once, so a change waits for the slowest of them rather
+# than for their sum. The one serial job they replace spent a median 23.5
+# minutes: ~90 s of typecheck, ~7 min of tests and ~16 min of mutation gate,
+# one after another. `ci-ok` is the single check a branch rule can require.
 jobs:
-  verify:
-    name: Verify workspace
+  static:
+    name: Lint, dead code, typecheck
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Check dead code
+        run: pnpm deadcode
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       ANVIL_FUZZ_REQUIRE_SDKS: "true"
 
@@ -42,6 +77,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # The SDK tests compile generated Go and Java clients.
       - name: Set up Go for SDK execution
         uses: actions/setup-go@v5
         with:
@@ -53,15 +89,6 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-
-      - name: Lint
-        run: pnpm lint
-
-      - name: Check dead code
-        run: pnpm deadcode
-
-      - name: Typecheck
-        run: pnpm typecheck
 
       # Build before tests. Cookbook tests execute the literal, documented
       # packages/cli/dist/bin-anvil.js commands, so the distributable CLI must
@@ -76,16 +103,63 @@ jobs:
       - name: Test enterprise corpus acquisition and accounting
         run: pnpm exec vitest run tools/corpus/enterprise/enterprise.test.ts
 
-      # The mutation runner edits source files while proving that the declared
-      # tests detect each removed control. Keep it after the normal suite and
-      # never run it concurrently with tests.
-      - name: Mutation gate
-        run: node tools/mutation/run.mjs
-
       # This corpus is offline and deterministic, so it remains a per-change
       # gate. Network-backed corpora stay in corpus.yml.
       - name: Gateway-estate differential gate
         run: node tools/corpus/run.mjs estates
+
+  mutation:
+    name: Mutation gate ${{ matrix.shard }}/4
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    env:
+      ANVIL_FUZZ_REQUIRE_SDKS: "true"
+
+    # The mutation runner edits source files while proving that the declared
+    # tests detect each removed control, so it gets runners of its own and
+    # never shares one with the normal suite. Each shard takes every fourth
+    # mutant of the roster (tools/mutation/run.mjs --shard), runs the clean
+    # baseline for the test sets it owns, and fails on its own survivors.
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Some declared test sets compile generated Go and Java clients.
+      - name: Set up Go for SDK execution
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.12"
+          cache: false
+
+      - name: Set up Java for SDK execution
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Some declared test sets spawn the built CLI, as the full suite does.
+      - name: Build
+        run: pnpm build
+
+      - name: Mutation gate
+        run: node tools/mutation/run.mjs --shard ${{ matrix.shard }}/4
 
   e2e:
     name: Console end-to-end
@@ -135,3 +209,22 @@ jobs:
             packages/console/playwright-report
             packages/console/test-results
           retention-days: 7
+
+  ci-ok:
+    name: CI
+    # Green only when every job above is. `!cancelled()` runs it after a
+    # needed job failed, so that it fails too; skipped, it would count as
+    # passed for a required check.
+    if: ${{ !cancelled() }}
+    needs: [static, test, mutation, e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for result in $RESULTS; do
+            test "$result" = success || exit 1
+          done

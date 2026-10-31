@@ -4,6 +4,7 @@
 //
 //   node tools/mutation/run.mjs                     all mutants
 //   node tools/mutation/run.mjs --filter import-    ids containing a substring
+//   node tools/mutation/run.mjs --shard 2/4         every 4th mutant, starting at the 2nd
 //   node tools/mutation/run.mjs --list              print the roster, run nothing
 //
 // A mutant "dies" when its tests fail while it is applied. A mutant that
@@ -47,15 +48,36 @@ const DEFAULT_TIMEOUT_MS = 180_000;
 let runCounter = 0; // keeps each run's json report path distinct
 
 function parseArgs(argv) {
-  const args = { filter: null, list: false, timeoutMs: DEFAULT_TIMEOUT_MS };
+  const args = { filter: null, list: false, timeoutMs: DEFAULT_TIMEOUT_MS, shard: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--filter") args.filter = argv[++i];
     else if (a === "--list") args.list = true;
     else if (a === "--timeout") args.timeoutMs = Number(argv[++i]) * 1000;
+    else if (a === "--shard") args.shard = parseShard(argv[++i]);
     else throw new Error(`unknown flag: ${a}`);
   }
   return args;
+}
+
+// `--shard N/M` runs every Mth mutant of the roster starting at the Nth, so M
+// runners can split the gate and the shards together cover the roster exactly
+// once. Dealing by position in mutants.json (after --filter) rather than by
+// hashing ids keeps the split readable and stable across runs; adding a mutant
+// moves others between shards, which is fine, since every shard runs on every
+// change. Each shard still checks its own baselines and its own guards.
+function parseShard(value) {
+  const m = /^([1-9]\d*)\/([1-9]\d*)$/.exec(value ?? "");
+  if (!m) throw new Error(`--shard wants N/M with 1 <= N <= M, got: ${value}`);
+  const index = Number(m[1]);
+  const total = Number(m[2]);
+  if (index > total) throw new Error(`--shard ${value}: N must not exceed M`);
+  return { index, total };
+}
+
+function shardOf(list, shard) {
+  if (!shard) return list;
+  return list.filter((_, i) => i % shard.total === shard.index - 1);
 }
 
 function countOccurrences(haystack, needle) {
@@ -154,11 +176,21 @@ function tail(output, lines = 25) {
 const args = parseArgs(process.argv.slice(2));
 const spec = JSON.parse(readFileSync(MUTANTS_PATH, "utf8"));
 const all = spec.mutants;
-const mutants = args.filter ? all.filter((m) => m.id.includes(args.filter)) : all;
+const matching = args.filter ? all.filter((m) => m.id.includes(args.filter)) : all;
+const mutants = shardOf(matching, args.shard);
 
 if (mutants.length === 0) {
-  console.error(args.filter ? `no mutants match --filter ${args.filter}` : "mutants.json declares no mutants");
+  console.error(
+    args.filter
+      ? `no mutants match --filter ${args.filter}`
+      : args.shard
+        ? `shard ${args.shard.index}/${args.shard.total} holds no mutants`
+        : "mutants.json declares no mutants",
+  );
   process.exit(1);
+}
+if (args.shard) {
+  console.log(`Shard ${args.shard.index}/${args.shard.total}: ${mutants.length} of ${matching.length} mutants.`);
 }
 
 if (args.list) {

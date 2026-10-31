@@ -37,6 +37,8 @@ driving Anvil. It is generated from the command registry. Regenerate it with
 - `packages/cli` — the `anvil` command + the shared tool-CLI engine.
 - `examples/payments` — the reference spec + manifest.
 
-Install with `pnpm install`. Run `pnpm build`, `pnpm typecheck`, and `pnpm test`
+Install with `pnpm install`; it also installs the pre-push hook
+(`.githooks/pre-push`), which lints the changed files and typechecks the
+packages they touch before every push. Run `pnpm build`, `pnpm typecheck`, and `pnpm test`
 for implementation changes. For documentation changes, run the docs content
 check and production site build. Do not log or echo credentials.
