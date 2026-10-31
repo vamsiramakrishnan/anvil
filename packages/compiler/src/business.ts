@@ -1,5 +1,6 @@
 import {
   AirDocument,
+  assertSemanticBinding,
   type BusinessAction,
   type BusinessBinding,
   BusinessDefinition,
@@ -8,10 +9,14 @@ import {
   Operation,
   operationInputSchema,
   operationSafetyInputKeys,
+  SemanticType,
+  transformedSchema,
+  transformValue,
   validateBusinessValue,
 } from "@anvil/air";
 
 const JSON_KEYS = new Set([
+  "x-anvil-semantic",
   "type",
   "properties",
   "required",
@@ -43,6 +48,7 @@ function schemaCheck(schema: Record<string, unknown>, label: string): void {
         `${label}: unsupported schema keyword ${key}; resolve unions and references before authoring.`,
       );
   }
+  if (schema["x-anvil-semantic"] !== undefined) SemanticType.parse(schema["x-anvil-semantic"]);
   if (!schema.type) throw new Error(`${label}: an explicit JSON Schema type is required.`);
   const types = Array.isArray(schema.type) ? schema.type : [schema.type];
   if (types.includes("object")) {
@@ -64,6 +70,10 @@ function schemaCheck(schema: Record<string, unknown>, label: string): void {
 function schemaAt(schema: Record<string, unknown>, pointer: string): Record<string, unknown> {
   let current = schema;
   for (const part of pointer === "" ? [] : pointer.slice(1).split("/")) {
+    if (Array.isArray(current.type) && current.type.includes("null"))
+      throw new Error(
+        `Binding pointer ${pointer} traverses a nullable value; bind the whole value explicitly.`,
+      );
     const key = part.replace(/~1/g, "/").replace(/~0/g, "~");
     const child =
       current.type === "array" && /^\d+$/.test(key)
@@ -76,21 +86,35 @@ function schemaAt(schema: Record<string, unknown>, pointer: string): Record<stri
   return current;
 }
 
-function bindingSchema(
+function rawBindingSchema(
   binding: BusinessBinding,
   action: BusinessAction,
   previous: Map<string, Operation>,
 ): Record<string, unknown> | undefined {
-  if (binding.from === "literal") return undefined;
+  if (binding.from === "literal") {
+    if (binding.transforms?.length)
+      throw new Error("Literal transforms have no declared source semantics");
+    return undefined;
+  }
   if (binding.from === "context") return { type: "string" };
   if (binding.from === "input") return schemaAt(action.input, binding.pointer);
-  const op = previous.get(binding.step);
+  const stepId = binding.from === "item" ? "$item" : binding.step;
+  const op = previous.get(stepId);
   if (!op)
     throw new Error(
-      `Binding references unavailable step ${binding.step}; forward references are forbidden.`,
+      `Binding references unavailable step ${stepId}; forward references are forbidden.`,
     );
-  if (!op.output.schema) throw new Error(`Step ${binding.step} needs a declared output schema.`);
+  if (!op.output.schema) throw new Error(`Step ${stepId} needs a declared output schema.`);
   return schemaAt(op.output.schema, binding.pointer);
+}
+
+function bindingSchema(
+  binding: BusinessBinding,
+  action: BusinessAction,
+  previous: Map<string, Operation>,
+) {
+  const schema = rawBindingSchema(binding, action, previous);
+  return schema ? transformedSchema(schema, binding.transforms ?? []) : undefined;
 }
 
 function checkBinding(
@@ -101,10 +125,16 @@ function checkBinding(
 ): void {
   const source = bindingSchema(binding, action, previous);
   if (!source) {
-    if (binding.from === "literal" && !validateBusinessValue(target, binding.value))
+    assertSemanticBinding({}, target);
+    if (
+      binding.from === "literal" &&
+      (binding.transforms?.length ||
+        !validateBusinessValue(target, transformValue(binding.value, [])))
+    )
       throw new Error("Literal binding does not satisfy its destination schema.");
     return;
   }
+  assertSemanticBinding(source, target);
   const targetTypes = Array.isArray(target.type) ? target.type : [target.type];
   const sourceTypes = Array.isArray(source.type) ? source.type : [source.type];
   if (
@@ -242,6 +272,25 @@ export function compileBusiness(
         throw new Error(`Step ${step.id} must disclose its business effect.`);
       if (op.confirmation.humanApproval && !action.humanApproval)
         throw new Error(`Action ${action.id} cannot weaken source human approval.`);
+      if (step.when) {
+        const condition = bindingSchema(step.when.value, action, previous);
+        const right = bindingSchema(step.when.equals, action, previous);
+        if (condition) checkBinding(step.when.equals, condition, action, previous);
+        else if (right) checkBinding(step.when.value, right, action, previous);
+      }
+      if (step.forEach) {
+        const collection = bindingSchema(step.forEach.items, action, previous);
+        if (
+          collection?.type !== "array" ||
+          !collection.items ||
+          typeof collection.items !== "object"
+        )
+          throw new Error("Iteration needs a declared array source");
+        previous.set("$item", {
+          ...op,
+          output: { ...op.output, schema: collection.items as Record<string, unknown> },
+        });
+      }
       const schema = operationInputSchema(op);
       const props = (schema.properties ?? {}) as Record<string, Record<string, unknown>>;
       const safety = operationSafetyInputKeys(op);
@@ -264,7 +313,19 @@ export function compileBusiness(
         if (left) checkBinding(guard.equals, left, action, previous);
         else if (right) checkBinding(guard.value, right, action, previous);
       }
-      previous.set(step.id, op);
+      previous.delete("$item");
+      let output = op.output.schema;
+      if ((step.forEach || step.when) && !output)
+        throw new Error("Controlled steps require output schemas");
+      if (step.forEach) output = { type: "array", items: output, maxItems: step.forEach.maxItems };
+      if (step.when && output)
+        output = {
+          ...output,
+          type: [
+            ...new Set([...(Array.isArray(output.type) ? output.type : [output.type]), "null"]),
+          ],
+        };
+      previous.set(step.id, { ...op, output: { ...op.output, schema: output } });
     }
     const properties = (action.output.properties ?? {}) as Record<string, Record<string, unknown>>;
     for (const [key, binding] of Object.entries(action.result)) {

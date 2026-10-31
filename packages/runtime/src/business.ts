@@ -10,6 +10,7 @@ import {
   type Operation,
   operationInputSchema,
   operationSafetyInputKeys,
+  transformValue,
   validateBusinessValue,
 } from "@anvil/air";
 import type { BusinessJournal } from "./business-journal.js";
@@ -71,7 +72,7 @@ export function businessApprovalDigest(
   });
 }
 
-function bind(
+function rawBind(
   binding: BusinessBinding,
   input: Record<string, unknown>,
   context: BusinessContext,
@@ -80,8 +81,18 @@ function bind(
   if (binding.from === "literal") return structuredClone(binding.value);
   if (binding.from === "input") return businessPointer(input, binding.pointer);
   if (binding.from === "context") return context[binding.field];
+  if (binding.from === "item") return businessPointer(outputs.get("$item"), binding.pointer);
   if (!outputs.has(binding.step)) throw new Error("Unresolved step binding.");
   return businessPointer(outputs.get(binding.step), binding.pointer);
+}
+
+function bind(
+  binding: BusinessBinding,
+  input: Record<string, unknown>,
+  context: BusinessContext,
+  outputs: Map<string, unknown>,
+): unknown {
+  return transformValue(rawBind(binding, input, context, outputs), binding.transforms ?? []);
 }
 
 function project(
@@ -297,71 +308,90 @@ async function runSteps(
       const op = source?.operations.find((op) => op.id === step.operationId);
       if (!source || !op || op.state !== "approved")
         return failure("An execution dependency is unavailable or unapproved.");
-      for (const guard of step.preconditions) {
-        if (
-          hashCanonical(bind(guard.value, input, host.context, outputs)) !==
-          hashCanonical(bind(guard.equals, input, host.context, outputs))
-        )
-          return failure(guard.message);
+      if (
+        step.when &&
+        hashCanonical(bind(step.when.value, input, host.context, outputs)) !==
+          hashCanonical(bind(step.when.equals, input, host.context, outputs))
+      ) {
+        outputs.set(step.id, null);
+        continue;
       }
-      const stepInput = project(step.input, input, host.context, outputs);
-      const keys = operationSafetyInputKeys(op);
-      const stepKey = intentKey
-        ? `anvil-business-${hashCanonical({ intentKey, step: step.id })}`
-        : undefined;
-      const validationInput = {
-        ...stepInput,
-        ...(op.confirmation.required ? { [keys.confirm]: true } : {}),
-        ...(op.idempotency.mode === "required" ? { [keys.idempotencyKey]: stepKey } : {}),
-      };
-      if (!validateBusinessValue(operationInputSchema(op), validationInput))
-        return failure("A bound value does not satisfy its execution contract.");
-      const sourceContext = host.contextFor(step.source, source, op);
-      // Preserve host principal resolution and limits. A configured directory must still fail
-      // closed when it cannot resolve a principal; composition cannot manufacture that grant.
-      const ctx: ExecuteContext = {
-        ...sourceContext,
-        remoteIdempotency: false,
-        traceId: trace,
-        principal:
-          sourceContext.principal ??
-          (sourceContext.principalDirectoryConfigured
-            ? undefined
-            : { id: host.context.principal, scopes: [] }),
-      };
-      await host.journal?.append(trace, {
-        kind: "attempted",
-        step: step.id,
-        source: step.source,
-        operation: op.id,
-        mutation: op.effect.kind === "mutation",
-        inputDigest: hashCanonical(stepInput),
-        ...(stepKey ? { keyDigest: hashCanonical(stepKey) } : {}),
-        ...(step.effect ? { effect: step.effect } : {}),
-      });
-      mutationAttempted = op.effect.kind === "mutation";
-      const output = await execute(
-        op,
-        {
-          input: stepInput,
-          confirm: true,
-          ...(op.idempotency.mode === "required" || op.idempotency.mode === "key_supported"
-            ? { idempotencyKey: stepKey }
-            : {}),
-        },
-        ctx,
-      );
-      if (output.outcome !== "success") return failure(step.failure.message, mutationAttempted);
-      // Validate raw output before binding it into another system. No implicit coercion.
-      if (op.output.schema && !validateBusinessValue(op.output.schema, output.data))
-        return failure("An execution dependency returned an invalid result.", mutationAttempted);
-      if (mutationAttempted && step.effect) completed.push(step.effect);
-      await host.journal?.append(trace, {
-        kind: "received",
-        step: step.id,
-        outputDigest: hashCanonical(output.data),
-      });
-      outputs.set(step.id, output.data);
+      const items = step.forEach ? bind(step.forEach.items, input, host.context, outputs) : [null];
+      if (!Array.isArray(items) || (step.forEach && items.length > step.forEach.maxItems))
+        return failure("Iteration bound exceeded; no item in this step was dispatched.");
+      const collected: unknown[] = [];
+      for (const [index, item] of items.entries()) {
+        mutationAttempted = false;
+        outputs.set("$item", item);
+        const executionStep = step.forEach ? `${step.id}:${index}` : step.id;
+        for (const guard of step.preconditions) {
+          if (
+            hashCanonical(bind(guard.value, input, host.context, outputs)) !==
+            hashCanonical(bind(guard.equals, input, host.context, outputs))
+          )
+            return failure(guard.message);
+        }
+        const stepInput = project(step.input, input, host.context, outputs);
+        const keys = operationSafetyInputKeys(op);
+        const stepKey = intentKey
+          ? `anvil-business-${hashCanonical({ intentKey, step: executionStep })}`
+          : undefined;
+        const validationInput = {
+          ...stepInput,
+          ...(op.confirmation.required ? { [keys.confirm]: true } : {}),
+          ...(op.idempotency.mode === "required" ? { [keys.idempotencyKey]: stepKey } : {}),
+        };
+        if (!validateBusinessValue(operationInputSchema(op), validationInput))
+          return failure("A bound value does not satisfy its execution contract.");
+        const sourceContext = host.contextFor(step.source, source, op);
+        // Preserve host principal resolution and limits. A configured directory must still fail
+        // closed when it cannot resolve a principal; composition cannot manufacture that grant.
+        const ctx: ExecuteContext = {
+          ...sourceContext,
+          remoteIdempotency: false,
+          traceId: trace,
+          principal:
+            sourceContext.principal ??
+            (sourceContext.principalDirectoryConfigured
+              ? undefined
+              : { id: host.context.principal, scopes: [] }),
+        };
+        await host.journal?.append(trace, {
+          kind: "attempted",
+          step: executionStep,
+          source: step.source,
+          operation: op.id,
+          mutation: op.effect.kind === "mutation",
+          inputDigest: hashCanonical(stepInput),
+          ...(stepKey ? { keyDigest: hashCanonical(stepKey) } : {}),
+          ...(step.effect ? { effect: step.effect } : {}),
+        });
+        mutationAttempted = op.effect.kind === "mutation";
+        const output = await execute(
+          op,
+          {
+            input: stepInput,
+            confirm: true,
+            ...(op.idempotency.mode === "required" || op.idempotency.mode === "key_supported"
+              ? { idempotencyKey: stepKey }
+              : {}),
+          },
+          ctx,
+        );
+        if (output.outcome !== "success") return failure(step.failure.message, mutationAttempted);
+        // Validate raw output before binding it into another system. No implicit coercion.
+        if (op.output.schema && !validateBusinessValue(op.output.schema, output.data))
+          return failure("An execution dependency returned an invalid result.", mutationAttempted);
+        if (mutationAttempted && step.effect) completed.push(step.effect);
+        await host.journal?.append(trace, {
+          kind: "received",
+          step: executionStep,
+          outputDigest: hashCanonical(output.data),
+        });
+        collected.push(output.data);
+      }
+      outputs.delete("$item");
+      outputs.set(step.id, step.forEach ? collected : collected[0]);
     }
     const data = project(action.result, input, host.context, outputs);
     if (!validateBusinessValue(action.output, data))

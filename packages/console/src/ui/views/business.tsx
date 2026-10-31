@@ -628,6 +628,8 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
                         <th>Failed</th>
                         <th>Inconclusive</th>
                         <th>Calls</th>
+                        <th>Cost (USD)</th>
+                        <th>Cost / success (USD)</th>
                         <th>Success interval (95%)</th>
                       </tr>
                     </thead>
@@ -647,6 +649,11 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
                           <td>{row.failed}</td>
                           <td>{row.inconclusive}</td>
                           <td>{row.meanCalls?.toFixed(1) ?? "—"}</td>
+                          <td>{row.costUsd?.toFixed(4) ?? "Unmetered"}</td>
+                          <td>
+                            {row.costPerSuccessUsd?.toFixed(4) ??
+                              (row.costUsd == null ? "Unmetered" : "No successes")}
+                          </td>
                           <td>
                             {row.successInterval95
                               ?.map((n) => `${Math.round(n * 100)}%`)
@@ -657,8 +664,11 @@ function ProjectEditor({ api, id, enabled }: { api: ConsoleApi; id: string; enab
                     </tbody>
                   </table>
                   <p className="muted">
-                    Agent: {job.report.agent.id}. Token usage is unmetered. Scripted adapters
-                    measure mechanics only.
+                    Agent: {job.report.agent.id}.{" "}
+                    {job.report.tokens
+                      ? `Tokens: ${job.report.tokens.input} input, ${job.report.tokens.output} output, ${job.report.tokens.cachedInput} cached input.`
+                      : "Token usage is unmetered."}{" "}
+                    Scripted adapters measure mechanics only.
                   </p>
                   <details>
                     <summary>Inspect trials and replayable failures</summary>

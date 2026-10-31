@@ -41,6 +41,7 @@ export interface BusinessComparisonTrial {
 export interface BusinessComparisonReport {
   schemaVersion: 1;
   projectDigest: string;
+  tasksDigest: string;
   planDigest: string;
   evaluator: { id: string; version: string };
   agent: { id: string; metadata: Record<string, string> };
@@ -56,9 +57,11 @@ export interface BusinessComparisonReport {
     successInterval95: [number, number] | null;
     meanCalls: number | null;
     meanLatencyMs: number | null;
+    costUsd: number | null;
+    costPerSuccessUsd: number | null;
   }>;
   /** Tokens require a metered provider adapter; never substitute characters or fabricated counts. */
-  tokens: null;
+  tokens: { input: number; output: number; cachedInput: number } | null;
 }
 function interval(passed: number, total: number): [number, number] | null {
   if (!total) return null;
@@ -190,19 +193,33 @@ export async function compareBusinessProject(
   return {
     schemaVersion: 1,
     projectDigest: revision.digest,
+    tasksDigest: hashCanonical(project.tasks),
     planDigest: plan.digest,
     evaluator: { id: evaluator.id, version: evaluator.version },
     agent: { id: evaluator.agent.id, metadata: { ...evaluator.agent.metadata } },
     configuration,
     status: options.signal?.aborted ? "cancelled" : "completed",
     trials,
-    tokens: null,
+    tokens:
+      trials.length && trials.every((t) => t.run.usage)
+        ? {
+            input: trials.reduce((n, t) => n + (t.run.usage?.inputTokens ?? 0), 0),
+            output: trials.reduce((n, t) => n + (t.run.usage?.outputTokens ?? 0), 0),
+            cachedInput: trials.reduce((n, t) => n + (t.run.usage?.cachedInputTokens ?? 0), 0),
+          }
+        : null,
     summary: BUSINESS_EVALUATION_LANES.map((lane) => {
       const rows = trials.filter((t) => t.lane === lane),
         passed = rows.filter((t) => t.run.status === "passed").length;
       const failed = rows.filter((t) => t.run.status === "failed").length;
+      const cost =
+        rows.length && rows.every((r) => r.run.usage)
+          ? rows.reduce((n, r) => n + (r.run.usage?.costUsd ?? 0), 0)
+          : null;
       return {
         lane,
+        costUsd: cost,
+        costPerSuccessUsd: cost !== null && passed ? cost / passed : null,
         passed,
         failed,
         inconclusive: rows.length - passed - failed,

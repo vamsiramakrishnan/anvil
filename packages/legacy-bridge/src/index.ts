@@ -2,6 +2,7 @@ export * from "./broker.js";
 export * from "./broker-double.js";
 export * from "./conformance.js";
 export * from "./conformance-broker.js";
+export * from "./driver-registry.js";
 export * from "./facade.js";
 export * from "./lower.js";
 export * from "./serve.js";

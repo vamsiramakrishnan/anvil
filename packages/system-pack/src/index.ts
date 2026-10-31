@@ -10,6 +10,9 @@
  */
 export * from "./archive.js";
 export * from "./assemble.js";
+export * from "./assurance-graph.js";
+export * from "./business-assurance.js";
+export * from "./connector-knowledge.js";
 export * from "./diff.js";
 export * from "./digest.js";
 export * from "./graph.js";

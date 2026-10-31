@@ -345,6 +345,31 @@ describe("reviewed protected upstream MCP", () => {
     expect(server.requestHeaders.at(-1)?.["x-policy"]).toBeUndefined();
   });
 
+  it("sends protocol-neutral policy edits through the real MCP SDK", async () => {
+    const server = await upstream();
+    const f = fixture(server.resource);
+    await consent(f.flow);
+    f.operation.input.params = [
+      { name: "title", in: "query", required: true, inferred: false, schema: { type: "string" } },
+    ];
+    const result = await execute(
+      f.operation,
+      { input: { title: "private" } },
+      {
+        ...f.context,
+        policy: {
+          transformInvocation: (plan) => ({
+            arguments: { ...plan.arguments, title: "sanitized" },
+            headers: { "X-Policy": "semantic" },
+          }),
+        },
+      },
+    );
+    expect(result.outcome).toBe("success");
+    expect(server.calls).toEqual([{ name: "captured.tool", arguments: { title: "sanitized" } }]);
+    expect(server.requestHeaders.some((headers) => headers["x-policy"] === "semantic")).toBe(true);
+  });
+
   const unsupportedEdits: Array<[string, (request: HttpRequest) => void]> = [
     [
       "invalid endpoint",

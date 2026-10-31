@@ -35,6 +35,7 @@ export * from "./profile-record.js";
 export * from "./resolve.js";
 export * from "./schema.js";
 export * from "./schema-branches.js";
+export * from "./semantic.js";
 export * from "./serialize.js";
 export * from "./service-id.js";
 export * from "./text.js";

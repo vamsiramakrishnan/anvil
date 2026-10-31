@@ -20,6 +20,18 @@ export interface SkillTask {
   references?: Record<string, string>;
   catalog: Array<{ operation: string; description: string; inputSchema?: unknown }>;
 }
+export const AgentUsage = z
+  .strictObject({
+    inputTokens: z.number().int().nonnegative().safe(),
+    outputTokens: z.number().int().nonnegative().safe(),
+    cachedInputTokens: z.number().int().nonnegative().safe(),
+    costUsd: z.number().finite().nonnegative(),
+    provider: z.string().min(1),
+    model: z.string().min(1),
+  })
+  .refine((u) => u.cachedInputTokens <= u.inputTokens, "Cached tokens exceed input tokens");
+export type AgentUsage = z.infer<typeof AgentUsage>;
+
 export interface AgentAdapter {
   id: string;
   /** Caller records model/harness versions here. No credentials. */
@@ -28,7 +40,7 @@ export interface AgentAdapter {
     task: SkillTask,
     invoke: (operation: string, input: Record<string, unknown>) => Promise<Outcome>,
     signal: AbortSignal,
-  ): Promise<void>;
+  ): Promise<void | AgentUsage>;
 }
 
 const AgentMessage = z.discriminatedUnion("method", [
@@ -38,7 +50,7 @@ const AgentMessage = z.discriminatedUnion("method", [
     operation: z.string(),
     input: z.record(z.string(), z.json()),
   }),
-  z.object({ method: z.literal("complete") }),
+  z.object({ method: z.literal("complete"), usage: AgentUsage.optional() }),
 ]);
 
 /**
@@ -55,7 +67,7 @@ export function processAgent(
     metadata,
     async execute(task, invoke, signal) {
       if (signal.aborted) throw new Error("Agent aborted");
-      await new Promise<void>((resolve, reject) => {
+      return await new Promise<AgentUsage | undefined>((resolve, reject) => {
         const child = spawn(spec.command, spec.args ?? [], {
           cwd: spec.cwd,
           env: processEnvironment(spec.env),
@@ -65,6 +77,7 @@ export function processAgent(
         let buffer = "";
         let total = 0;
         let complete = false;
+        let usage: AgentUsage | undefined;
         let failed = false;
         const ids = new Set<string>();
         let queue = Promise.resolve();
@@ -93,6 +106,7 @@ export function processAgent(
                 const message = AgentMessage.parse(JSON.parse(line));
                 if (message.method === "complete") {
                   complete = true;
+                  usage = message.usage;
                   child.stdin.end();
                   return;
                 }
@@ -119,7 +133,7 @@ export function processAgent(
             signal.removeEventListener("abort", fail);
             if (failed || signal.aborted || code !== 0 || !complete || buffer.trim())
               reject(new Error("Agent process did not complete its protocol"));
-            else resolve();
+            else resolve(usage);
           });
         });
         child.stdin.write(`${JSON.stringify({ protocol: "anvil-fuzz-agent/v1", ...task })}\n`);
@@ -129,6 +143,7 @@ export function processAgent(
 }
 
 export interface SkillRun extends CaseResult {
+  usage?: AgentUsage | null;
   mode: "skill-driven";
   agent: { id: string; metadata: Record<string, string> };
   skillDigest: string;
@@ -163,6 +178,7 @@ export async function runSkillTask(options: {
     .digest("hex");
   let session: DriverSession | undefined;
   let activeCall = false;
+  let usage: AgentUsage | null = null;
   try {
     await bounded(
       async (signal) => {
@@ -171,7 +187,7 @@ export async function runSkillTask(options: {
           await session.close();
           return;
         }
-        await options.agent.execute(
+        const measured = await options.agent.execute(
           options.task,
           async (operation, input) => {
             if (signal.aborted || activeCall || events.length >= maxCalls)
@@ -190,6 +206,7 @@ export async function runSkillTask(options: {
           },
           signal,
         );
+        if (measured !== undefined) usage = AgentUsage.parse(measured);
         if (activeCall) throw new Error("Agent completed with an outstanding invocation");
       },
       options.timeoutMs ?? 60_000,
@@ -251,6 +268,7 @@ export async function runSkillTask(options: {
   const failure = checks.find((item) => item.status === "failed");
   return {
     mode: "skill-driven",
+    usage,
     scenario,
     traces: [trace],
     checks,

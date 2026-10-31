@@ -1,21 +1,25 @@
 import { z } from "zod";
 import { materializeSchemaBranches } from "./schema-branches.js";
+import { ValueTransform } from "./semantic.js";
 
 const Name = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/);
 const Pointer = z
   .string()
   .refine((s) => s === "" || /^\/(?:[^~]|~[01])*$/.test(s), "Use a JSON pointer");
+const transforms = z.array(ValueTransform).max(8).optional();
 const Schema = z.record(z.string(), z.unknown());
 
 /** Values have explicit provenance. No expressions, inferred joins, or executable templates. */
 export const BusinessBinding = z.discriminatedUnion("from", [
-  z.strictObject({ from: z.literal("input"), pointer: Pointer }),
+  z.strictObject({ from: z.literal("input"), pointer: Pointer, transforms }),
   z.strictObject({
     from: z.literal("context"),
+    transforms,
     field: z.enum(["tenant", "principal", "policyVersion"]),
   }),
-  z.strictObject({ from: z.literal("step"), step: Name, pointer: Pointer }),
-  z.strictObject({ from: z.literal("literal"), value: z.json() }),
+  z.strictObject({ from: z.literal("step"), transforms, step: Name, pointer: Pointer }),
+  z.strictObject({ from: z.literal("item"), pointer: Pointer, transforms }),
+  z.strictObject({ from: z.literal("literal"), value: z.json(), transforms }),
 ]);
 export type BusinessBinding = z.infer<typeof BusinessBinding>;
 
@@ -26,42 +30,55 @@ export const BusinessGuidance = z.strictObject({
   escalate: z.array(z.string().min(1)).min(1),
 });
 
-export const BusinessAction = z.strictObject({
-  id: Name,
-  description: z.string().min(1),
-  state: z.enum(["proposed", "approved"]).default("proposed"),
-  guidance: BusinessGuidance,
-  input: Schema,
-  output: Schema,
-  requiredScopes: z.array(z.string().min(1)).default([]),
-  humanApproval: z.boolean().default(false),
-  steps: z
-    .array(
-      z.strictObject({
-        id: Name,
-        source: Name,
-        operationId: z.string().min(1),
-        /** Reviewable reason this system is authoritative for the fact or effect. */
-        authority: z.string().min(1),
-        input: z.record(Name, BusinessBinding),
-        preconditions: z
-          .array(
-            z.strictObject({
-              value: BusinessBinding,
-              equals: BusinessBinding,
-              message: z.string().min(1),
-            }),
-          )
-          .default([]),
-        /** Consequential business effect; required for every mutation by the compiler. */
-        effect: z.string().min(1).optional(),
-        failure: z.strictObject({ message: z.string().min(1), nextAction: z.string().min(1) }),
-      }),
-    )
-    .min(1)
-    .max(32),
-  result: z.record(Name, BusinessBinding),
-});
+/** Leaves room for started/finished and reconciliation records in the bounded execution journal. */
+export const MAX_BUSINESS_SOURCE_CALLS = 400;
+export const BusinessAction = z
+  .strictObject({
+    id: Name,
+    description: z.string().min(1),
+    state: z.enum(["proposed", "approved"]).default("proposed"),
+    guidance: BusinessGuidance,
+    input: Schema,
+    output: Schema,
+    requiredScopes: z.array(z.string().min(1)).default([]),
+    humanApproval: z.boolean().default(false),
+    steps: z
+      .array(
+        z.strictObject({
+          id: Name,
+          source: Name,
+          operationId: z.string().min(1),
+          /** Reviewable reason this system is authoritative for the fact or effect. */
+          authority: z.string().min(1),
+          input: z.record(Name, BusinessBinding),
+          when: z.strictObject({ value: BusinessBinding, equals: BusinessBinding }).optional(),
+          forEach: z
+            .strictObject({ items: BusinessBinding, maxItems: z.number().int().min(1).max(100) })
+            .optional(),
+          preconditions: z
+            .array(
+              z.strictObject({
+                value: BusinessBinding,
+                equals: BusinessBinding,
+                message: z.string().min(1),
+              }),
+            )
+            .default([]),
+          /** Consequential business effect; required for every mutation by the compiler. */
+          effect: z.string().min(1).optional(),
+          failure: z.strictObject({ message: z.string().min(1), nextAction: z.string().min(1) }),
+        }),
+      )
+      .min(1)
+      .max(32),
+    result: z.record(Name, BusinessBinding),
+  })
+  .refine(
+    (action) =>
+      action.steps.reduce((total, step) => total + (step.forEach?.maxItems ?? 1), 0) <=
+      MAX_BUSINESS_SOURCE_CALLS,
+    "A business action may declare at most 400 source calls across all iterations",
+  );
 export type BusinessAction = z.infer<typeof BusinessAction>;
 
 export const BusinessDefinition = z.strictObject({

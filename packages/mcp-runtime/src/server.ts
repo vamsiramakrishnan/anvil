@@ -64,6 +64,7 @@ import {
   takeProjectionArg,
   validateProjection,
 } from "./projection.js";
+import { type TaskCatalogOptions, taskCatalogView } from "./task-catalog.js";
 import { type ResultBudget, resultText, truncateResultText } from "./truncation.js";
 import {
   bindStepInput,
@@ -99,6 +100,8 @@ export interface McpBuildOptions {
    * injects a MockTransport. This is the only seam between MCP and upstream.
    */
   contextFor: (op: Operation) => ExecuteContext;
+  /** Per-principal server only. Rebuild when caller, grants or task changes; execution still rechecks authority. */
+  taskCatalog?: TaskCatalogOptions;
   /** Expose non-approved operations too (dev only). Default false (spec §17). */
   includeUnapproved?: boolean;
   /**
@@ -191,6 +194,10 @@ export interface McpBuildOptions {
  * per-request protocol features (progress.ts, `ExecuteContext.signal`).
  */
 export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpServer {
+  if (options.taskCatalog) {
+    air = taskCatalogView(air, options.taskCatalog);
+    options = { ...options, resources: [], includeUnapproved: false, disclosure: "flat" };
+  }
   const server = new McpServer(
     { name: `${air.service.id}-tools`, version: air.service.version },
     { capabilities: { tools: { listChanged: true }, resources: {} } },

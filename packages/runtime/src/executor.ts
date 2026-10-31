@@ -42,6 +42,11 @@ import {
   resolveIdempotencyKey,
 } from "./idempotency.js";
 import type { InboundIdentity } from "./inbound-identity.js";
+import {
+  assertInvocationCredentialHeaders,
+  invocationHeaderIdentity,
+  prepareInvocation,
+} from "./invocation.js";
 import { jobSecondaryKey } from "./job-index.js";
 import { checkLimits, type LimitsGate } from "./limits.js";
 import { McpRequestPolicyError, type McpUpstream, type PreparedMcpCall } from "./mcp-upstream.js";
@@ -630,7 +635,7 @@ export async function execute(
   const now = ctx.now ?? Date.now;
   const sleep = ctx.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const start = now();
-  const input = args.input ?? {};
+  let input = args.input ?? {};
   const safetyKeys = operationSafetyInputKeys(op);
   const confirm = args.confirm ?? input[safetyKeys.confirm] === true;
   const policyDecisions: string[] = [];
@@ -862,6 +867,15 @@ export async function execute(
       );
     }
 
+    const invocation = await prepareInvocation({
+      operation: op,
+      input,
+      target: { baseUrl: ctx.baseUrl, connector: ctx.connector ?? null, mcp: mcpBinding ?? null },
+      principal: principal.id,
+      traceId,
+      transform: ctx.policy?.transformInvocation,
+    });
+    input = invocation.arguments;
     await runHook(ctx.policy?.preValidate);
 
     // 1. Required inputs present (params + projected body fields / whole body).
@@ -1037,6 +1051,7 @@ export async function execute(
     };
     const replayScope = {
       ...ledgerScope,
+      ...invocationHeaderIdentity(invocation),
       principal: principalScope ?? null,
     };
     const fingerprintInput = replayFingerprintInput(op, input, carrier);
@@ -1133,6 +1148,7 @@ export async function execute(
           body: JSON.stringify({ name: mcpBinding.toolName, arguments: fingerprintInput }),
         }
       : buildRequest(op, input, ctx.baseUrl, carrier, key, ctx.protocolFacade !== undefined);
+    Object.assign(baseRequest.headers, invocation.headers);
     if (ctx.timeoutMs) baseRequest.timeoutMs = ctx.timeoutMs;
     if (ctx.signal) baseRequest.signal = ctx.signal;
 
@@ -1237,6 +1253,7 @@ export async function execute(
           }),
         );
       }
+      assertInvocationCredentialHeaders(invocation, material.headers, op.id, traceId);
       request = applyAuth(request, material);
     }
 

@@ -16,5 +16,6 @@ export * from "./page-budget.js";
 export * from "./projection.js";
 export * from "./request-guard.js";
 export * from "./server.js";
+export * from "./task-catalog.js";
 export * from "./truncation.js";
 export * from "./zodshape.js";

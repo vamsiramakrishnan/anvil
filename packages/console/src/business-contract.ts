@@ -42,6 +42,7 @@ const Run = z
 const Report = z.object({
   schemaVersion: z.literal(1),
   projectDigest: Digest,
+  tasksDigest: Digest.optional(),
   planDigest: Digest,
   evaluator: z.object({ id: z.string(), version: z.string() }),
   agent: Agent,
@@ -72,9 +73,17 @@ const Report = z.object({
       successInterval95: z.tuple([z.number(), z.number()]).nullable(),
       meanCalls: z.number().nullable(),
       meanLatencyMs: z.number().nullable(),
+      costUsd: z.number().nonnegative().nullable().optional(),
+      costPerSuccessUsd: z.number().nonnegative().nullable().optional(),
     }),
   ),
-  tokens: z.null(),
+  tokens: z
+    .object({
+      input: z.number().int().nonnegative(),
+      output: z.number().int().nonnegative(),
+      cachedInput: z.number().int().nonnegative(),
+    })
+    .nullable(),
 });
 const Job = z.object({
   id: z.string(),
