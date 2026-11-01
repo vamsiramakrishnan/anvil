@@ -1,0 +1,11 @@
+# October 30 Usage Metering addition: this endpoint decides an existing
+# temporary grant request. `decision` is its method payload, not its resource.
+# Routing names only: keep the inferred mutation, approval and retry posture.
+service:
+  name: datadog
+  display_name: Datadog API
+  owner: backtesting
+  environment: prod
+operations:
+  UpdateTemporaryGrantRequest:
+    name: { resource: temporary_grant_request, verb: decide }
