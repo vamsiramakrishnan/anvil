@@ -4,6 +4,7 @@
 //
 //   node tools/mutation/run.mjs                     all mutants
 //   node tools/mutation/run.mjs --filter import-    ids containing a substring
+//   node tools/mutation/run.mjs --shard 2/4         the 2nd of 4 slices, dealt by test set
 //   node tools/mutation/run.mjs --list              print the roster, run nothing
 //
 // A mutant "dies" when its tests fail while it is applied. A mutant that
@@ -47,15 +48,56 @@ const DEFAULT_TIMEOUT_MS = 180_000;
 let runCounter = 0; // keeps each run's json report path distinct
 
 function parseArgs(argv) {
-  const args = { filter: null, list: false, timeoutMs: DEFAULT_TIMEOUT_MS };
+  const args = { filter: null, list: false, timeoutMs: DEFAULT_TIMEOUT_MS, shard: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--filter") args.filter = argv[++i];
     else if (a === "--list") args.list = true;
     else if (a === "--timeout") args.timeoutMs = Number(argv[++i]) * 1000;
+    else if (a === "--shard") args.shard = parseShard(argv[++i]);
     else throw new Error(`unknown flag: ${a}`);
   }
   return args;
+}
+
+// `--shard N/M` gives this runner the Nth of M slices of the roster, so M
+// runners can split the gate and the slices together cover the roster exactly
+// once. Mutants are dealt by test set, not one by one: every mutant of a set
+// lands on the same shard, so each shard runs each of its baselines once
+// (dealt one by one, four shards ran 181 baselines for 95 sets). Sets go
+// largest first to the shard holding the fewest mutants, which keeps the
+// shards about the same size. The split is a function of the roster alone:
+// adding a mutant can move others between shards, which is fine, since every
+// shard runs on every change. Each shard still checks its own baselines and
+// its own guards.
+function parseShard(value) {
+  const m = /^([1-9]\d*)\/([1-9]\d*)$/.exec(value ?? "");
+  if (!m) throw new Error(`--shard wants N/M with 1 <= N <= M, got: ${value}`);
+  const index = Number(m[1]);
+  const total = Number(m[2]);
+  if (index > total) throw new Error(`--shard ${value}: N must not exceed M`);
+  return { index, total };
+}
+
+function shardOf(list, shard) {
+  if (!shard) return list;
+  const sets = new Map();
+  list.forEach((m, i) => {
+    const key = m.tests.join(" ");
+    if (!sets.has(key)) sets.set(key, []);
+    sets.get(key).push(i);
+  });
+  // Largest set first; ties keep roster order, so the deal is deterministic.
+  const groups = [...sets.values()].sort((a, b) => b.length - a.length || a[0] - b[0]);
+  const load = new Array(shard.total).fill(0);
+  const owner = new Array(list.length);
+  for (const group of groups) {
+    let lightest = 0;
+    for (let s = 1; s < shard.total; s++) if (load[s] < load[lightest]) lightest = s;
+    for (const i of group) owner[i] = lightest;
+    load[lightest] += group.length;
+  }
+  return list.filter((_, i) => owner[i] === shard.index - 1);
 }
 
 function countOccurrences(haystack, needle) {
@@ -154,11 +196,21 @@ function tail(output, lines = 25) {
 const args = parseArgs(process.argv.slice(2));
 const spec = JSON.parse(readFileSync(MUTANTS_PATH, "utf8"));
 const all = spec.mutants;
-const mutants = args.filter ? all.filter((m) => m.id.includes(args.filter)) : all;
+const matching = args.filter ? all.filter((m) => m.id.includes(args.filter)) : all;
+const mutants = shardOf(matching, args.shard);
 
 if (mutants.length === 0) {
-  console.error(args.filter ? `no mutants match --filter ${args.filter}` : "mutants.json declares no mutants");
+  console.error(
+    args.filter
+      ? `no mutants match --filter ${args.filter}`
+      : args.shard
+        ? `shard ${args.shard.index}/${args.shard.total} holds no mutants`
+        : "mutants.json declares no mutants",
+  );
   process.exit(1);
+}
+if (args.shard) {
+  console.log(`Shard ${args.shard.index}/${args.shard.total}: ${mutants.length} of ${matching.length} mutants.`);
 }
 
 if (args.list) {
