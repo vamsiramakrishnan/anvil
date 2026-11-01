@@ -15,3 +15,16 @@ service:
 operations:
   createFederatedClaim: { state: blocked }
   replaceFederatedClaim: { state: blocked }
+  # Added in upstream 5cf2dc4 (2026-10-27). The path abbreviates applications
+  # as apps; use the domain noun declared by the operationId, summary and tag.
+  getApplicationsCsvExport:
+    name: { resource: application, verb: export_csv }
+  listApplicationsBySearch:
+    name: { resource: application, verb: search }
+  # These lifecycle paths name methods, not resources called promote/rollback.
+  # The name axis changes routing only: effects, approval and idempotency stay
+  # inferred. In particular, restoring a live policy remains a gated mutation.
+  previewPolicyBranchPromotion:
+    name: { resource: policy_branch_promotion, verb: preview }
+  restoreFromHistory:
+    name: { resource: policy_branch, verb: restore }

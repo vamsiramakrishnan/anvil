@@ -1,0 +1,128 @@
+# Naming-only reduction of Okta management-minimal.yaml at
+# 5cf2dc4 (2026-10-27). Includes existing federated-claim controls. Paths, methods, operationIds, summaries and tags are
+# verbatim; unrelated schemas, examples and auth are omitted. The policy
+# restore is a mutation; this fixture never approves or executes operations.
+openapi: 3.0.3
+info:
+  title: Okta naming regression
+  version: 2026.42.1
+paths:
+  /api/v1/apps/export:
+    get:
+      operationId: getApplicationsCsvExport
+      summary: Retrieve a CSV export of filtered applications
+      tags:
+      - Application
+      responses:
+        '200':
+          description: Success
+  /api/v1/apps/search:
+    get:
+      operationId: listApplicationsBySearch
+      summary: List all applications that match search filters
+      tags:
+      - Application
+      responses:
+        '200':
+          description: Success
+  /api/v1/policies/{policyId}/branches/{branchId}/lifecycle/promote/preview:
+    get:
+      operationId: previewPolicyBranchPromotion
+      summary: Preview a policy branch promotion
+      tags:
+      - PolicyBranch
+      parameters:
+      - name: policyId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: branchId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Success
+  /api/v1/policies/{policyId}/history/{branchId}/lifecycle/rollback:
+    post:
+      operationId: restoreFromHistory
+      summary: Restore a policy branch
+      tags:
+      - PolicyBranch
+      parameters:
+      - name: policyId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: branchId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                comment:
+                  type: string
+      responses:
+        '200':
+          description: Success
+  /api/v1/apps/{appId}/federated-claims:
+    post:
+      operationId: createFederatedClaim
+      summary: Create a federated claim
+      tags:
+      - ApplicationSSOFederatedClaims
+      parameters:
+      - name: appId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expression:
+                  type: string
+                  description: Okta Expression Language expression
+      responses:
+        '200':
+          description: Success
+  /api/v1/apps/{appId}/federated-claims/{claimId}:
+    put:
+      operationId: replaceFederatedClaim
+      summary: Replace a federated claim
+      tags:
+      - ApplicationSSOFederatedClaims
+      parameters:
+      - name: appId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: claimId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                expression:
+                  type: string
+                  description: Okta Expression Language expression
+      responses:
+        '200':
+          description: Success

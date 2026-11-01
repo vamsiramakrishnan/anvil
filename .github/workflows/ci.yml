@@ -100,8 +100,8 @@ jobs:
         # SDK compiler processes share the runner with the test workers.
         run: pnpm test --concurrency=2 -- --maxWorkers=2
 
-      - name: Test enterprise corpus acquisition and accounting
-        run: pnpm exec vitest run tools/corpus/enterprise/enterprise.test.ts
+      - name: Test corpus oracles, fixtures and accounting
+        run: pnpm exec vitest run tools/corpus
 
       # This corpus is offline and deterministic, so it remains a per-change
       # gate. Network-backed corpora stay in corpus.yml.

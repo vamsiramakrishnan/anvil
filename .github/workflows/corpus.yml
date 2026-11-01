@@ -5,6 +5,12 @@ on:
     # Nightly at 03:17 UTC, away from the top-of-hour scheduler peak.
     - cron: "17 3 * * *"
   workflow_dispatch:
+  # A corpus repair needs the real gate before merge, not only the next cron.
+  pull_request:
+    paths:
+      - ".github/workflows/corpus.yml"
+      - "docs/backtesting/reproduce/**"
+      - "tools/corpus/**"
 
 permissions:
   contents: read
@@ -162,7 +168,7 @@ jobs:
       issues: write
     steps:
       - name: Open or update the corpus-regression issue
-        if: needs.corpus.result != 'success'
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.corpus.result != 'success'
         uses: actions/github-script@v7
         with:
           script: |
@@ -194,7 +200,7 @@ jobs:
               await github.rest.issues.create({ owner, repo, title: "Scheduled corpus run regressed", labels: [label], body });
             }
       - name: Close the corpus-regression issue when green again
-        if: needs.corpus.result == 'success'
+        if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && needs.corpus.result == 'success'
         uses: actions/github-script@v7
         with:
           script: |
