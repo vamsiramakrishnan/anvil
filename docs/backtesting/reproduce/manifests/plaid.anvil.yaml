@@ -5,9 +5,6 @@
 # idempotency. This mapping changes routing names only; the operation stays blocked.
 service:
   name: plaid
-  display_name: Plaid API
-  owner: backtesting
-  environment: prod
 operations:
   userTransferLimitsGet:
     name: { resource: user_transfer_limit, verb: get }
