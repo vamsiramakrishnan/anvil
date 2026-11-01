@@ -1,0 +1,1111 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Datadog API V2 Collection",
+    "version": "1.0"
+  },
+  "servers": [
+    {
+      "url": "https://{subdomain}.{site}",
+      "variables": {
+        "site": {
+          "default": "datadoghq.com",
+          "description": "The regional site for Datadog customers.",
+          "enum": [
+            "datadoghq.com",
+            "us3.datadoghq.com",
+            "us5.datadoghq.com",
+            "ap1.datadoghq.com",
+            "ap2.datadoghq.com",
+            "uk1.datadoghq.com",
+            "datadoghq.eu",
+            "ddog-gov.com",
+            "us2.ddog-gov.com",
+            "uk1.datadoghq.com"
+          ]
+        },
+        "subdomain": {
+          "default": "api",
+          "description": "The subdomain where the API is deployed."
+        }
+      }
+    },
+    {
+      "url": "{protocol}://{name}",
+      "variables": {
+        "name": {
+          "default": "api.datadoghq.com",
+          "description": "Full site DNS name."
+        },
+        "protocol": {
+          "default": "https",
+          "description": "The protocol for accessing the API."
+        }
+      }
+    },
+    {
+      "url": "https://{subdomain}.{site}",
+      "variables": {
+        "site": {
+          "default": "datadoghq.com",
+          "description": "Any Datadog deployment."
+        },
+        "subdomain": {
+          "default": "api",
+          "description": "The subdomain where the API is deployed."
+        }
+      }
+    }
+  ],
+  "security": [
+    {
+      "apiKeyAuth": [],
+      "appKeyAuth": []
+    },
+    {
+      "AuthZ": []
+    }
+  ],
+  "paths": {
+    "/api/v2/usage/admin/temporary-grant-requests/{request_id}/decision": {
+      "post": {
+        "description": "Approve or deny the submitted terms, which are immutable. Approval atomically writes the grant, audit record, and request decision. An expired request can't be approved. Requires the Billing Edit permission. Requires an authenticated human user. Service-account credentials aren't supported. Request status remains approved after the grant's expiry, revocation, or replacement.",
+        "operationId": "UpdateTemporaryGrantRequest",
+        "parameters": [
+          {
+            "description": "The temporary grant request UUID.",
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "description": "The request UUID.",
+              "example": "12345678-1234-1234-1234-123456789012",
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "default": {
+                  "value": {
+                    "data": {
+                      "attributes": {
+                        "decision": "approved"
+                      },
+                      "id": "12345678-1234-1234-1234-123456789012",
+                      "type": "temporary_grant_requests"
+                    }
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/TemporaryGrantRequestDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "default": {
+                    "value": {
+                      "data": {
+                        "attributes": {
+                          "created_at": "2028-02-16T00:00:00Z",
+                          "decided_at": "2028-02-16T01:00:00Z",
+                          "decided_by_user_id": "23456789-2345-2345-2345-234567890123",
+                          "entity_key": "user_handle:jane@example.com",
+                          "expires_at": "2028-03-01T00:00:00Z",
+                          "justification": "Credits needed to finish the incident investigation.",
+                          "quota_namespace": "ai_credits",
+                          "requested_by_user_id": "12345678-1234-1234-1234-123456789012",
+                          "status": "approved",
+                          "total": 200
+                        },
+                        "id": "34567890-3456-3456-3456-345678901234",
+                        "type": "temporary_grant_requests"
+                      }
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/TemporaryGrantRequestResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequestsResponse"
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": [],
+            "appKeyAuth": []
+          },
+          {
+            "AuthZ": [
+              "billing_edit"
+            ]
+          }
+        ],
+        "summary": "Decide a temporary grant request",
+        "tags": [
+          "Usage Metering"
+        ],
+        "x-permission": {
+          "operator": "OR",
+          "permissions": [
+            "billing_edit"
+          ]
+        },
+        "x-unstable": "**Note**: This endpoint is in preview and is subject to change.\nIf you have any feedback, contact [Datadog support](https://docs.datadoghq.com/help/)."
+      }
+    },
+    "/api/v2/usage/admin/temporary-grant-requests/{request_id}": {
+      "get": {
+        "description": "Read an organization request, justification, decision, and linked grant state. Requires Billing Edit. Requires an authenticated human user. Service-account credentials are unsupported. Request status remains approved after expiry, revocation, or replacement.",
+        "operationId": "GetTemporaryGrantRequest",
+        "parameters": [
+          {
+            "description": "The temporary grant request UUID.",
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "description": "The request UUID.",
+              "example": "12345678-1234-1234-1234-123456789012",
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "default": {
+                    "value": {
+                      "data": {
+                        "attributes": {
+                          "created_at": "2028-02-16T00:00:00Z",
+                          "entity_key": "user_handle:jane@example.com",
+                          "expires_at": "2028-03-01T00:00:00Z",
+                          "justification": "Credits needed to finish the incident investigation.",
+                          "quota_namespace": "ai_credits",
+                          "requested_by_user_id": "12345678-1234-1234-1234-123456789012",
+                          "status": "pending",
+                          "total": 200
+                        },
+                        "id": "34567890-3456-3456-3456-345678901234",
+                        "type": "temporary_grant_requests"
+                      }
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/TemporaryGrantRequestResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequestsResponse"
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": [],
+            "appKeyAuth": []
+          },
+          {
+            "AuthZ": [
+              "billing_edit"
+            ]
+          }
+        ],
+        "summary": "Get an organization temporary grant request",
+        "tags": [
+          "Usage Metering"
+        ],
+        "x-permission": {
+          "operator": "OR",
+          "permissions": [
+            "billing_edit"
+          ]
+        },
+        "x-unstable": "**Note**: This endpoint is in preview and is subject to change.\nIf you have any feedback, contact [Datadog support](https://docs.datadoghq.com/help/)."
+      }
+    },
+    "/api/v2/usage/temporary-grant-requests/{request_id}": {
+      "delete": {
+        "description": "Cancel a pending request that you own. The request history is kept, and no grant is created or revoked. Requires an authenticated human user. Service-account credentials are unsupported.",
+        "operationId": "DeleteTemporaryGrantRequest",
+        "parameters": [
+          {
+            "description": "The temporary grant request UUID.",
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "description": "The request UUID.",
+              "example": "12345678-1234-1234-1234-123456789012",
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequestsResponse"
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": [],
+            "appKeyAuth": []
+          },
+          {
+            "AuthZ": [
+              "assistant_access"
+            ]
+          },
+          {
+            "AuthZ": [
+              "bits_dev_write"
+            ]
+          },
+          {
+            "AuthZ": [
+              "bits_investigations_write"
+            ]
+          },
+          {
+            "AuthZ": [
+              "bits_security_analyst_write"
+            ]
+          },
+          {
+            "AuthZ": [
+              "agent_builder_run"
+            ]
+          },
+          {
+            "AuthZ": [
+              "billing_edit"
+            ]
+          }
+        ],
+        "summary": "Cancel your temporary grant request",
+        "tags": [
+          "Usage Metering"
+        ],
+        "x-permission": {
+          "operator": "OR",
+          "permissions": [
+            "assistant_access",
+            "bits_dev_write",
+            "bits_investigations_write",
+            "bits_security_analyst_write",
+            "agent_builder_run",
+            "billing_edit"
+          ]
+        },
+        "x-unstable": "**Note**: This endpoint is in preview and is subject to change.\nIf you have any feedback, contact [Datadog support](https://docs.datadoghq.com/help/)."
+      },
+      "get": {
+        "description": "Read an owned request, its decision, and its linked grant state. Requires an authenticated human user. Service-account credentials are unsupported. Request status remains approved after expiry, revocation, or replacement.",
+        "operationId": "GetMyTemporaryGrantRequest",
+        "parameters": [
+          {
+            "description": "The temporary grant request UUID.",
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "description": "The request UUID.",
+              "example": "12345678-1234-1234-1234-123456789012",
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "default": {
+                    "value": {
+                      "data": {
+                        "attributes": {
+                          "created_at": "2028-02-16T00:00:00Z",
+                          "entity_key": "user_handle:jane@example.com",
+                          "expires_at": "2028-03-01T00:00:00Z",
+                          "justification": "Credits needed to finish the incident investigation.",
+                          "quota_namespace": "ai_credits",
+                          "requested_by_user_id": "12345678-1234-1234-1234-123456789012",
+                          "status": "pending",
+                          "total": 200
+                        },
+                        "id": "34567890-3456-3456-3456-345678901234",
+                        "type": "temporary_grant_requests"
+                      }
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/TemporaryGrantRequestResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JSONAPIErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequestsResponse"
+          }
+        },
+        "security": [
+          {
+            "apiKeyAuth": [],
+            "appKeyAuth": []
+          },
+          {
+            "AuthZ": [
+              "assistant_access"
+            ]
+          },
+          {
+            "AuthZ": [
+              "bits_dev_write"
+            ]
+          },
+          {
+            "AuthZ": [
+              "bits_investigations_write"
+            ]
+          },
+          {
+            "AuthZ": [
+              "bits_security_analyst_write"
+            ]
+          },
+          {
+            "AuthZ": [
+              "agent_builder_run"
+            ]
+          },
+          {
+            "AuthZ": [
+              "billing_edit"
+            ]
+          }
+        ],
+        "summary": "Get your temporary grant request",
+        "tags": [
+          "Usage Metering"
+        ],
+        "x-permission": {
+          "operator": "OR",
+          "permissions": [
+            "assistant_access",
+            "bits_dev_write",
+            "bits_investigations_write",
+            "bits_security_analyst_write",
+            "agent_builder_run",
+            "billing_edit"
+          ]
+        },
+        "x-unstable": "**Note**: This endpoint is in preview and is subject to change.\nIf you have any feedback, contact [Datadog support](https://docs.datadoghq.com/help/)."
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "AuthZ": {
+        "description": "This API uses OAuth 2 with the implicit grant flow.",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "/oauth2/v1/authorize",
+            "scopes": {
+              "agent_builder_run": "Run agents created with Agent Builder.",
+              "ai_gateway_config_read": "View AI Gateway configuration.",
+              "ai_gateway_config_write": "Create, update, and delete AI Gateway configuration.",
+              "ai_gateway_usage": "Use AI Gateway and view configuration applicable to the authenticated user.",
+              "ai_guard_evaluate": "Evaluate conversations for security threats with AI Guard.",
+              "apm_api_catalog_read": "View API catalog and API definitions.",
+              "apm_api_catalog_write": "Add, modify, and delete API catalog definitions.",
+              "apm_read": "Read and query APM and Trace Analytics.",
+              "apm_service_catalog_read": "View service catalog and service definitions.",
+              "apm_service_catalog_write": "Add, modify, and delete service catalog definitions when those definitions are maintained by Datadog.",
+              "appsec_vm_read": "View infrastructure, application code, and library vulnerability findings.",
+              "assistant_access": "Access Bits Chat.",
+              "aws_configurations_manage": "Manage AWS integration account configurations and related integration settings.",
+              "billing_edit": "Edit your organization's billing information.",
+              "billing_read": "View your organization's billing information.",
+              "bits_dev_write": "Create and interact with Bits Code sessions.",
+              "bits_investigations_read": "View Bits AI investigations.",
+              "bits_investigations_write": "Create and manage Bits AI investigations.",
+              "bits_security_analyst_write": "Create and manage Bits AI Security Analyst investigations.",
+              "cases_read": "View Cases.",
+              "cases_shared_settings_write": "Update shared case management settings.",
+              "cases_write": "Create and update cases.",
+              "ci_visibility_pipelines_write": "Create CI Visibility pipeline spans using the API.",
+              "ci_visibility_read": "View CI Visibility.",
+              "cloud_cost_management_read": "View Cloud Cost pages and the cloud cost data source in dashboards and notebooks. For more details, see the Cloud Cost Management docs.",
+              "cloud_cost_management_write": "Configure cloud cost accounts and global customizations. For more details, see the Cloud Cost Management docs.",
+              "code_analysis_read": "View Code Analysis.",
+              "code_coverage_read": "View Code Coverage.",
+              "continuous_profiler_pgo_read": "Read and query Continuous Profiler data for Profile-Guided Optimization (PGO).",
+              "coterm_read": "Read terminal recordings.",
+              "coterm_write": "Write terminal recordings.",
+              "create_webhooks": "Create webhooks integrations.",
+              "dashboards_embed_share": "Create, modify, and delete shared dashboards with share type 'embed'.",
+              "dashboards_invite_share": "Create, modify, and delete shared dashboards with share type 'invite'.",
+              "dashboards_public_share": "Generate public and authenticated links to share dashboards or embeddable graphs externally.",
+              "dashboards_read": "View dashboards.",
+              "dashboards_write": "Create and change dashboards.",
+              "data_scanner_read": "View Data Scanner configurations.",
+              "data_scanner_write": "Edit Data Scanner configurations.",
+              "embeddable_graphs_share": "Generate public links to share embeddable graphs externally.",
+              "error_tracking_read": "Read Error Tracking data.",
+              "error_tracking_write": "Edit Error Tracking issues.",
+              "event_correlation_config_read": "View event correlation configurations.",
+              "event_correlation_config_write": "Create and update event correlation configurations.",
+              "events_read": "Read Events data.",
+              "feature_flag_approvals_override": "Override Feature Flag Approvals.",
+              "feature_flag_config_read": "View Feature Flag Configurations.",
+              "feature_flag_config_write": "Edit Feature Flag Configurations.",
+              "feature_flag_environment_config_read": "View Feature Flag Environment settings.",
+              "feature_flag_environment_config_write": "Modify Feature Flag Environment settings.",
+              "hosts_read": "List hosts and their attributes.",
+              "incident_notification_settings_read": "View Incident Notification Rule Settings.",
+              "incident_notification_settings_write": "Configure Incidents Notification Rule settings.",
+              "incident_read": "View incidents in Datadog.",
+              "incident_settings_read": "View Incident Settings.",
+              "incident_settings_write": "Configure Incident Settings.",
+              "incident_write": "Create, view, and manage incidents in Datadog.",
+              "integrations_read": "View configured integrations and their settings.",
+              "logs_modify_indexes": "Modify log indexes, filters, exclusion filters, and configurations.",
+              "logs_read_data": "Read log data.",
+              "logs_read_index_data": "Read indexed log data.",
+              "manage_integrations": "Install, uninstall, and configure integrations.",
+              "metrics_read": "View custom metrics.",
+              "monitors_downtime": "Set downtimes to suppress alerts from any monitor in an organization. Mute and unmute monitors. The ability to write monitors is not required to set downtimes.",
+              "monitors_read": "View monitors.",
+              "monitors_write": "Edit, delete, and resolve individual monitors.",
+              "network_connections_read": "Read cloud network connections.",
+              "org_connections_read": "Read cross organization connections.",
+              "org_connections_write": "Create, edit, and delete cross organization connections.",
+              "org_management": "Edit org configurations, including authentication and certain security preferences such as configuring SAML, renaming an org, configuring allowed login methods, creating child orgs, subscribing & unsubscribing from apps in the marketplace, and enabling & disabling Remote Configuration for the entire organization.",
+              "product_analytics_experiments_read": "View Product Analytics Experiments.",
+              "product_analytics_experiments_write": "Create, edit, and delete Product Analytics Experiments.",
+              "product_analytics_metrics_read": "View Product Analytics Metrics.",
+              "product_analytics_metrics_write": "Create, edit, and delete Product Analytics Metrics.",
+              "product_analytics_settings_read": "View Product Analytics Settings.",
+              "product_analytics_settings_write": "Edit Product Analytics Settings.",
+              "product_analytics_warehouse_model_write": "Create, edit, and delete Product Analytics Warehouse Models.",
+              "repo_info_read": "View data from Git repositories.",
+              "security_comments_read": "Read comments of vulnerabilities.",
+              "security_monitoring_critical_assets_read": "Read Critical Assets.",
+              "security_monitoring_critical_assets_write": "Write Critical Assets.",
+              "security_monitoring_filters_read": "Read Security Filters.",
+              "security_monitoring_filters_write": "Create, edit, and delete Security Filters.",
+              "security_monitoring_findings_read": "View a list of findings that include both misconfigurations and identity risks.",
+              "security_monitoring_rules_read": "Read Detection Rules.",
+              "security_monitoring_rules_write": "Create and edit Detection Rules.",
+              "security_monitoring_signals_read": "View Security Signals.",
+              "security_monitoring_suppressions_read": "Read Rule Suppressions.",
+              "security_monitoring_suppressions_write": "Write Rule Suppressions.",
+              "security_pipelines_read": "View Security Pipelines.",
+              "security_pipelines_write": "Create, edit, and delete CSM Security Pipelines.",
+              "siem_entities_read": "View Cloud SIEM entities.",
+              "slos_corrections": "Apply, edit, and delete SLO status corrections. A user with this permission can make status corrections, even if they do not have permission to edit those SLOs.",
+              "slos_read": "View SLOs and status corrections.",
+              "slos_write": "Create, edit, and delete SLOs.",
+              "synthetics_global_variable_read": "View, search, and use Synthetics global variables.",
+              "synthetics_global_variable_write": "Create, edit, and delete global variables for Synthetics.",
+              "synthetics_private_location_read": "View, search, and use Synthetics private locations.",
+              "synthetics_private_location_write": "Create and delete private locations in addition to having access to the associated installation guidelines.",
+              "synthetics_read": "List and view configured Synthetic tests and test results.",
+              "synthetics_write": "Create, edit, and delete Synthetic tests.",
+              "teams_manage": "Manage Teams. Create, delete, rename, and edit metadata of all Teams. To control Team membership across all Teams, use the User Access Manage permission.",
+              "teams_read": "Read Teams data. A User with this permission can view Team names, metadata, and which Users are on each Team.",
+              "test_optimization_read": "View Test Optimization.",
+              "test_optimization_settings_write": "Update service settings in Test Optimization.",
+              "test_optimization_write": "Update flaky tests from Flaky Tests Management of Test Optimization.",
+              "timeseries_query": "Query Timeseries data.",
+              "usage_read": "View your organization's usage and usage attribution.",
+              "user_access_invite": "Invite other users to your organization.",
+              "user_access_manage": "Disable users, manage user roles, manage SAML-to-role mappings, and configure logs restriction queries.",
+              "user_access_read": "View users and their roles and settings.",
+              "workflows_read": "View workflows.",
+              "workflows_run": "Run workflows.",
+              "workflows_write": "Create, edit, and delete workflows."
+            },
+            "tokenUrl": "/oauth2/v1/token"
+          }
+        },
+        "type": "oauth2",
+        "x-env-name": "DD_BEARER_TOKEN"
+      },
+      "apiKeyAuth": {
+        "description": "Your Datadog API Key.",
+        "in": "header",
+        "name": "DD-API-KEY",
+        "type": "apiKey",
+        "x-env-name": "DD_API_KEY"
+      },
+      "appKeyAuth": {
+        "description": "Your Datadog APP Key.",
+        "in": "header",
+        "name": "DD-APPLICATION-KEY",
+        "type": "apiKey",
+        "x-env-name": "DD_APP_KEY"
+      },
+      "bearerAuth": {
+        "scheme": "bearer",
+        "type": "http",
+        "x-env-name": "DD_BEARER_TOKEN"
+      }
+    },
+    "schemas": {
+      "TemporaryGrantRequestDecisionRequest": {
+        "description": "Approve or deny a pending request.",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TemporaryGrantRequestDecisionData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "TemporaryGrantRequestDecisionData": {
+        "description": "A decision on a pending request.",
+        "properties": {
+          "attributes": {
+            "$ref": "#/components/schemas/TemporaryGrantRequestDecisionAttributes"
+          },
+          "id": {
+            "description": "Request UUID. Must match request_id in the path. Missing or mismatched IDs return 400 Bad Request.",
+            "example": "12345678-1234-1234-1234-123456789012",
+            "format": "uuid",
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/TemporaryGrantRequestType"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "attributes"
+        ],
+        "type": "object"
+      },
+      "TemporaryGrantRequestDecisionAttributes": {
+        "additionalProperties": false,
+        "description": "Binary decision. Overrides, reason fields, and unknown attributes are rejected, including null values.",
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/TemporaryGrantRequestDecision"
+          }
+        },
+        "required": [
+          "decision"
+        ],
+        "type": "object"
+      },
+      "TemporaryGrantRequestDecision": {
+        "description": "Approve the exact submitted total and expiry, or deny the request.",
+        "enum": [
+          "approved",
+          "denied"
+        ],
+        "example": "approved",
+        "type": "string",
+        "x-enum-varnames": [
+          "APPROVED",
+          "DENIED"
+        ]
+      },
+      "TemporaryGrantRequestType": {
+        "default": "temporary_grant_requests",
+        "description": "The temporary grant request resource type.",
+        "enum": [
+          "temporary_grant_requests"
+        ],
+        "example": "temporary_grant_requests",
+        "type": "string",
+        "x-enum-varnames": [
+          "TEMPORARY_GRANT_REQUESTS"
+        ]
+      },
+      "TemporaryGrantRequestResponse": {
+        "description": "A single temporary grant request.",
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TemporaryGrantRequestData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "type": "object"
+      },
+      "TemporaryGrantRequestData": {
+        "description": "A temporary grant request resource.",
+        "properties": {
+          "attributes": {
+            "$ref": "#/components/schemas/TemporaryGrantRequestAttributes"
+          },
+          "id": {
+            "description": "Server-generated request UUID.",
+            "example": "12345678-1234-1234-1234-123456789012",
+            "format": "uuid",
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/TemporaryGrantRequestType"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "attributes"
+        ],
+        "type": "object"
+      },
+      "TemporaryGrantRequestAttributes": {
+        "description": "Request history and the linked grant state. List and detail reads include grant_state for approved requests. Decision responses record the decision. Read the request for current grant state.",
+        "properties": {
+          "created_at": {
+            "description": "When the request was submitted.",
+            "example": "2028-02-16T00:00:00Z",
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_at": {
+            "description": "When the decision or cancellation was recorded.",
+            "example": "2028-02-16T00:00:00Z",
+            "format": "date-time",
+            "type": "string"
+          },
+          "decided_by_user_id": {
+            "description": "UUID of the reviewer, or of the requester if the request was canceled.",
+            "example": "12345678-1234-1234-1234-123456789012",
+            "format": "uuid",
+            "type": "string"
+          },
+          "entity_key": {
+            "description": "The requester identity resolved by the server.",
+            "example": "user_handle:jane@example.com",
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "Immutable exclusive expiry, normalized to UTC microsecond precision.",
+            "example": "2028-02-16T00:00:00Z",
+            "format": "date-time",
+            "type": "string"
+          },
+          "grant_state": {
+            "$ref": "#/components/schemas/TemporaryGrantRequestGrantState"
+          },
+          "justification": {
+            "description": "Reason for requesting temporary credits. Trimmed and limited to 4096 UTF-8 bytes.",
+            "example": "Credits needed to finish the incident investigation.",
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "quota_namespace": {
+            "description": "The quota namespace. Only AI credits are supported.",
+            "example": "ai_credits",
+            "type": "string"
+          },
+          "requested_by_user_id": {
+            "description": "UUID of the authenticated requester.",
+            "example": "12345678-1234-1234-1234-123456789012",
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TemporaryGrantRequestStatus"
+          },
+          "total": {
+            "description": "Target monthly AI credit limit in positive whole credits, not additional credits. Fractional credits are not accepted.",
+            "example": 200,
+            "format": "int64",
+            "maximum": 9223372036854,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "quota_namespace",
+          "entity_key",
+          "requested_by_user_id",
+          "total",
+          "justification",
+          "expires_at",
+          "status",
+          "created_at"
+        ],
+        "type": "object"
+      },
+      "TemporaryGrantRequestGrantState": {
+        "description": "Current state of the grant associated with an approved request. Replaced means a newer grant superseded this grant. The newer grant might no longer be active. This field is absent for requests that weren't approved.",
+        "enum": [
+          "active",
+          "expired",
+          "revoked",
+          "replaced"
+        ],
+        "example": "active",
+        "type": "string",
+        "x-enum-varnames": [
+          "ACTIVE",
+          "EXPIRED",
+          "REVOKED",
+          "REPLACED"
+        ]
+      },
+      "TemporaryGrantRequestStatus": {
+        "description": "The durable request decision, independent of whether its grant is still active.",
+        "enum": [
+          "pending",
+          "approved",
+          "denied",
+          "cancelled"
+        ],
+        "example": "pending",
+        "type": "string",
+        "x-enum-varnames": [
+          "PENDING",
+          "APPROVED",
+          "DENIED",
+          "CANCELLED"
+        ]
+      },
+      "JSONAPIErrorResponse": {
+        "description": "API error response.",
+        "properties": {
+          "errors": {
+            "description": "A list of errors.",
+            "items": {
+              "$ref": "#/components/schemas/JSONAPIErrorItem"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "errors"
+        ],
+        "type": "object"
+      },
+      "JSONAPIErrorItem": {
+        "description": "API error response body",
+        "properties": {
+          "detail": {
+            "description": "A human-readable explanation specific to this occurrence of the error.",
+            "example": "Missing required attribute in body",
+            "type": "string"
+          },
+          "meta": {
+            "additionalProperties": {},
+            "description": "Non-standard meta-information about the error",
+            "type": "object"
+          },
+          "source": {
+            "$ref": "#/components/schemas/JSONAPIErrorItemSource"
+          },
+          "status": {
+            "description": "Status code of the response.",
+            "example": "400",
+            "type": "string"
+          },
+          "title": {
+            "description": "Short human-readable summary of the error.",
+            "example": "Bad Request",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "JSONAPIErrorItemSource": {
+        "description": "References to the source of the error.",
+        "properties": {
+          "header": {
+            "description": "A string indicating the name of a single request header which caused the error.",
+            "example": "Authorization",
+            "type": "string"
+          },
+          "parameter": {
+            "description": "A string indicating which URI query parameter caused the error.",
+            "example": "limit",
+            "type": "string"
+          },
+          "pointer": {
+            "description": "A JSON pointer to the value in the request document that caused the error.",
+            "example": "/data/attributes/title",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "APIErrorResponse": {
+        "description": "API error response.",
+        "properties": {
+          "errors": {
+            "description": "A list of errors.",
+            "example": [
+              "Bad Request"
+            ],
+            "items": {
+              "description": "A list of items.",
+              "example": "Bad Request",
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "errors"
+        ],
+        "type": "object"
+      }
+    },
+    "responses": {
+      "TooManyRequestsResponse": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/APIErrorResponse"
+            }
+          }
+        },
+        "description": "Too many requests"
+      }
+    }
+  },
+  "x-anvil-fixture-source": {
+    "repository": "DataDog/datadog-api-client-go",
+    "revision": "75501867b7c57b8b93e72c4c744d4acb0deb3735",
+    "path": ".generator/schemas/v2/openapi.yaml",
+    "reduction": "Selected paths and their transitive local references; info reduced to title/version."
+  }
+}
