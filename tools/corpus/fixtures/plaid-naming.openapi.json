@@ -1,0 +1,1154 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "The Plaid API",
+    "version": "2020-09-14_1.792.1"
+  },
+  "servers": [
+    {
+      "description": "Production",
+      "url": "https://production.plaid.com"
+    },
+    {
+      "description": "Sandbox",
+      "url": "https://sandbox.plaid.com"
+    }
+  ],
+  "security": [
+    {
+      "clientId": [],
+      "secret": [],
+      "plaidVersion": []
+    }
+  ],
+  "paths": {
+    "/user/transfer/limits/get": {
+      "x-hidden-from-docs": true,
+      "post": {
+        "tags": [
+          "plaid"
+        ],
+        "x-hidden-from-docs": true,
+        "summary": "Retrieve a user's transfer limits",
+        "externalDocs": {
+          "url": "/api/users/#usertransferlimitsget"
+        },
+        "description": "Retrieve the user's persisted Guaranteed ACH transaction limit and configured daily, weekly, and monthly ceilings. Amounts are returned as decimal strings in dollars with two digits of precision and an ISO currency code. A transaction limit is computed when no active limit exists.",
+        "operationId": "userTransferLimitsGet",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserTransferLimitsGetResponse"
+                },
+                "examples": {
+                  "example-1": {
+                    "value": {
+                      "guarantee_limits": {
+                        "transaction_limit": {
+                          "value": "150.25",
+                          "iso_currency_code": "USD"
+                        },
+                        "daily_limit": {
+                          "value": "5000.00",
+                          "iso_currency_code": "USD"
+                        },
+                        "weekly_limit": {
+                          "value": "10000.00",
+                          "iso_currency_code": "USD"
+                        },
+                        "monthly_limit": null
+                      },
+                      "request_id": "mdqfuVxeoza6mhu"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaidError"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserTransferLimitsGetRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/institutions/search": {
+      "post": {
+        "tags": [
+          "plaid"
+        ],
+        "summary": "Search institutions",
+        "externalDocs": {
+          "url": "/api/institutions/#institutionssearch"
+        },
+        "operationId": "institutionsSearch",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstitutionsSearchResponse"
+                },
+                "examples": {
+                  "example-1": {
+                    "value": {
+                      "institutions": [
+                        {
+                          "country_codes": [
+                            "US"
+                          ],
+                          "institution_id": "ins_109513",
+                          "name": "Theoretical Bank",
+                          "oauth": true,
+                          "connection_availability": "SUPPORTED",
+                          "products": [
+                            "assets",
+                            "auth",
+                            "balance",
+                            "cra_lend_score",
+                            "cra_plaid_credit_score",
+                            "identity",
+                            "identity_match",
+                            "income",
+                            "pay_by_bank",
+                            "processor_payments",
+                            "recurring_transactions",
+                            "transactions",
+                            "transfer"
+                          ],
+                          "routing_numbers": [
+                            "031101270",
+                            "103100194",
+                            "103112357"
+                          ]
+                        }
+                      ],
+                      "request_id": "QheuqaazREmq9xp"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PlaidError"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "description": "Returns a JSON response containing details for institutions that match the query parameters, up to a maximum of ten institutions per query. Institutions that Plaid does not support for new connections are not included in search results, but can still be retrieved by ID with `/institutions/get_by_id`.\n\nVersioning note: API versions 2019-05-29 and earlier allow use of the `public_key` parameter instead of the `client_id` and `secret` parameters to authenticate to this endpoint. The `public_key` parameter has since been deprecated; all customers are encouraged to use `client_id` and `secret` instead.\n",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InstitutionsSearchRequest"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "clientId": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "PLAID-CLIENT-ID"
+      },
+      "secret": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "PLAID-SECRET"
+      },
+      "plaidVersion": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "Plaid-Version"
+      },
+      "oauth2": {
+        "type": "oauth2",
+        "description": "The Plaid API supports client credentials, authorization code, and custom delegation flows.",
+        "flows": {
+          "clientCredentials": {
+            "tokenUrl": "https://api.plaid.com/oauth2/apiv2/token",
+            "scopes": {
+              "cra:read": "Read CRA report data.",
+              "user:write": "Write user data.",
+              "item:read": "Read Item data.",
+              "link:read": "Read Link session results.",
+              "link:write": "Create Link tokens.",
+              "item:write": "Exchange a public token for an access token.",
+              "auth:read": "Read Auth data.",
+              "accounts:read": "Read account data.",
+              "identity:read": "Read Identity data.",
+              "transactions:read": "Read Transactions data.",
+              "issues:read": "Read institution issue data.",
+              "issues:write": "Manage institution issue subscriptions."
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "UserTransferLimitsGetResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "x-hidden-from-docs": true,
+        "description": "UserTransferLimitsGetResponse defines the response schema for `/user/transfer/limits/get`.",
+        "properties": {
+          "guarantee_limits": {
+            "$ref": "#/components/schemas/UserGuaranteeLimits"
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/RequestID"
+          }
+        },
+        "required": [
+          "guarantee_limits",
+          "request_id"
+        ]
+      },
+      "UserGuaranteeLimits": {
+        "type": "object",
+        "additionalProperties": true,
+        "x-hidden-from-docs": true,
+        "description": "The user's Guaranteed ACH debit limits. Daily, weekly, and monthly limits are configured ceilings, not remaining capacity. Each rolling limit is `null` when no ceiling is enabled for that window.",
+        "properties": {
+          "transaction_limit": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/UserTransferLimitAmount"
+              },
+              {
+                "description": "The user's persisted per-transaction guarantee limit. A zero-dollar limit is returned with a value of `\"0.00\"`."
+              }
+            ]
+          },
+          "daily_limit": {
+            "$ref": "#/components/schemas/UserTransferLimitAmountNullable"
+          },
+          "weekly_limit": {
+            "$ref": "#/components/schemas/UserTransferLimitAmountNullable"
+          },
+          "monthly_limit": {
+            "$ref": "#/components/schemas/UserTransferLimitAmountNullable"
+          }
+        },
+        "required": [
+          "transaction_limit",
+          "daily_limit",
+          "weekly_limit",
+          "monthly_limit"
+        ]
+      },
+      "UserTransferLimitAmount": {
+        "type": "object",
+        "additionalProperties": true,
+        "x-hidden-from-docs": true,
+        "description": "A transfer limit amount and its currency.",
+        "properties": {
+          "value": {
+            "type": "string",
+            "description": "The limit in dollars, formatted as a decimal string with two digits of precision (for example, `\"150.25\"` represents $150.25).",
+            "example": "150.25"
+          },
+          "iso_currency_code": {
+            "type": "string",
+            "description": "The ISO-4217 currency code of the limit. Currently always `USD`.",
+            "example": "USD"
+          }
+        },
+        "required": [
+          "value",
+          "iso_currency_code"
+        ]
+      },
+      "UserTransferLimitAmountNullable": {
+        "description": "A transfer limit amount and its currency, or `null` when the limit is not configured.",
+        "x-hidden-from-docs": true,
+        "nullable": true,
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/UserTransferLimitAmount"
+          },
+          {
+            "type": "object",
+            "additionalProperties": true
+          }
+        ]
+      },
+      "RequestID": {
+        "title": "RequestID",
+        "type": "string",
+        "description": "A unique identifier for the request, which can be used for troubleshooting. This identifier, like all Plaid identifiers, is case sensitive."
+      },
+      "PlaidError": {
+        "description": "Errors are identified by `error_code` and categorized by `error_type`. Use these in preference to HTTP status codes to identify and handle specific errors. HTTP status codes are set and provide the broadest categorization of errors: 4xx codes are for developer- or user-related errors, and 5xx codes are for Plaid-related errors, and the status will be 2xx in non-error cases. An Item with a non-`null` error object will only be part of an API response when calling `/item/get` to view Item status. Otherwise, error fields will be `null` if no error has occurred; if an error has occurred, an error code will be returned instead.",
+        "type": "object",
+        "additionalProperties": true,
+        "title": "Error",
+        "nullable": true,
+        "properties": {
+          "error_type": {
+            "$ref": "#/components/schemas/PlaidErrorType"
+          },
+          "error_code": {
+            "description": "The particular error code. Safe for programmatic use.",
+            "type": "string"
+          },
+          "error_code_reason": {
+            "type": "string",
+            "nullable": true,
+            "description": "The specific reason for the error code. Currently, reasons are only supported for OAuth-based item errors; the field is omitted otherwise. Safe for programmatic use.\n\nPossible values:\n\n`OAUTH_INVALID_TOKEN`: The user's OAuth connection to this institution has been invalidated.\n\n`OAUTH_CONSENT_EXPIRED`: The user's access consent for this OAuth connection to this institution has expired.\n\n`OAUTH_USER_REVOKED`: The user's OAuth connection to this institution is invalid because the user revoked their connection."
+          },
+          "error_message": {
+            "description": "A developer-friendly representation of the error code. This may change over time and is not safe for programmatic use.",
+            "type": "string"
+          },
+          "display_message": {
+            "description": "A user-friendly representation of the error code. `null` if the error is not related to user action.\n\nThis may change over time and is not safe for programmatic use.",
+            "type": "string",
+            "nullable": true
+          },
+          "request_id": {
+            "type": "string",
+            "description": "A unique ID identifying the request, to be used for troubleshooting purposes. This field will be omitted in errors provided by webhooks."
+          },
+          "causes": {
+            "type": "array",
+            "description": "In this product, a request can pertain to more than one Item. If an error is returned for such a request, `causes` will return an array of errors containing a breakdown of these errors on the individual Item level, if any can be identified.\n\n`causes` will be provided for the `error_type` `ASSET_REPORT_ERROR` or `CHECK_REPORT_ERROR`, and for the `USER_ERROR` codes `USER_ITEM_ASSOCIATION_FAILED` and `USER_ITEM_REMOVAL_FAILED`. `causes` will also not be populated inside an error nested within a `warning` object.",
+            "items": {}
+          },
+          "status": {
+            "type": "integer",
+            "description": "The HTTP status code associated with the error. This will only be returned in the response body when the error information is provided via a webhook.",
+            "nullable": true
+          },
+          "documentation_url": {
+            "type": "string",
+            "description": "The URL of a Plaid documentation page with more information about the error"
+          },
+          "suggested_action": {
+            "type": "string",
+            "nullable": true,
+            "description": "Suggested steps for resolving the error"
+          },
+          "required_account_subtypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "A list of the account subtypes that were requested via the `account_filters` parameter in `/link/token/create`. Currently only populated for `NO_ACCOUNTS` errors from Items with `investments_auth` as an enabled product.\n"
+          },
+          "provided_account_subtypes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "A list of the account subtypes that were extracted but did not match the requested subtypes via the `account_filters` parameter in `/link/token/create`. Currently only populated for `NO_ACCOUNTS` errors from Items with `investments_auth` as an enabled product.\n"
+          }
+        },
+        "required": [
+          "error_type",
+          "error_code",
+          "error_message",
+          "display_message"
+        ]
+      },
+      "PlaidErrorType": {
+        "title": "PlaidErrorType",
+        "type": "string",
+        "description": "A broad categorization of the error. Safe for programmatic use.",
+        "enum": [
+          "INVALID_REQUEST",
+          "INVALID_RESULT",
+          "INVALID_INPUT",
+          "INSTITUTION_ERROR",
+          "RATE_LIMIT_EXCEEDED",
+          "API_ERROR",
+          "ITEM_ERROR",
+          "ASSET_REPORT_ERROR",
+          "BASE_REPORT_ERROR",
+          "RECAPTCHA_ERROR",
+          "OAUTH_ERROR",
+          "PAYMENT_ERROR",
+          "BANK_TRANSFER_ERROR",
+          "INCOME_VERIFICATION_ERROR",
+          "MICRODEPOSITS_ERROR",
+          "SANDBOX_ERROR",
+          "PARTNER_ERROR",
+          "SIGNAL_ERROR",
+          "TRANSACTIONS_ERROR",
+          "TRANSACTION_ERROR",
+          "TRANSFER_ERROR",
+          "CHECK_REPORT_ERROR",
+          "CONSUMER_REPORT_ERROR",
+          "USER_ERROR",
+          "IDEMPOTENCY_ERROR",
+          "ASSETS_ERROR",
+          "CRA_MONITORING_ERROR",
+          "CREDIT_PROFILE_REPORT_ERROR",
+          "ENCOMPASS_ERROR",
+          "ENRICH_ERROR",
+          "FRAUD_INSIGHTS_ERROR",
+          "FREDDIE_MAC_ERROR",
+          "LINK_DELIVERY_ERROR",
+          "PROFILE_ERROR",
+          "RECURRING_TRANSACTIONS_ERROR",
+          "STATEMENTS_ERROR",
+          "TRANSFER_RECURRING_ERROR",
+          "TRANSFER_REFUND_ERROR",
+          "CRA_REPORT_ERROR",
+          "CRA_PARTNER_INSIGHTS_ERROR"
+        ]
+      },
+      "UserTransferLimitsGetRequest": {
+        "type": "object",
+        "x-hidden-from-docs": true,
+        "description": "UserTransferLimitsGetRequest defines the request schema for `/user/transfer/limits/get`.",
+        "properties": {
+          "client_id": {
+            "$ref": "#/components/schemas/APIClientID"
+          },
+          "secret": {
+            "$ref": "#/components/schemas/APISecret"
+          },
+          "user_id": {
+            "$ref": "#/components/schemas/NewUserID"
+          }
+        },
+        "required": [
+          "user_id"
+        ]
+      },
+      "APIClientID": {
+        "title": "ClientID",
+        "type": "string",
+        "description": "Your Plaid API `client_id`. The `client_id` is required and may be provided either in the `PLAID-CLIENT-ID` header or as part of a request body."
+      },
+      "APISecret": {
+        "title": "APISecret",
+        "type": "string",
+        "description": "Your Plaid API `secret`. The `secret` is required and may be provided either in the `PLAID-SECRET` header or as part of a request body."
+      },
+      "NewUserID": {
+        "title": "NewUserID",
+        "type": "string",
+        "description": "A unique user identifier, created by `/user/create`. Integrations that began using `/user/create` after December 10, 2025 use this field to identify a user instead of the `user_token`. For more details, see [New User APIs](https://plaid.com/docs/api/users/user-apis)."
+      },
+      "InstitutionsSearchResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "description": "InstitutionsSearchResponse defines the response schema for `/institutions/search`",
+        "properties": {
+          "institutions": {
+            "type": "array",
+            "description": "An array of institutions matching the search criteria",
+            "items": {
+              "$ref": "#/components/schemas/Institution"
+            }
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/RequestID"
+          }
+        },
+        "required": [
+          "institutions",
+          "request_id"
+        ]
+      },
+      "Institution": {
+        "title": "Institution",
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Details relating to a specific financial institution",
+        "properties": {
+          "institution_id": {
+            "type": "string",
+            "description": "Unique identifier for the institution. Note that the same institution may have multiple records, each with different institution IDs; for example, if the institution has migrated to OAuth, there may be separate `institution_id`s for the OAuth and non-OAuth versions of the institution. Institutions that operate in different countries or with multiple login portals may also have separate `institution_id`s for each country or portal."
+          },
+          "name": {
+            "type": "string",
+            "description": "The official name of the institution."
+          },
+          "products": {
+            "type": "array",
+            "description": "A list of the Plaid products supported by the institution. Note that only institutions that support Instant Auth will return `auth` in the product array; institutions that do not list `auth` may still support other Auth methods such as Instant Match or Automated Micro-deposit Verification. To identify institutions that support those methods, use the `auth_metadata` object. For more details, see [Full Auth coverage](https://plaid.com/docs/auth/coverage/). The `income_verification` product here indicates support for Bank Income. Note: For Signal Transaction Scores and Transfer, listed institutions may be incomplete or incorrect. Instead, use the following: `balance` support also indicates coverage of Signal Transaction Scores; `auth` support also indicates coverage of Transfer.",
+            "items": {
+              "$ref": "#/components/schemas/Products"
+            }
+          },
+          "country_codes": {
+            "type": "array",
+            "description": "A list of the country codes supported by the institution.",
+            "items": {
+              "$ref": "#/components/schemas/CountryCode"
+            }
+          },
+          "url": {
+            "type": "string",
+            "description": "The URL for the institution's website",
+            "nullable": true
+          },
+          "primary_color": {
+            "type": "string",
+            "description": "Hexadecimal representation of the primary color used by the institution. If Plaid does not have primary color data for the institution, this field will be a deterministically generated fallback color.",
+            "nullable": true
+          },
+          "logo": {
+            "type": "string",
+            "description": "Base64 encoded representation of the institution's logo, returned as a base64 encoded 152x152 PNG. Not all institutions' logos are available.",
+            "nullable": true
+          },
+          "routing_numbers": {
+            "type": "array",
+            "description": "A list of routing numbers known to be associated with the institution. This list is provided for the purpose of looking up institutions by routing number. It is generally comprehensive but is not guaranteed to be a complete list of routing numbers for an institution.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dtc_numbers": {
+            "type": "array",
+            "description": "A partial list of DTC numbers associated with the institution.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "oauth": {
+            "type": "boolean",
+            "description": "Indicates that the institution has an OAuth login flow. This will be `true` if OAuth is supported for any Items associated with the institution, even if the institution also supports non-OAuth connections."
+          },
+          "connection_availability": {
+            "$ref": "#/components/schemas/InstitutionConnectionAvailability"
+          },
+          "status": {
+            "$ref": "#/components/schemas/InstitutionStatus"
+          },
+          "payment_initiation_metadata": {
+            "$ref": "#/components/schemas/PaymentInitiationMetadata"
+          },
+          "auth_metadata": {
+            "$ref": "#/components/schemas/AuthMetadata"
+          }
+        },
+        "required": [
+          "institution_id",
+          "name",
+          "products",
+          "country_codes",
+          "routing_numbers",
+          "oauth",
+          "connection_availability"
+        ]
+      },
+      "Products": {
+        "title": "Products",
+        "enum": [
+          "assets",
+          "auth",
+          "balance",
+          "balance_plus",
+          "beacon",
+          "identity",
+          "identity_match",
+          "investments",
+          "investments_auth",
+          "liabilities",
+          "payment_initiation",
+          "identity_verification",
+          "transactions",
+          "credit_details",
+          "income",
+          "income_verification",
+          "standing_orders",
+          "transfer",
+          "employment",
+          "recurring_transactions",
+          "transactions_refresh",
+          "signal",
+          "statements",
+          "processor_payments",
+          "processor_identity",
+          "profile",
+          "cra_base_report",
+          "cra_income_insights",
+          "cra_partner_insights",
+          "cra_network_insights",
+          "cra_cashflow_insights",
+          "cra_monitoring",
+          "cra_lend_score",
+          "cra_plaid_credit_score",
+          "cra_qualify",
+          "cra_home_lending",
+          "cra_lend_score_complete",
+          "cra_income_complete",
+          "layer",
+          "pay_by_bank",
+          "protect_linked_bank",
+          "protect_transactions"
+        ],
+        "description": "A list of products that an institution can support. All Items must be initialized with at least one product. The Balance product is always available and does not need to be specified during initialization.",
+        "type": "string"
+      },
+      "CountryCode": {
+        "type": "string",
+        "title": "CountryCode",
+        "enum": [
+          "US",
+          "GB",
+          "ES",
+          "NL",
+          "FR",
+          "IE",
+          "CA",
+          "DE",
+          "IT",
+          "PL",
+          "DK",
+          "NO",
+          "SE",
+          "EE",
+          "LT",
+          "LV",
+          "PT",
+          "BE",
+          "AT",
+          "FI"
+        ],
+        "description": "ISO-3166-1 alpha-2 country code standard."
+      },
+      "InstitutionConnectionAvailability": {
+        "type": "string",
+        "title": "InstitutionConnectionAvailability",
+        "description": "Whether Plaid supports creating new Items for the institution.\n\n`SUPPORTED`: Plaid supports new connections to the institution. Whether a given connection succeeds can still depend on your integration and account: some institutions require completing [OAuth registration](https://plaid.com/docs/link/oauth/#complete-the-registration-requirements-in-the-compliance-center) before they can be used, the institution may not support every product requested in `/link/token/create`, and your Plaid account must be in good standing.\n\n`NOT_SUPPORTED`: Plaid does not support new connections to the institution. Existing Items may continue to work. Attempting to create a new Item for the institution returns an `INSTITUTION_NO_LONGER_SUPPORTED` error. Institutions with this value are returned only by `/institutions/get_by_id`.\n",
+        "enum": [
+          "SUPPORTED",
+          "NOT_SUPPORTED"
+        ]
+      },
+      "InstitutionStatus": {
+        "title": "InstitutionStatus",
+        "type": "object",
+        "additionalProperties": true,
+        "nullable": true,
+        "properties": {
+          "item_logins": {
+            "$ref": "#/components/schemas/ProductStatus"
+          },
+          "transactions_updates": {
+            "$ref": "#/components/schemas/ProductStatus"
+          },
+          "auth": {
+            "$ref": "#/components/schemas/ProductStatus"
+          },
+          "identity": {
+            "$ref": "#/components/schemas/ProductStatus"
+          },
+          "investments_updates": {
+            "$ref": "#/components/schemas/ProductStatus"
+          },
+          "liabilities_updates": {
+            "$ref": "#/components/schemas/ProductStatus"
+          },
+          "liabilities": {
+            "$ref": "#/components/schemas/ProductStatus"
+          },
+          "investments": {
+            "$ref": "#/components/schemas/ProductStatus"
+          },
+          "health_incidents": {
+            "nullable": true,
+            "type": "array",
+            "description": "Details of recent health incidents associated with the institution.",
+            "items": {
+              "$ref": "#/components/schemas/HealthIncident"
+            }
+          }
+        },
+        "description": "The status of an institution is determined by the health of its Item logins, Transactions updates, Investments updates, Liabilities updates, Auth requests, Balance requests, Identity requests, Investments requests, and Liabilities requests. A login attempt is conducted during the initial Item add in Link. If there is not enough traffic to accurately calculate an institution's status, Plaid will return null rather than potentially inaccurate data.\n\nInstitution status is accessible in the Dashboard and via the API using the `/institutions/get_by_id` endpoint with the `options.include_status` option set to true. In the Sandbox environment, institution status is only available for First Platypus Bank (`ins_109508`) and Houndstooth Bank (`ins_109512`).\n",
+        "x-examples": {
+          "example-1": {
+            "item_logins": {
+              "status": "HEALTHY",
+              "last_status_change": "2019-02-15T15:53:00Z",
+              "breakdown": {
+                "success": 0.9,
+                "error_plaid": 0.01,
+                "error_institution": 0.09
+              }
+            },
+            "transactions_updates": {
+              "status": "HEALTHY",
+              "last_status_change": "2019-02-12T08:22:00Z",
+              "breakdown": {
+                "success": 0.95,
+                "error_plaid": 0.02,
+                "error_institution": 0.03,
+                "refresh_interval": "NORMAL"
+              }
+            },
+            "auth": {
+              "status": "HEALTHY",
+              "last_status_change": "2019-02-15T15:53:00Z",
+              "breakdown": {
+                "success": 0.91,
+                "error_plaid": 0.01,
+                "error_institution": 0.08
+              }
+            },
+            "identity": {
+              "status": "DEGRADED",
+              "last_status_change": "2019-02-15T15:50:00Z",
+              "breakdown": {
+                "success": 0.42,
+                "error_plaid": 0.08,
+                "error_institution": 0.5
+              }
+            },
+            "investments": {
+              "status": "HEALTHY",
+              "last_status_change": "2019-02-15T15:53:00Z",
+              "breakdown": {
+                "success": 0.89,
+                "error_plaid": 0.02,
+                "error_institution": 0.09
+              }
+            },
+            "liabilities": {
+              "status": "HEALTHY",
+              "last_status_change": "2019-02-15T15:53:00Z",
+              "breakdown": {
+                "success": 0.89,
+                "error_plaid": 0.02,
+                "error_institution": 0.09
+              }
+            },
+            "investments_updates": {
+              "status": "HEALTHY",
+              "last_status_change": "2019-02-12T08:22:00Z",
+              "breakdown": {
+                "success": 0.95,
+                "error_plaid": 0.02,
+                "error_institution": 0.03,
+                "refresh_interval": "NORMAL"
+              }
+            },
+            "liabilities_updates": {
+              "status": "HEALTHY",
+              "last_status_change": "2019-02-12T08:22:00Z",
+              "breakdown": {
+                "success": 0.95,
+                "error_plaid": 0.02,
+                "error_institution": 0.03,
+                "refresh_interval": "NORMAL"
+              }
+            }
+          }
+        }
+      },
+      "ProductStatus": {
+        "title": "ProductStatus",
+        "type": "object",
+        "additionalProperties": true,
+        "nullable": true,
+        "description": "A representation of the status health of a request type. Auth requests, Balance requests, Identity requests, Investments requests, Liabilities requests, Transactions updates, Investments updates, Liabilities updates, and Item logins each have their own status object.",
+        "properties": {
+          "status": {
+            "type": "string",
+            "deprecated": true,
+            "enum": [
+              "HEALTHY",
+              "DEGRADED",
+              "DOWN"
+            ],
+            "description": "This field is deprecated in favor of the `breakdown` object, which provides more granular institution health data.\n\n`HEALTHY`: nearly all requests are successful\n\n`DEGRADED`: a meaningful share of requests are failing, or data refreshes are delayed\n\n`DOWN`: nearly all requests are failing, or data refreshes have stopped"
+          },
+          "last_status_change": {
+            "type": "string",
+            "format": "date-time",
+            "description": "[ISO 8601](https://wikipedia.org/wiki/ISO_8601) formatted timestamp of the last status change for the institution.\n"
+          },
+          "breakdown": {
+            "$ref": "#/components/schemas/ProductStatusBreakdown"
+          }
+        },
+        "required": [
+          "status",
+          "last_status_change",
+          "breakdown"
+        ]
+      },
+      "ProductStatusBreakdown": {
+        "title": "StatusBreakdown",
+        "type": "object",
+        "additionalProperties": true,
+        "description": "A detailed breakdown of the institution's performance for a request type. The values for `success`, `error_plaid`, and `error_institution` sum to 1. The time range used for calculating the breakdown may range from the most recent few minutes to the past six hours. In general, smaller institutions will show status that was calculated over a longer period of time. For Investment updates, which are refreshed less frequently, the period assessed may be 24 hours or more. For more details, see [Institution status details](https://plaid.com/docs/account/activity/#troubleshooting-institution-insights).",
+        "properties": {
+          "success": {
+            "description": "The percentage of login attempts that are successful, expressed as a decimal.",
+            "type": "number",
+            "format": "double"
+          },
+          "error_plaid": {
+            "description": "The percentage of logins that are failing due to an internal Plaid issue, expressed as a decimal.\n",
+            "type": "number",
+            "format": "double"
+          },
+          "error_institution": {
+            "description": "The percentage of logins that are failing due to an issue in the institution's system, expressed as a decimal.",
+            "type": "number",
+            "format": "double"
+          },
+          "refresh_interval": {
+            "type": "string",
+            "enum": [
+              "NORMAL",
+              "DELAYED",
+              "STOPPED"
+            ],
+            "description": "How frequently data for subscription products like Investments, Transactions, and Liabilities, is being refreshed. `NORMAL`: data is refreshed at least every 2 days. `DELAYED`: data is refreshed less often than every 2 days. `STOPPED`: data is refreshed less often than every 14 days, or not at all. The `refresh_interval` may be `DELAYED` or `STOPPED` even when the success rate is high."
+          }
+        },
+        "required": [
+          "success",
+          "error_plaid",
+          "error_institution"
+        ]
+      },
+      "HealthIncident": {
+        "title": "HealthIncident",
+        "description": "A status health incident",
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "start_date": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The start date of the incident, in [ISO 8601](https://wikipedia.org/wiki/ISO_8601) format, e.g. `\"2020-10-30T15:26:48Z\"`."
+          },
+          "end_date": {
+            "type": "string",
+            "nullable": true,
+            "format": "date-time",
+            "description": "The end date of the incident, in [ISO 8601](https://wikipedia.org/wiki/ISO_8601) format, e.g. `\"2020-10-30T15:26:48Z\"`."
+          },
+          "title": {
+            "type": "string",
+            "description": "The title of the incident"
+          },
+          "incident_updates": {
+            "type": "array",
+            "description": "Updates on the health incident.",
+            "items": {
+              "$ref": "#/components/schemas/IncidentUpdate"
+            }
+          }
+        },
+        "required": [
+          "start_date",
+          "title",
+          "incident_updates"
+        ]
+      },
+      "IncidentUpdate": {
+        "title": "IncidentUpdate",
+        "description": "An update on the health incident",
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "The content of the update."
+          },
+          "status": {
+            "type": "string",
+            "description": "The status of the incident.",
+            "enum": [
+              "INVESTIGATING",
+              "IDENTIFIED",
+              "SCHEDULED",
+              "RESOLVED",
+              "UNKNOWN"
+            ]
+          },
+          "updated_date": {
+            "type": "string",
+            "format": "date-time",
+            "description": "The date when the update was published, in [ISO 8601](https://wikipedia.org/wiki/ISO_8601) format, e.g. `\"2020-10-30T15:26:48Z\"`."
+          }
+        }
+      },
+      "PaymentInitiationMetadata": {
+        "title": "PaymentInitiationMetadata",
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Metadata that captures what specific payment configurations an institution supports when making Payment Initiation requests.",
+        "nullable": true,
+        "properties": {
+          "supports_international_payments": {
+            "type": "boolean",
+            "description": "Indicates whether the institution supports payments from a different country."
+          },
+          "supports_sepa_instant": {
+            "type": "boolean",
+            "description": "Indicates whether the institution supports SEPA Instant payments."
+          },
+          "maximum_payment_amount": {
+            "$ref": "#/components/schemas/PaymentInitiationMaximumPaymentAmount"
+          },
+          "supports_refund_details": {
+            "type": "boolean",
+            "description": "Indicates whether the institution supports returning refund details when initiating a payment."
+          },
+          "standing_order_metadata": {
+            "$ref": "#/components/schemas/PaymentInitiationStandingOrderMetadata"
+          },
+          "supports_payment_consents": {
+            "type": "boolean",
+            "description": "Indicates whether the institution supports payment consents."
+          },
+          "supports_commercial_payment_consents": {
+            "type": "boolean",
+            "description": "Indicates whether the institution supports commercial variable recurring payment (cVRP) consents."
+          }
+        },
+        "required": [
+          "supports_international_payments",
+          "supports_sepa_instant",
+          "supports_refund_details",
+          "standing_order_metadata",
+          "supports_payment_consents",
+          "supports_commercial_payment_consents"
+        ]
+      },
+      "PaymentInitiationMaximumPaymentAmount": {
+        "type": "object",
+        "description": "A mapping of currency to maximum payment amount (denominated in the smallest unit of currency) supported by the institution.\n\nExample: `{\"GBP\": \"10000\"}`\n",
+        "additionalProperties": {
+          "type": "string"
+        }
+      },
+      "PaymentInitiationStandingOrderMetadata": {
+        "title": "PaymentInitiationStandingOrderMetadata",
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Metadata specifically related to valid Payment Initiation standing order configurations for the institution.",
+        "nullable": true,
+        "properties": {
+          "supports_standing_order_end_date": {
+            "type": "boolean",
+            "description": "Indicates whether the institution supports closed-ended standing orders by providing an end date."
+          },
+          "supports_standing_order_negative_execution_days": {
+            "type": "boolean",
+            "description": "This is only applicable to `MONTHLY` standing orders. Indicates whether the institution supports negative integers (-1 to -5) for setting up a `MONTHLY` standing order relative to the end of the month."
+          },
+          "valid_standing_order_intervals": {
+            "type": "array",
+            "nullable": true,
+            "description": "A list of the valid standing order intervals supported by the institution.",
+            "items": {
+              "$ref": "#/components/schemas/PaymentScheduleInterval"
+            }
+          }
+        },
+        "required": [
+          "supports_standing_order_end_date",
+          "supports_standing_order_negative_execution_days",
+          "valid_standing_order_intervals"
+        ]
+      },
+      "PaymentScheduleInterval": {
+        "type": "string",
+        "title": "PaymentScheduleInterval",
+        "enum": [
+          "WEEKLY",
+          "MONTHLY"
+        ],
+        "description": "The frequency interval of the payment.",
+        "minLength": 1
+      },
+      "AuthMetadata": {
+        "title": "AuthMetadata",
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Metadata that captures information about the Auth features of an institution.",
+        "nullable": true,
+        "properties": {
+          "supported_methods": {
+            "$ref": "#/components/schemas/AuthSupportedMethods"
+          }
+        },
+        "required": [
+          "supported_methods"
+        ]
+      },
+      "AuthSupportedMethods": {
+        "title": "AuthSupportedMethods",
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Metadata specifically related to which auth methods an institution supports.",
+        "nullable": true,
+        "properties": {
+          "instant_auth": {
+            "type": "boolean",
+            "description": "Indicates if instant auth is supported."
+          },
+          "instant_match": {
+            "type": "boolean",
+            "description": "Indicates if instant match is supported."
+          },
+          "automated_micro_deposits": {
+            "type": "boolean",
+            "description": "Indicates if automated micro-deposits are supported."
+          },
+          "instant_micro_deposits": {
+            "type": "boolean",
+            "description": "Indicates if instant micro-deposits are supported."
+          }
+        },
+        "required": [
+          "instant_auth",
+          "instant_match",
+          "automated_micro_deposits",
+          "instant_micro_deposits"
+        ]
+      },
+      "InstitutionsSearchRequest": {
+        "type": "object",
+        "description": "InstitutionsSearchRequest defines the request schema for `/institutions/search`",
+        "properties": {
+          "client_id": {
+            "$ref": "#/components/schemas/APIClientID"
+          },
+          "secret": {
+            "$ref": "#/components/schemas/APISecret"
+          },
+          "query": {
+            "type": "string",
+            "description": "The search query. Institutions with names matching the query are returned",
+            "minLength": 1
+          },
+          "products": {
+            "type": "array",
+            "description": "Filter the Institutions based on whether they support all products listed in `products`. Provide `null` to get institutions regardless of supported products. Note that when `auth` is specified as a product, if you are enabled for Instant Match or Automated Micro-deposits, institutions that support those products will be returned even if `auth` is not present in their product array. To search for Transfer support, use `auth`; to search for Signal Transaction Scores support, use `balance`.",
+            "minItems": 1,
+            "nullable": true,
+            "items": {
+              "$ref": "#/components/schemas/Products"
+            },
+            "x-override-enum-values-shown": [
+              "assets",
+              "auth",
+              "balance",
+              "employment",
+              "identity",
+              "income_verification",
+              "investments",
+              "liabilities",
+              "identity_verification",
+              "payment_initiation",
+              "standing_orders",
+              "statements",
+              "transactions"
+            ]
+          },
+          "country_codes": {
+            "type": "array",
+            "description": "Specify which country or countries to include institutions from, using the ISO-3166-1 alpha-2 country code standard. In API versions 2019-05-29 and earlier, the `country_codes` parameter is an optional parameter within the `options` object and will default to `[US]` if it is not supplied.\n",
+            "items": {
+              "$ref": "#/components/schemas/CountryCode"
+            }
+          },
+          "options": {
+            "$ref": "#/components/schemas/InstitutionsSearchRequestOptions"
+          }
+        },
+        "required": [
+          "query",
+          "country_codes"
+        ]
+      },
+      "InstitutionsSearchRequestOptions": {
+        "type": "object",
+        "description": "An optional object to filter `/institutions/search` results.",
+        "properties": {
+          "oauth": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "Limit results to institutions with or without OAuth login flows. Note that institutions will have `oauth` set to `true` if some Items associated with that institution are required to use OAuth flows; institutions in a state of migration to OAuth will have the `oauth` attribute set to `true`."
+          },
+          "include_optional_metadata": {
+            "type": "boolean",
+            "description": "When true, return the institution's homepage URL, logo and primary brand color."
+          },
+          "include_auth_metadata": {
+            "type": "boolean",
+            "default": false,
+            "nullable": true,
+            "description": "When `true`, returns metadata related to the Auth product indicating which auth methods are supported."
+          },
+          "include_payment_initiation_metadata": {
+            "type": "boolean",
+            "default": false,
+            "nullable": true,
+            "description": "When `true`, returns metadata related to the Payment Initiation product indicating which payment configurations are supported."
+          },
+          "payment_initiation": {
+            "$ref": "#/components/schemas/InstitutionsSearchPaymentInitiationOptions"
+          }
+        }
+      },
+      "InstitutionsSearchPaymentInitiationOptions": {
+        "type": "object",
+        "description": "Additional options that will be used to filter institutions by various Payment Initiation configurations.",
+        "nullable": true,
+        "properties": {
+          "payment_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "A unique ID identifying the payment"
+          },
+          "consent_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "A unique ID identifying the payment consent"
+          }
+        }
+      }
+    }
+  },
+  "x-anvil-fixture-source": {
+    "repository": "plaid/plaid-openapi",
+    "revision": "09fe9d7026d935db59e59f3ed92dd65fd9d9d707",
+    "path": "2020-09-14.yml",
+    "reduction": "Selected paths and their transitive local references; info reduced to title/version."
+  }
+}

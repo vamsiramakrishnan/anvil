@@ -1,0 +1,10 @@
+# October 30 addition: persisted transfer limits belong to a user. The generic
+# `limit` is a valid singular, but the spec's names only use `limits`, triggering
+# the over-strip candidate ratchet. Name the complete resource explicitly.
+# A missing transaction limit is computed: do not assert a pure read or
+# idempotency. This mapping changes routing names only; the operation stays blocked.
+service:
+  name: plaid
+operations:
+  userTransferLimitsGet:
+    name: { resource: user_transfer_limit, verb: get }
