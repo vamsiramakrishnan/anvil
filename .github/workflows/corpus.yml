@@ -5,6 +5,13 @@ on:
     # Nightly at 03:17 UTC, away from the top-of-hour scheduler peak.
     - cron: "17 3 * * *"
   workflow_dispatch:
+  # Verify the integrated default-branch revision before closing regressions.
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/corpus.yml"
+      - "docs/backtesting/reproduce/**"
+      - "tools/corpus/**"
   # A corpus repair needs the real gate before merge, not only the next cron.
   pull_request:
     paths:
