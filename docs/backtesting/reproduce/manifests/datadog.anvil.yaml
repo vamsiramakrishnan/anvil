@@ -3,9 +3,6 @@
 # Routing names only: keep the inferred mutation, approval and retry posture.
 service:
   name: datadog
-  display_name: Datadog API
-  owner: backtesting
-  environment: prod
 operations:
   UpdateTemporaryGrantRequest:
     name: { resource: temporary_grant_request, verb: decide }

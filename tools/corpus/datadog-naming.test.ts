@@ -18,6 +18,7 @@ describe("Datadog October 30 temporary grant request naming", () => {
   it("repairs the resource contradiction without changing the mutation or neighbouring operations", async () => {
     const before = await compile({ spec, serviceId: "datadog" });
     const after = await compile({ spec, manifest, serviceId: "datadog" });
+    expect(after.service).toEqual(before.service);
     expect(before.operations).toHaveLength(4);
     expect(after.operations).toHaveLength(4);
     const measured = measureNamingConformance(before, deps);

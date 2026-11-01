@@ -18,6 +18,7 @@ describe("Plaid October 30 user transfer limit naming", () => {
   it("names the user-scoped limit without treating its POST as a pure read", async () => {
     const before = await compile({ spec, serviceId: "plaid" });
     const after = await compile({ spec, manifest, serviceId: "plaid" });
+    expect(after.service).toEqual(before.service);
     expect(before.operations).toHaveLength(2);
     expect(after.operations).toHaveLength(2);
     // This is a valid singular and a candidate-oracle false positive, not a
