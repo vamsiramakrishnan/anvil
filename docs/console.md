@@ -303,7 +303,7 @@ without the token is refused, and a page at another origin can read nothing.
 Open a bundle's **Identity** view to inspect or apply the same reusable identity
 profile used by `anvil target identity <bundle> --profile <file>`. The profile
 belongs to the connector's authority: Entra ID can provide Gemini Enterprise
-sign-in while SiteMinder independently authenticates Ultimatix MCP requests.
+sign-in while SiteMinder independently authenticates protected-system MCP requests.
 Changing the connector profile does not change Gemini's sign-in configuration.
 
 The view shows the configured issuer, audience, tenant mapping, authorization

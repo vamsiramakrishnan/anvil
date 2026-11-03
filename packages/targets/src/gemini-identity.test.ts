@@ -11,7 +11,7 @@ import { generateTargetKit } from "./generate.js";
 import { validateTarget } from "./validate.js";
 import { verifyTargetKit } from "./verify.js";
 
-const endpoint = "https://ultimatix-tools-123.run.app/mcp";
+const endpoint = "https://enterprise-tools-123.run.app/mcp";
 let air: AirDocument;
 let identity: IdentityProfile;
 
@@ -38,12 +38,12 @@ paths:
     authentication: {
       provider: "oidc",
       issuer: "https://siteminder.example/issuer",
-      audience: "api://ultimatix-mcp",
+      audience: "api://enterprise-mcp",
       resource: endpoint,
       jwksUri: "https://siteminder.example/keys",
       requiredScopes: ["mcp.invoke"],
     },
-    mapping: { tenant: { source: "fixed", value: "tcs-demo" }, upstreamScopes: [] },
+    mapping: { tenant: { source: "fixed", value: "example-org-demo" }, upstreamScopes: [] },
     authorization: {
       rules: [
         {
@@ -62,7 +62,7 @@ function config(overrides: GeminiEnterpriseTargetConfigInput = {}) {
     surface: "custom-mcp",
     serverAuth: "oauth",
     endpoint,
-    project: "tcs-demo",
+    project: "example-org-demo",
     projectNumber: "123456789",
     appLocation: "global",
     engine: "employees",

@@ -12,18 +12,18 @@ const HASH = "a".repeat(64);
 const NEXT_HASH = "b".repeat(64);
 const profile = IdentityProfile.parse({
   version: 1,
-  id: "ultimatix",
+  id: "enterprise",
   authentication: {
     provider: "oidc",
     issuer: "https://siteminder.example.com",
-    audience: "https://ultimatix-mcp.example.com",
+    audience: "https://enterprise-mcp.example.com",
     jwksUri: "https://siteminder.example.com/jwks",
   },
-  mapping: { tenant: { source: "fixed", value: "tcs" }, upstreamScopes: ["leave.read"] },
+  mapping: { tenant: { source: "fixed", value: "example-org" }, upstreamScopes: ["leave.read"] },
   authorization: { adapter: "enterprise", rules: [] },
 });
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
-function identity(bundleId = "ultimatix"): ConsoleResponse<"identity"> {
+function identity(bundleId = "enterprise"): ConsoleResponse<"identity"> {
   return {
     bundleId,
     bundleHash: HASH,
@@ -33,7 +33,7 @@ function identity(bundleId = "ultimatix"): ConsoleResponse<"identity"> {
     files: [],
   };
 }
-function preview(bundleId = "ultimatix"): ConsoleResponse<"validateIdentity"> {
+function preview(bundleId = "enterprise"): ConsoleResponse<"validateIdentity"> {
   return {
     bundleId,
     bundleHash: HASH,
@@ -55,7 +55,7 @@ function harness(
       method: String(init.method),
       body: init.body ? JSON.parse(String(init.body)) : undefined,
     });
-    const id = url.split("/")[3] ?? "ultimatix";
+    const id = url.split("/")[3] ?? "enterprise";
     if (init.method === "GET") return json({ ...current, bundleId: id });
     if (url.endsWith("/validate"))
       return overrides.validate ? overrides.validate() : json(preview(id));
@@ -118,10 +118,10 @@ describe("identity configuration", () => {
       files: ["targets/gemini-enterprise/env.json", "targets/gemini-enterprise/setup.json"],
     };
     const api = createConsoleApi({ fetch: async () => json(current) });
-    render(<IdentityView api={api} bundleId="ultimatix" />);
+    render(<IdentityView api={api} bundleId="enterprise" />);
     const link = await screen.findByRole("link", { name: "Review generated identity files" });
     expect(link.getAttribute("href")).toBe(
-      "#/b/ultimatix/artifacts?path=targets%2Fgemini-enterprise%2Fsetup.json",
+      "#/b/enterprise/artifacts?path=targets%2Fgemini-enterprise%2Fsetup.json",
     );
     expect(screen.queryByRole("link", { name: "targets/identity/profile.json" })).toBeNull();
   });
@@ -138,7 +138,7 @@ describe("identity configuration", () => {
       files: ["targets/identity/profile.json", "targets/gemini-enterprise/setup.json"],
     };
     const api = createConsoleApi({ fetch: async () => json(current) });
-    render(<IdentityView api={api} bundleId="ultimatix" />);
+    render(<IdentityView api={api} bundleId="enterprise" />);
     await screen.findByText("Regenerate the identity kit before inspection.");
     expect(screen.getByText("targets/identity/profile.json")).toBeTruthy();
     expect(screen.getByText("targets/gemini-enterprise/setup.json")).toBeTruthy();
@@ -152,7 +152,7 @@ describe("identity configuration", () => {
 
   it("requires a server preview of the exact draft and applies its normalized profile and hash", async () => {
     const { api, seen } = harness();
-    render(<IdentityView api={api} bundleId="ultimatix" />);
+    render(<IdentityView api={api} bundleId="enterprise" />);
     await screen.findByRole("textbox", { name: "Identity profile JSON" });
     expect(applyButton().disabled).toBe(true);
     enterProfile();
@@ -188,7 +188,7 @@ describe("identity configuration", () => {
           issues: [{ path: "authorization.rules", message: "Unknown operation leave.delete" }],
         }),
     });
-    render(<IdentityView api={api} bundleId="ultimatix" />);
+    render(<IdentityView api={api} bundleId="enterprise" />);
     await screen.findByRole("textbox", { name: "Identity profile JSON" });
     enterProfile();
     fireEvent.click(screen.getByRole("button", { name: "Validate profile" }));
@@ -200,7 +200,7 @@ describe("identity configuration", () => {
   it("ignores validation completing after the draft changes", async () => {
     const request = deferred<Response>();
     const { api } = harness({ validate: () => request.promise });
-    render(<IdentityView api={api} bundleId="ultimatix" />);
+    render(<IdentityView api={api} bundleId="enterprise" />);
     await screen.findByRole("textbox", { name: "Identity profile JSON" });
     enterProfile();
     fireEvent.click(screen.getByRole("button", { name: "Validate profile" }));
@@ -213,7 +213,7 @@ describe("identity configuration", () => {
   it("clears drafts and pending validation on a bundle switch", async () => {
     const request = deferred<Response>();
     const { api } = harness({ validate: () => request.promise });
-    const view = render(<IdentityView api={api} bundleId="ultimatix" />);
+    const view = render(<IdentityView api={api} bundleId="enterprise" />);
     await screen.findByRole("textbox", { name: "Identity profile JSON" });
     enterProfile();
     fireEvent.click(screen.getByRole("button", { name: "Validate profile" }));
@@ -238,7 +238,7 @@ describe("identity configuration", () => {
           409,
         ),
     });
-    render(<IdentityView api={api} bundleId="ultimatix" />);
+    render(<IdentityView api={api} bundleId="enterprise" />);
     await screen.findByRole("textbox", { name: "Identity profile JSON" });
     enterProfile();
     fireEvent.click(screen.getByRole("button", { name: "Validate profile" }));
@@ -251,7 +251,7 @@ describe("identity configuration", () => {
 
   it("bounds imports, rejects malformed JSON locally, and discards late file reads", async () => {
     const { api, seen } = harness();
-    render(<IdentityView api={api} bundleId="ultimatix" />);
+    render(<IdentityView api={api} bundleId="enterprise" />);
     await screen.findByRole("textbox", { name: "Identity profile JSON" });
     const input = screen.getByLabelText("Import profile JSON");
     fireEvent.change(input, { target: { files: [{ size: 512 * 1024 + 1 }] } });
@@ -273,8 +273,8 @@ describe("identity configuration", () => {
       authentication: {
         provider: "oauth2_introspection",
         issuer: "https://siteminder.example.com",
-        audience: "https://ultimatix-mcp.example.com",
-        requiredScopes: ["ultimatix.mcp"],
+        audience: "https://enterprise-mcp.example.com",
+        requiredScopes: ["enterprise.mcp"],
         introspection: {
           endpoint: "https://siteminder.example.com/introspect",
           clientIdEnv: "SITEMINDER_CLIENT_ID",
@@ -297,7 +297,7 @@ describe("identity configuration", () => {
         return json(current);
       },
     });
-    render(<IdentityView api={api} bundleId="ultimatix" />);
+    render(<IdentityView api={api} bundleId="enterprise" />);
     await screen.findByText("https://siteminder.example.com/introspect");
     expect(screen.getByText("SITEMINDER_CLIENT_ID, SITEMINDER_CLIENT_SECRET")).toBeTruthy();
     expect(screen.getByText("dedicated_client")).toBeTruthy();
