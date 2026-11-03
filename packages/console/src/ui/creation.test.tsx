@@ -140,6 +140,8 @@ describe("workspace navigation", () => {
     expect(requests.some((path) => /\/(queue|packs|benchmark)$/.test(path))).toBe(false);
     fireEvent.click(screen.getByRole("link", { name: "Interfaces" }));
     await screen.findByRole("heading", { name: "Interfaces" });
+    // The heading renders before the artifact-loading effect completes.
+    await screen.findByRole("link", { name: /skill\/SKILL.md/ });
     expect(requests.some((path) => path.endsWith("/artifacts"))).toBe(true);
     expect(requests.some((path) => /\/(queue|packs|benchmark)$/.test(path))).toBe(false);
   });
