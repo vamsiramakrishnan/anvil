@@ -22,6 +22,12 @@ function IdentitySession({ api, bundleId }: { api: ConsoleApi; bundleId: string 
   const [warnings, setWarnings] = useState<string[]>([]);
   if (!loaded.data) return <LoadState loaded={loaded} />;
   const identity = loaded.data;
+  const canInspectArtifacts = identity.integrity.state === "fresh";
+  const artifactEntry = canInspectArtifacts
+    ? ["targets/identity/profile.json", "targets/gemini-enterprise/setup.json"].find((path) =>
+        identity.files.includes(path),
+      )
+    : undefined;
   return (
     <div className="stack">
       <PageHeader
@@ -81,12 +87,11 @@ function IdentitySession({ api, bundleId }: { api: ConsoleApi; bundleId: string 
           remain unverified.
         </p>
         <div className="actions">
-          <a
-            className="btn"
-            href={href(bundleId, "artifacts", { path: "targets/identity/profile.json" })}
-          >
-            Review generated identity files
-          </a>
+          {artifactEntry ? (
+            <a className="btn" href={href(bundleId, "artifacts", { path: artifactEntry })}>
+              Review generated identity files
+            </a>
+          ) : null}
           <a className="btn" href={href(bundleId, "evidence")}>
             Review checks and evidence
           </a>
@@ -95,9 +100,13 @@ function IdentitySession({ api, bundleId }: { api: ConsoleApi; bundleId: string 
           <ul aria-label="Generated identity files">
             {identity.files.map((path) => (
               <li key={path}>
-                <a href={href(bundleId, "artifacts", { path })}>
+                {canInspectArtifacts ? (
+                  <a href={href(bundleId, "artifacts", { path })}>
+                    <code>{path}</code>
+                  </a>
+                ) : (
                   <code>{path}</code>
-                </a>
+                )}
               </li>
             ))}
           </ul>

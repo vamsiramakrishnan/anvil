@@ -106,6 +106,48 @@ describe("identity configuration", () => {
     ).toBeTruthy();
     expect(screen.getByText("unverified")).toBeTruthy();
     expect(screen.queryByLabelText(/password|access token|client secret/i)).toBeNull();
+    expect(screen.queryByRole("link", { name: "Review generated identity files" })).toBeNull();
+  });
+
+  it("opens the existing Gemini setup file for an embedded-only profile", async () => {
+    const current: ConsoleResponse<"identity"> = {
+      ...identity(),
+      configured: true,
+      profile,
+      integrity: { state: "fresh", findings: [] },
+      files: ["targets/gemini-enterprise/env.json", "targets/gemini-enterprise/setup.json"],
+    };
+    const api = createConsoleApi({ fetch: async () => json(current) });
+    render(<IdentityView api={api} bundleId="ultimatix" />);
+    const link = await screen.findByRole("link", { name: "Review generated identity files" });
+    expect(link.getAttribute("href")).toBe(
+      "#/b/ultimatix/artifacts?path=targets%2Fgemini-enterprise%2Fsetup.json",
+    );
+    expect(screen.queryByRole("link", { name: "targets/identity/profile.json" })).toBeNull();
+  });
+
+  it.each([
+    "stale",
+    "invalid",
+  ] as const)("shows %s kit paths without artifact links", async (state) => {
+    const current: ConsoleResponse<"identity"> = {
+      ...identity(),
+      configured: true,
+      profile,
+      integrity: { state, findings: ["Regenerate the identity kit before inspection."] },
+      files: ["targets/identity/profile.json", "targets/gemini-enterprise/setup.json"],
+    };
+    const api = createConsoleApi({ fetch: async () => json(current) });
+    render(<IdentityView api={api} bundleId="ultimatix" />);
+    await screen.findByText("Regenerate the identity kit before inspection.");
+    expect(screen.getByText("targets/identity/profile.json")).toBeTruthy();
+    expect(screen.getByText("targets/gemini-enterprise/setup.json")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Review generated identity files" })).toBeNull();
+    expect(
+      screen
+        .getAllByRole("link")
+        .every((link) => !link.getAttribute("href")?.includes("/artifacts")),
+    ).toBe(true);
   });
 
   it("requires a server preview of the exact draft and applies its normalized profile and hash", async () => {

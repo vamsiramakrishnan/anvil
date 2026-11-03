@@ -83,6 +83,20 @@ const textFile = (kit: ReturnType<typeof generateTargetKit>, suffix: string) =>
   Buffer.from(kit.files.find((file) => file.path.endsWith(suffix))!.bytes).toString("utf8");
 
 describe("Gemini connector authority is independent of Entra app sign-in", () => {
+  it("preserves profile text literally through the Terraform overlay", () => {
+    const literal = structuredClone(identity);
+    literal.id = "profile ${not_an_expression} %{ if true }literal%{ endif }";
+    const kit = generateTargetKit(
+      air,
+      GEMINI_ENTERPRISE_PROFILE,
+      config({ identityProfile: literal }),
+    );
+    const overlay = textFile(kit, "cloud-run.tfvars");
+    expect(overlay).toContain("$${not_an_expression}");
+    expect(overlay).toContain("%%{ if true }literal%%{ endif }");
+    expect(JSON.parse(textFile(kit, "setup.json")).config.identityProfile.id).toBe(literal.id);
+  });
+
   it("deploys the shared SiteMinder profile without competing legacy settings", () => {
     const target = config();
     expect(validateTarget(air, GEMINI_ENTERPRISE_PROFILE, target).ok).toBe(true);

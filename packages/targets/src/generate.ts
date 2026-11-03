@@ -41,7 +41,10 @@ import { validateTarget } from "./validate.js";
 const enc = (s: string) => new TextEncoder().encode(s);
 const json = (v: unknown) => enc(`${JSON.stringify(v, null, 2)}\n`);
 const shellQuote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
-const terraformString = (value: string) => JSON.stringify(value).replaceAll("${", () => "$${");
+const terraformString = (value: string) =>
+  JSON.stringify(value)
+    .replaceAll("${", () => "$${")
+    .replaceAll("%{", "%%{");
 
 /** Build the target kit for a capability's contract. */
 export function generateTargetKit(
