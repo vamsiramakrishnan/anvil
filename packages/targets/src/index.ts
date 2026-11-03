@@ -7,12 +7,16 @@
  * AIR, capability contracts, or the runtime-neutral pack identity. See ADR-0019.
  */
 export * from "./agent-registry.js";
+export * from "./certification.js";
 export * from "./claude.js";
 export * from "./config.js";
 export * from "./connector-plan.js";
 export * from "./coordinates.js";
 export * from "./gemini-enterprise.js";
 export * from "./generate.js";
+export * from "./identity.js";
+export * from "./identity-setup.js";
+export * from "./install.js";
 export * from "./mcp-connector.js";
 export * from "./mcp-registry.js";
 export * from "./model.js";

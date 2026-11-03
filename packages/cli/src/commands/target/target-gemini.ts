@@ -10,6 +10,7 @@ import {
   statSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { IdentityProfile } from "@anvil/air";
 import { loadAir, resolveAirPath } from "@anvil/refinement";
 import {
   buildConnectorPlan,
@@ -105,6 +106,7 @@ export function registerTargetGemini(target: Command, ctx: CommandContext): void
       .option("--oauth-scope <scope...>", "one or more scopes whose resource is this MCP API")
       .option("--inbound-issuer <url>", "issuer the MCP resource server validates")
       .option("--inbound-audience <audience>", "audience identifying this MCP API")
+      .option("--identity-profile <file>", "reviewed JSON identity profile for connector OAuth")
       .option(
         "--wif <pool>",
         "full locations/global/workforcePools/<pool-id> resource for GE sign-in (separate from /mcp auth)",
@@ -155,6 +157,7 @@ interface GeminiTargetOptions {
   oauthScope?: string[];
   inboundIssuer?: string;
   inboundAudience?: string;
+  identityProfile?: string;
   wif?: string;
   confirmEngineEgressReroute?: boolean;
   agentIdentityPrincipalSet?: string;
@@ -170,6 +173,17 @@ function runGeminiTarget(
   deps: TargetDeps = {},
 ): number {
   const profile = GEMINI_ENTERPRISE_PROFILE;
+  let identityProfile: IdentityProfile | undefined;
+  if (opts.identityProfile) {
+    try {
+      identityProfile = IdentityProfile.parse(
+        JSON.parse(readFileSync(opts.identityProfile, "utf8")),
+      );
+    } catch {
+      io.err("Identity profile could not be read or does not match the shared identity schema.");
+      return 1;
+    }
+  }
   const config = createGeminiEnterpriseTargetConfig({
     surface: opts.surface,
     serverAuth: opts.serverAuth,
@@ -193,6 +207,7 @@ function runGeminiTarget(
       inboundAudience: opts.inboundAudience,
     },
     workforcePool: opts.wif,
+    identityProfile,
     confirmEngineEgressReroute: opts.confirmEngineEgressReroute,
   });
 

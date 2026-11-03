@@ -118,6 +118,14 @@ Emits draft 2020-12 JSON Schema for the manifest (`--manifest` to `anvil compile
 Options:
 - `--out <file>` — write the schema to a file instead of stdout
 
+#### `anvil schema identity`
+`anvil schema identity [options]`
+
+The JSON Schema for reusable identity profiles.
+
+Options:
+- `--out <file>` — write the schema to a file instead of stdout
+
 #### `anvil schema profile`
 `anvil schema profile [options]`
 
@@ -1071,6 +1079,14 @@ Generate an agent-platform connector kit (Gemini Enterprise, Claude, OpenAI, MCP
 
 Each subcommand is a pure projection of AIR plus its own config — no network calls, ever. Registered platforms: gemini-enterprise, claude, openai, mcp-registry. Validates the contract against the platform's requirements first; no files are written when validation fails.
 
+#### `anvil target identity`  *(mutates)*
+`anvil target identity [options] <dir>`
+
+Bind a reusable identity profile to a connector and generate deployment configuration.
+
+Options:
+- `--profile <file>` — versioned JSON identity profile
+
 #### `anvil target gemini-enterprise`  *(mutates)*
 `anvil target gemini-enterprise [options] <dir>`
 
@@ -1095,6 +1111,7 @@ Options:
 - `--oauth-scope <scope...>` — one or more scopes whose resource is this MCP API
 - `--inbound-issuer <url>` — issuer the MCP resource server validates
 - `--inbound-audience <audience>` — audience identifying this MCP API
+- `--identity-profile <file>` — reviewed JSON identity profile for connector OAuth
 - `--wif <pool>` — full locations/global/workforcePools/<pool-id> resource for GE sign-in (separate from /mcp auth)
 - `--allow-unauthenticated-mcp` — acknowledge that no-auth leaves the public /mcp endpoint without a bearer-token gate
 - `--confirm-engine-egress-reroute` — acknowledge that Agent Gateway binding reroutes all agent egress for the engine

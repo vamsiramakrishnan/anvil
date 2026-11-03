@@ -7,6 +7,7 @@ import {
 import { execute } from "@anvil/runtime";
 import type { ConsoleResponse } from "../contract.js";
 import { ConsoleError, notFound } from "./errors.js";
+import { bundleRequiresIdentity } from "./identity.js";
 import { type Request, summarizeReprojection } from "./mutations.js";
 import { findBundle } from "./workspace.js";
 
@@ -33,8 +34,14 @@ export async function previewOperation(
   operationId: string,
   body: Request<"preview">,
 ): Promise<ConsoleResponse<"preview">> {
-  const { air, hash } = snapshot(root, id);
+  const { air, hash, files } = snapshot(root, id);
   assertCurrent(hash, body.bundleHash);
+  if (bundleRequiresIdentity(files))
+    throw new ConsoleError(
+      "console/identity_required",
+      422,
+      "This connector requires verified identity. Use its authenticated deployed runtime to test authorization; local console previews do not accept credentials or simulate a user.",
+    );
   const operation = air.operations.find((op) => op.id === operationId);
   if (!operation) throw notFound(`No operation '${operationId}' in this bundle.`);
   const baseUrl = air.service.servers[0]?.url;

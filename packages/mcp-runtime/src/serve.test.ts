@@ -81,7 +81,9 @@ describe("public StreamableHTTP server hardening", () => {
   it("binds every authenticated session to a one-way verified-principal fingerprint", () => {
     expect(source).toContain("callerFingerprint: auth.callerFingerprint");
     expect(source).toContain("entry.callerFingerprint !== auth.callerFingerprint");
-    expect(source).toContain("verifiedPrincipalFingerprint(result.claims)");
+    expect(source).toContain(
+      "verifiedPrincipalFingerprint(result.claims, inboundAuth.identityProfile)",
+    );
     expect(readFileSync(new URL("./inbound-auth.ts", import.meta.url), "utf8")).toContain(
       "JSON.stringify({ issuer, sub, oid, authorizedParty, tenant })",
     );

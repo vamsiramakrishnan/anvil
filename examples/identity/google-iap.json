@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "id": "gcp-iap",
+  "authentication": {
+    "provider": "google_iap",
+    "issuer": "https://cloud.google.com/iap",
+    "audience": "/projects/PROJECT_NUMBER/global/backendServices/BACKEND_ID",
+    "resource": "https://mcp.example.com",
+    "jwksUri": "https://www.gstatic.com/iap/verify/public_key-jwk",
+    "tokenType": "JWT"
+  },
+  "mapping": {
+    "tenant": {
+      "source": "fixed",
+      "value": "enterprise"
+    },
+    "subjects": [
+      "accounts.google.com:REPLACE_WITH_SUBJECT"
+    ],
+    "upstreamScopes": [
+      "payments.read"
+    ]
+  },
+  "authorization": {
+    "adapter": "rules",
+    "rules": [
+      {
+        "id": "payments-read",
+        "service": "payments",
+        "operations": [
+          "payments.payments.get"
+        ],
+        "effect": "allow"
+      }
+    ]
+  }
+}

@@ -122,6 +122,7 @@ generations prevent late responses from rendering another bundle's data.
 | Assurance | `GET /api/bundles/:id/assurance`; `certifyBundle`, `verifyCertification`, and `executableEvidenceStatuses` |
 | Generated files | `GET /api/bundles/:id/artifacts` and `/artifact?path=...`; generator-owned path allowlist and named evidence records |
 | Compare bundles | Existing drift route and `diffContracts`; baseline/candidate selector, severity filtering, export |
+| Connector identity | `GET /api/bundles/:id/identity`, `POST .../identity/validate`, `POST .../identity`; shared `IdentityProfile`, `prepareIdentityBinding`, and transactional target-kit installation |
 
 The request builder creates copyable CLI dry runs and MCP JSON-RPC requests.
 It never executes them or stores arguments. CLI previews always end in
@@ -129,6 +130,16 @@ It never executes them or stores arguments. CLI previews always end in
 Static assurance is recomputed on read but never written as a certification.
 Artifact previews return JSON text, are capped at 256 KiB, and refuse arbitrary
 files and symlinks. These routes inherit the existing origin/Host protections.
+
+Connector identity edits the same versioned, non-secret profile used by the CLI.
+Validation binds the normalized draft to the current bundle hash and performs
+no provider requests. Applying it updates the identity kit and any existing
+Gemini Enterprise identity snapshot together, retaining connector OAuth endpoints
+and sign-in metadata. Stale requests are refused; neither validation nor apply
+changes operation approvals. Integrity checks regenerate the kit exactly, and
+live interoperability remains unverified. Only identity artifacts that pass exact
+verification are available in Generated files. Local request previews refuse
+identity-protected connectors because the console accepts no employee tokens.
 
 The navigation rail, `Ctrl+K` / `⌘K` menu, per-view refresh controls, and URL
 coordinates support moving between review, debugging, comparison and handoff.

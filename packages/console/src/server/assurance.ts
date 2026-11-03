@@ -1,3 +1,4 @@
+import { IdentityProfile } from "@anvil/air";
 import {
   certifyBundle,
   DERIVED_RECORD_FILES,
@@ -9,6 +10,7 @@ import {
   resourceOptionsFromGenerationMetadata,
   verifyCertification,
 } from "@anvil/generators";
+import { listTargetKitVerifiers, targetKitCertificationChecks } from "@anvil/targets";
 import type { ConsoleResponse } from "../contract.js";
 import { ConsoleError, notFound } from "./errors.js";
 import { findBundle } from "./workspace.js";
@@ -23,6 +25,9 @@ function load(root: string, id: string) {
 export function assuranceView(root: string, id: string): ConsoleResponse<"assurance"> {
   const { path, files, air } = load(root, id);
   const current = certifyBundle(files, air);
+  const targetChecks = targetKitCertificationChecks(files, air);
+  current.checks.push(...targetChecks);
+  if (targetChecks.some((check) => check.status === "failed")) current.status = "failed";
   const recorded = verifyCertification(files);
   return {
     path,
@@ -50,6 +55,20 @@ function artifactFiles(root: string, id: string): Record<string, string> {
     resourceOptionsFromGenerationMetadata(files[GENERATION_METADATA_FILE]),
   ).files;
   const allowed = new Set([...Object.keys(expected), ...DERIVED_RECORD_FILES]);
+  // Deployment configuration is browsable only after exact regeneration proves
+  // it contains the strict, non-secret profile; invalid or tampered bytes stay private.
+  const identity = listTargetKitVerifiers().find((verifier) => verifier.id === "identity");
+  const verified = identity?.verify(air, files);
+  if (verified?.ok) for (const path of verified.expectedFiles) allowed.add(path);
+  const gemini = listTargetKitVerifiers().find((verifier) => verifier.id === "gemini-enterprise");
+  const connector = gemini?.verify(air, files);
+  if (
+    connector?.ok &&
+    connector.config &&
+    "identityProfile" in connector.config &&
+    IdentityProfile.safeParse(connector.config.identityProfile).success
+  )
+    for (const path of connector.expectedFiles) allowed.add(path);
   return Object.fromEntries(Object.entries(files).filter(([path]) => allowed.has(path)));
 }
 

@@ -21,6 +21,8 @@ export * from "./extensions.js";
 export * from "./google-workload.js";
 export * from "./grants.js";
 export * from "./idempotency.js";
+export * from "./identity.js";
+export * from "./identity-remote.js";
 export * from "./inbound-identity.js";
 export * from "./invocation.js";
 export * from "./job-answer.js";

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "id": "siteminder-bridge",
+  "authentication": {
+    "provider": "jwt_bridge",
+    "issuer": "https://identity.example.com",
+    "audience": "https://mcp.example.com",
+    "jwksUri": "https://identity.example.com/jwks",
+    "tokenType": "at+jwt"
+  },
+  "mapping": {
+    "tenant": {
+      "source": "claim",
+      "claim": "tenant_id",
+      "allowed": [
+        "enterprise"
+      ]
+    },
+    "groupsClaim": "groups",
+    "upstreamScopes": [
+      "payments.read"
+    ]
+  },
+  "authorization": {
+    "adapter": "enterprise",
+    "timeoutMs": 3000,
+    "rules": []
+  }
+}

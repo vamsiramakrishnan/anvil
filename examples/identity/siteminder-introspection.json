@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "id": "siteminder-introspection",
+  "authentication": {
+    "provider": "oauth2_introspection",
+    "issuer": "https://siteminder.example.com/REPLACE_WITH_REVIEWED_ISSUER",
+    "audience": "https://mcp.example.com",
+    "requiredScopes": [
+      "mcp.invoke"
+    ],
+    "introspection": {
+      "endpoint": "https://siteminder.example.com/REPLACE_WITH_REVIEWED_INTROSPECTION_ENDPOINT",
+      "clientIdEnv": "SITEMINDER_MCP_CLIENT_ID",
+      "clientSecretEnv": "SITEMINDER_MCP_CLIENT_SECRET",
+      "clientAuth": "client_secret_basic",
+      "timeoutMs": 3000,
+      "audienceSource": "response"
+    },
+    "resource": "https://mcp.example.com/mcp"
+  },
+  "mapping": {
+    "tenant": {
+      "source": "fixed",
+      "value": "enterprise"
+    },
+    "groupsClaim": "groups",
+    "upstreamScopes": [
+      "payments.read"
+    ]
+  },
+  "authorization": {
+    "rules": [
+      {
+        "id": "payments-readers",
+        "service": "payments",
+        "operations": [
+          "payments.payments.get"
+        ],
+        "effect": "allow",
+        "groups": [
+          "payments-readers"
+        ]
+      }
+    ]
+  }
+}

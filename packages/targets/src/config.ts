@@ -7,6 +7,7 @@
  * for regeneration, status checks, and resumable operator handoff.
  */
 import { createHash } from "node:crypto";
+import { IdentityProfile } from "@anvil/air";
 import { parseCanonicalEngineResource } from "./coordinates.js";
 
 export const GEMINI_REGISTRATION_SURFACES = ["custom-mcp", "agent-gateway", "both"] as const;
@@ -108,6 +109,8 @@ export interface GeminiEnterpriseTargetConfig {
   /** Exact authorization-policy resource attached to the Agent Gateway. */
   gatewayAuthorizationPolicy?: string;
   connectorOAuth: ConnectorOAuthConfig;
+  /** Reviewed connector authority, independent of Gemini Enterprise sign-in. */
+  identityProfile?: IdentityProfile;
   /**
    * GE sign-in Workforce pool metadata. It is intentionally separate from
    * connectorOAuth and never changes the token accepted by /mcp.
@@ -131,6 +134,7 @@ export interface GeminiEnterpriseTargetConfigInput {
   agentIdentityPrincipalSet?: string;
   gatewayAuthorizationPolicy?: string;
   connectorOAuth?: Partial<ConnectorOAuthConfig>;
+  identityProfile?: IdentityProfile;
   workforcePool?: string;
   confirmEngineEgressReroute?: boolean;
 }
@@ -144,6 +148,9 @@ export function createGeminiEnterpriseTargetConfig(
   const gatewayLocation =
     input.gatewayLocation ??
     (usesAgentGateway && appLocation ? defaultGatewayLocation(appLocation) : undefined);
+  const identityProfile = input.identityProfile
+    ? IdentityProfile.parse(input.identityProfile)
+    : undefined;
   return {
     surface: input.surface ?? "",
     serverAuth: input.serverAuth ?? "",
@@ -169,12 +176,31 @@ export function createGeminiEnterpriseTargetConfig(
             .filter((scope) => scope.length > 0),
         ),
       ],
-      inboundIssuer: input.connectorOAuth?.inboundIssuer?.trim() || undefined,
-      inboundAudience: input.connectorOAuth?.inboundAudience?.trim() || undefined,
+      inboundIssuer:
+        input.connectorOAuth?.inboundIssuer?.trim() || identityProfile?.authentication.issuer,
+      inboundAudience:
+        input.connectorOAuth?.inboundAudience?.trim() || identityProfile?.authentication.audience,
     },
+    ...(identityProfile ? { identityProfile } : {}),
     workforcePool: input.workforcePool?.trim() || undefined,
     confirmEngineEgressReroute: input.confirmEngineEgressReroute === true,
   };
+}
+
+/** GE only sends its Cloud Run IAM token to the default service domain. */
+export function usesCloudRunServiceAgent(config: GeminiEnterpriseTargetConfig): boolean {
+  if (!config.identityProfile || !includesSurface(config, "custom-mcp")) return false;
+  try {
+    const url = new URL(config.endpoint);
+    return url.protocol === "https:" && !url.port && url.hostname.endsWith(".run.app");
+  } catch {
+    return false;
+  }
+}
+
+export function geminiServiceAgentMember(config: GeminiEnterpriseTargetConfig): string {
+  const number = config.projectNumber ?? canonicalEngineProjectNumber(config.engine);
+  return `serviceAccount:service-${number}@gcp-sa-discoveryengine.iam.gserviceaccount.com`;
 }
 
 export function defaultGatewayLocation(appLocation: string): GeminiGatewayLocation | undefined {

@@ -166,7 +166,9 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
   // itself calls. It sits beside the CLI, below it in the graph (cli -> console
   // is the launch edge; console never imports cli), and may reach the same
   // library packages the CLI reaches for reading and deciding — never the
-  // MCP serving entrypoints or targets. Runtime is used only for offline request planning. Listed edges are the allowed set; the package
+  // MCP serving entrypoints. Targets provides shared profile validation,
+  // deterministic generation and atomic installation for console/CLI parity.
+  // Runtime is used only for offline request planning. Listed edges are the allowed set; the package
   // declares only those it imports today. `design` is the UI's token source
   // (tokens.css) — the console consumes colours from it and nowhere else.
   console: [
@@ -178,6 +180,7 @@ const ALLOWED_EDGES: Record<string, readonly string[]> = {
     "refinement",
     "runtime",
     "system-pack",
+    "targets",
   ],
   cli: [
     "fuzz",

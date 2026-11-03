@@ -33,6 +33,7 @@
     "@anvil/generators": "workspace:*",
     "@anvil/refinement": "workspace:*",
     "@anvil/runtime": "workspace:*",
+    "@anvil/targets": "workspace:*",
     "zod": "^4.6.7",
     "@anvil/harness": "workspace:*"
   },

@@ -11,6 +11,8 @@ import type { HttpRequest, HttpResponse } from "./transport.js";
  */
 export interface PolicyContext {
   operation: Operation;
+  /** Verified/mapped caller when configured; never contains bearer material. */
+  principal?: Principal;
   input: Record<string, unknown>;
   traceId: string;
   authProfile?: string;
@@ -209,4 +211,36 @@ export function resolvePrincipalForEnv(
  */
 export function resolvePrincipal(resolved: Principal | undefined): Principal {
   return resolved ?? ANONYMOUS_PRINCIPAL;
+}
+
+/** Run operator hooks without allowing a post-decision rewrite of a protected invocation. */
+export async function runPolicyHook(
+  hook: PolicyHook | undefined,
+  context: PolicyContext,
+  identityProtected: boolean,
+): Promise<void> {
+  if (!hook) return;
+  const beforeRequest =
+    identityProtected && context.request ? JSON.stringify(context.request) : undefined;
+  const beforeInput = identityProtected ? JSON.stringify(context.input) : undefined;
+  const safe = identityProtected
+    ? {
+        ...context,
+        operation: structuredClone(context.operation),
+        principal: structuredClone(context.principal),
+      }
+    : context;
+  await hook(safe);
+  if (
+    identityProtected &&
+    ((context.request && JSON.stringify(context.request) !== beforeRequest) ||
+      JSON.stringify(context.input) !== beforeInput)
+  )
+    throw new AnvilError({
+      code: "policy_denied",
+      message:
+        "Identity-protected calls require semantic transforms before authorization; wire hooks cannot rewrite the authorized request.",
+      operation: context.operation.id,
+      traceId: context.traceId,
+    });
 }

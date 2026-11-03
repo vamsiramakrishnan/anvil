@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { identityProfileJsonSchema } from "@anvil/air";
 import { manifestJsonSchema, profileJsonSchema } from "@anvil/compiler";
 import type { Command } from "commander";
 import type { CommandContext } from "./context.js";
@@ -34,6 +35,14 @@ export function registerSchema(parent: Command, ctx: CommandContext): void {
     .option("--out <file>", "write the schema to a file instead of stdout")
     .action((opts: { out?: string }) => {
       ctx.code = emitSchema(ctx, manifestJsonSchema(), opts.out);
+    });
+
+  schema
+    .command("identity")
+    .summary("The JSON Schema for reusable identity profiles.")
+    .option("--out <file>", "write the schema to a file instead of stdout")
+    .action((opts: { out?: string }) => {
+      ctx.code = emitSchema(ctx, identityProfileJsonSchema(), opts.out);
     });
 
   schema

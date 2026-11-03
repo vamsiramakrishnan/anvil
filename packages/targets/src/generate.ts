@@ -24,9 +24,11 @@ import {
   type GeminiEnterpriseTargetConfig,
   type GeminiRegistrationSurface,
   geminiEnterpriseTargetDisplayName,
+  geminiServiceAgentMember,
   includesSurface,
   isCanonicalEngineResource,
   targetStateRelativePath,
+  usesCloudRunServiceAgent,
 } from "./config.js";
 import type { AgentPlatformTargetProfile, TargetKit, TargetKitFile } from "./model.js";
 import {
@@ -39,7 +41,10 @@ import { validateTarget } from "./validate.js";
 const enc = (s: string) => new TextEncoder().encode(s);
 const json = (v: unknown) => enc(`${JSON.stringify(v, null, 2)}\n`);
 const shellQuote = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
-const terraformString = (value: string) => JSON.stringify(value).replaceAll("${", () => "$${");
+const terraformString = (value: string) =>
+  JSON.stringify(value)
+    .replaceAll("${", () => "$${")
+    .replaceAll("%{", "%%{");
 
 /** Build the target kit for a capability's contract. */
 export function generateTargetKit(
@@ -278,7 +283,9 @@ function adminRunbook(
       "not compatible with this target.",
     ].join(" "),
     config.serverAuth === "oauth"
-      ? "Verify the applied `ANVIL_INBOUND_*` contract. RESOURCE is the public MCP URL used for discovery; AUDIENCE is the distinct JWT audience. Gemini Enterprise sign-in and Workforce Identity Federation are separate."
+      ? config.identityProfile
+        ? "Verify the applied `ANVIL_IDENTITY_PROFILE_JSON` contract and remove competing `ANVIL_INBOUND_*` settings. The connector authority, mapping and authorization rules come from this reviewed profile; Gemini Enterprise sign-in remains separate. Configure referenced secret environment variables outside the kit."
+        : "Verify the applied `ANVIL_INBOUND_*` contract. RESOURCE is the public MCP URL used for discovery; AUDIENCE is the distinct JWT audience. Gemini Enterprise sign-in and Workforce Identity Federation are separate."
       : "WARNING: `inbound-auth.env` explicitly sets no-auth. The public `/mcp` endpoint has no bearer-token gate; Gemini Enterprise sign-in and Workforce Identity Federation do not protect it.",
     "Grant the registering administrator `roles/discoveryengine.editor` and ensure the server URL is reachable. A protected project also requires the endpoint to be allowlisted.",
   ];
@@ -405,6 +412,8 @@ function isPublicConnector(profile: AgentPlatformTargetProfile): boolean {
  * issuer and audience come from YOUR IdP / OAuth client, not from the endpoint.
  */
 function inboundEnvEntries(config: GeminiEnterpriseTargetConfig): Record<string, string> {
+  if (config.identityProfile)
+    return { ANVIL_IDENTITY_PROFILE_JSON: JSON.stringify(config.identityProfile) };
   if (config.serverAuth === "no-auth") {
     return { ANVIL_INBOUND_AUTH_MODE: "none" };
   }
@@ -418,11 +427,9 @@ function inboundEnvEntries(config: GeminiEnterpriseTargetConfig): Record<string,
 }
 
 /**
- * Surface-specific Cloud Run reachability. A direct Custom MCP connector cannot
- * present Google Cloud Run IAM credentials, so it needs allUsers at the edge and
- * relies on the generated resource-server contract. Agent Gateway-only traffic
- * stays IAM-gated to the exact agent principalSet, preventing a direct public
- * bypass even when the MCP application deliberately uses no-auth.
+ * Profile-backed default Cloud Run URLs use GE's separate service-agent ID
+ * token at the IAM boundary. Custom domains retain application-token protection
+ * with explicit public edge reachability. Legacy kits keep their existing plan.
  */
 function connectorTfvars(
   profile: AgentPlatformTargetProfile,
@@ -430,22 +437,28 @@ function connectorTfvars(
 ): string {
   const env = inboundEnvEntries(config);
   const directCustomMcp = includesSurface(config, "custom-mcp");
+  const serviceAgent = usesCloudRunServiceAgent(config);
   const gatewayInvoker =
     includesSurface(config, "agent-gateway") && config.agentIdentityPrincipalSet
       ? [config.agentIdentityPrincipalSet]
       : [];
-  const authComment = !directCustomMcp
-    ? "# Agent Gateway-only: Cloud Run invocation is restricted to the exact agent principalSet."
-    : config.serverAuth === "oauth"
-      ? "# The server's ANVIL_INBOUND_* OAuth checks are the application gate."
-      : "# WARNING: direct Custom MCP + no-auth deliberately exposes /mcp; this requires explicit acknowledgement.";
+  const invokers = [...gatewayInvoker, ...(serviceAgent ? [geminiServiceAgentMember(config)] : [])];
+  const authComment = serviceAgent
+    ? "# Cloud Run IAM verifies GE's service-agent token; Anvil separately verifies the user's connector OAuth token."
+    : !directCustomMcp
+      ? "# Agent Gateway-only: Cloud Run invocation is restricted to the exact agent principalSet."
+      : config.serverAuth === "oauth"
+        ? config.identityProfile
+          ? "# Custom-domain direct connector: application identity is enforced; GE does not supply its Cloud Run IAM token for this hostname."
+          : "# The server's ANVIL_INBOUND_* OAuth checks are the application gate."
+        : "# WARNING: direct Custom MCP + no-auth deliberately exposes /mcp; this requires explicit acknowledgement.";
   return `${[
     `# ${profile.displayName} — surface-specific overlay for the generic Cloud Run deploy.`,
     "# Pass this file explicitly with -var-file; never copy it into deploy/terraform.",
     authComment,
     'ingress               = "INGRESS_TRAFFIC_ALL"',
-    `allow_unauthenticated = ${directCustomMcp}`,
-    `invoker_members       = [${gatewayInvoker.map(terraformString).join(", ")}]`,
+    `allow_unauthenticated = ${directCustomMcp && !serviceAgent}`,
+    `invoker_members       = [${invokers.map(terraformString).join(", ")}]`,
     "env = {",
     ...Object.entries(env).map(([k, v]) => `  ${k} = ${terraformString(v)}`),
     "}",
@@ -581,12 +594,21 @@ function inboundAuthEnv(
       "# WARNING: explicitly selected NO_AUTH; the public /mcp endpoint accepts",
       "# requests without a bearer token. Use only with reviewed compensating controls.",
     );
+  } else if (config.identityProfile) {
+    lines.push(
+      "# OAUTH: this reviewed profile is the sole application identity authority.",
+      "# Remove ANVIL_INBOUND_* and ANVIL_PRINCIPALS; configure referenced secrets externally.",
+    );
   } else {
     lines.push(
       "# OAUTH: validate the connector authorization server's token for this MCP API.",
       "# ANVIL_INBOUND_JWKS_URI=<override; otherwise discovered from the issuer>",
     );
   }
-  lines.push(...Object.entries(env).map(([key, value]) => `${key}=${value}`));
+  lines.push(
+    ...Object.entries(env).map(
+      ([key, value]) => `${key}=${config.identityProfile ? shellQuote(value) : value}`,
+    ),
+  );
   return `${lines.join("\n")}\n`;
 }

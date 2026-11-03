@@ -8,6 +8,8 @@ import {
   type FleetServer,
   type InboundAuthConfig,
   type InboundClaims,
+  inboundAuthorizationHeader,
+  inboundIdentityFrom,
   isBranchyardConnectToken,
   loadInboundAuthConfig,
   MALFORMED_TARGET,
@@ -113,7 +115,7 @@ async function authorize(
   res: ServerResponse,
   inbound: InboundAuthConfig,
 ): Promise<Authorized> {
-  const header = req.headers.authorization;
+  const header = inboundAuthorizationHeader(req.headers, inbound);
   const result = await verifyInboundToken(header, inbound);
   if (!result.ok) {
     res.writeHead(result.status, { ...JSON_REFUSAL, "www-authenticate": result.wwwAuthenticate });
@@ -160,7 +162,9 @@ async function authorize(
       principal,
     };
   }
-  const callerFingerprint = bearer ? verifiedPrincipalFingerprint(result.claims) : undefined;
+  const callerFingerprint = bearer
+    ? verifiedPrincipalFingerprint(result.claims, inbound.identityProfile)
+    : undefined;
   if (!callerFingerprint || !bearer) {
     res.writeHead(401, { ...JSON_REFUSAL, "www-authenticate": 'Bearer error="invalid_token"' });
     res.end(
@@ -178,14 +182,7 @@ async function authorize(
     ok: true,
     callerFingerprint,
     bearer,
-    identity: {
-      subjectToken: bearer,
-      subjectTokenType: bearer.split(".").length === 3 ? "jwt" : "access_token",
-      sub: claims.sub as string | undefined,
-      email: claims.email as string | undefined,
-      scope: claims.scope as string | undefined,
-      claims,
-    },
+    identity: inboundIdentityFrom(bearer, claims, inbound),
   };
 }
 
@@ -593,7 +590,10 @@ async function handleConnect(
     );
     return;
   }
-  const verified = await verifyInboundToken(req.headers.authorization, inbound);
+  const verified = await verifyInboundToken(
+    inboundAuthorizationHeader(req.headers, inbound),
+    inbound,
+  );
   if (!verified.ok) {
     res.writeHead(verified.status, {
       ...JSON_REFUSAL,

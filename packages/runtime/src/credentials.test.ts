@@ -240,6 +240,20 @@ describe("TokenExchangeResolver — RFC 8693 on-behalf-of", () => {
     return new URLSearchParams(body);
   }
 
+  it("never exchanges a platform assertion marked non-delegable", async () => {
+    const { fn, calls } = fakeFetch(() => ({ json: { access_token: "UNEXPECTED" } }));
+    const resolver = new TokenExchangeResolver({ env: oboEnv, fetchImpl: fn });
+    const material = await resolver.resolve(
+      "prod",
+      auth({ type: "oauth2_on_behalf_of", principal: "delegated" }),
+      {
+        inbound: { ...inbound, exchangeAllowed: false },
+      },
+    );
+    expect(material).toBeNull();
+    expect(calls).toHaveLength(0);
+  });
+
   it("exchanges the inbound token for a downstream bearer", async () => {
     const { fn, calls } = fakeFetch(() => ({
       json: { access_token: "EXCHANGED", expires_in: 3600 },

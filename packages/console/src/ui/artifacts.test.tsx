@@ -97,4 +97,22 @@ describe("interface handoff", () => {
     await screen.findByText("2 files");
     expect(screen.queryByText("No files generated")).toBeNull();
   });
+
+  it("opens generated Gemini connector files when the kit is present", async () => {
+    const path = "targets/gemini-enterprise/identity-profile.json";
+    const api = apiWith(vi.fn().mockResolvedValue({ files: [...files, { path, bytes: 100 }] }));
+    render(
+      <ArtifactsView
+        api={api}
+        bundleId="demo"
+        path={path}
+        query={new URLSearchParams("interface=targets/gemini-enterprise")}
+      />,
+    );
+    const navigation = await screen.findByRole("navigation", { name: "Artifact files" });
+    expect(within(navigation).getByRole("link", { name: /identity-profile.json/ })).toBeTruthy();
+    expect(await screen.findByRole("region", { name: `Contents of ${path}` })).toBeTruthy();
+    expect(screen.queryByText(/This bundle has no Gemini Enterprise kit/)).toBeNull();
+    expect(api.artifact).toHaveBeenCalledWith("demo", path);
+  });
 });

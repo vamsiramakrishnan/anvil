@@ -26,6 +26,7 @@ import { CompareView } from "./views/compare.js";
 import { ConfusionView } from "./views/confusion.js";
 import { CreateView } from "./views/create.js";
 import { EvidenceView } from "./views/evidence.js";
+import { IdentityView } from "./views/identity.js";
 import { InspectView } from "./views/inspect.js";
 import { ManifestView } from "./views/manifest.js";
 import { OverviewView } from "./views/overview.js";
@@ -188,6 +189,9 @@ function BundleFrame({
       break;
     case "manifest":
       view = <ManifestView api={api} bundleId={route.bundleId} />;
+      break;
+    case "identity":
+      view = <IdentityView api={api} bundleId={route.bundleId} />;
       break;
     case "queue":
       view = (

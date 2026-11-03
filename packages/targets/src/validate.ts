@@ -19,7 +19,9 @@ import {
   isCanonicalEngineResource,
   isGatewayCompatibleAppLocation,
   MCP_SERVER_AUTH_MODES,
+  usesCloudRunServiceAgent,
 } from "./config.js";
+import { validateGeminiIdentityBinding } from "./connector-identity.js";
 import {
   isEngineId,
   isGcpProjectId,
@@ -45,6 +47,17 @@ export function validateTarget(
 ): TargetValidationResult {
   const findings: TargetValidationFinding[] = [];
   const served = air.operations.filter((o) => o.state === "approved");
+  findings.push(...validateGeminiIdentityBinding(air, config));
+  if (
+    usesCloudRunServiceAgent(config) &&
+    !config.projectNumber &&
+    !canonicalEngineProjectNumber(config.engine)
+  )
+    findings.push({
+      level: "error",
+      code: "target/identity_cloud_run_project_number_required",
+      message: "The Cloud Run IAM binding requires the Gemini Enterprise app's project number.",
+    });
 
   for (const [field, value] of [
     ["surface", config.surface],

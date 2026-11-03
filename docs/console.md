@@ -22,8 +22,9 @@ and evaluation tasks. Importing an API does not create a business project.
 Within a bundle, **Interfaces** offers five interfaces: skill, CLI, MCP
 server, SDK, and Gemini Enterprise. Selecting a core interface filters the actual artifact inventory
 and shows setup guidance. Missing core files are stated explicitly. The Gemini
-Enterprise option links to the target setup guide; connector files are managed
-from the terminal and are not included in this browser’s artifact inventory.
+Enterprise option links to the target setup guide; registration files are managed
+from the terminal. Identity deployment files are available through the separate
+Identity view when their shared integrity check passes.
 Gemini Enterprise requires a separate target generation step, deployment, and
 registration; an imported API is not automatically a deployed connector.
 
@@ -33,7 +34,7 @@ as a diagnostic while healthy bundles remain available. `Ctrl+K` or `Cmd+K`
 opens navigation across bundles and views.
 
 Each bundle has **Overview**, **Review**, **API operations**, **Request builder**,
-and **Interfaces**. **Contract details**, **Routing quality**, **Checks & evidence**,
+**Identity**, and **Interfaces**. **Contract details**, **Routing quality**, **Checks & evidence**,
 and **Compare bundles** provide deeper inspection. **Refresh bundle** reloads
 changes made from the CLI.
 
@@ -55,6 +56,7 @@ CLI commands themselves call:
 | apply a reviewed pack | `anvil refine apply-pack` |
 | export a cluster task | `anvil refine export-task … group:<id>` |
 | import a submission | `anvil refine import-proposal` |
+| validate and apply connector identity | `anvil target identity <bundle> --profile <file>` |
 
 An approval made in the console is staged, byte-verified, surface-checked, and
 swapped into place exactly as `anvil approve` does it. A receipt written in the
@@ -295,3 +297,40 @@ without the token is refused, and a page at another origin can read nothing.
 ## Runtime-backed workbench
 
 **API operations** adds paginated search, state/effect filters, deep links, shared input schemas, and runtime-backed request previews. Preview is always a dry run: it has no credentials or live transport and preserves approval, validation, confirmation, and stale-bundle checks. **Request builder** prepares CLI and MCP handoffs. **Checks & evidence** provides an explicit, digest-bound regeneration action after refinements; generation uses the shared atomic reprojection path and does not approve operations or produce execution evidence.
+
+## Connector identity
+
+Open a bundle's **Identity** view to inspect or apply the same reusable identity
+profile used by `anvil target identity <bundle> --profile <file>`. The profile
+belongs to the connector's authority: Entra ID can provide Gemini Enterprise
+sign-in while SiteMinder independently authenticates Ultimatix MCP requests.
+Changing the connector profile does not change Gemini's sign-in configuration.
+
+The view shows the configured issuer, audience, tenant mapping, authorization
+adapter, profile digest and generated-kit integrity. **Live verification** stays
+unverified: generating a kit is not evidence that SiteMinder, Google IAM or the
+upstream API accepted a request.
+
+Paste or import a non-secret profile JSON, then **Validate profile**. Validation
+uses AIR's strict schema and the shared identity-kit generator, including exact
+operation bindings, required upstream scopes and input constraints. It performs
+no network call and writes no files. Introspection profiles contain environment
+variable names for client credentials; never paste client-secret values, access
+tokens or `SMSESSION` cookies.
+
+Apply only after reviewing a successful validation. Editing the draft requires
+validation again. The server refuses a stale bundle hash, validates the profile
+again and installs the complete `targets/identity/` subtree with the same atomic
+installer as the CLI. If a Gemini target already exists, both kits regenerate
+from the same profile in one transaction, preserving the reviewed platform
+coordinates and OAuth settings. A failed validation or replacement preserves the previous
+kit. Applying does not change AIR, approve operations, deploy a service or record
+live qualification. It changes deployment inputs, so review the generated files
+and certify the updated bundle before deployment.
+
+**Deployment handoff** links the generated profile and configuration files and
+the checks/evidence view. Configure Gemini Enterprise's connector OAuth client
+against SiteMinder separately; supply deployment secrets and any authorization
+extension, then run the live qualification matrix in
+[Reusable identity adapters](identity-adapters.md#qualification). The local
+console intentionally has no token-entry field or live identity-provider probe.
