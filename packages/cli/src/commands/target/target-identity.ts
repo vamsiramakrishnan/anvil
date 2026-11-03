@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
-import { generateIdentityKit } from "@anvil/targets";
+import { readBundleDir } from "@anvil/generators";
+import { prepareIdentityBinding, writeTargetKitsAtomically } from "@anvil/targets";
 import type { Command } from "commander";
 import type { CommandContext } from "../context.js";
 import { annotate } from "../meta.js";
-import { resolveTargetBundle, writeTargetKitAtomically } from "./target-shared.js";
+import { resolveTargetBundle } from "./target-shared.js";
 
 export function registerTargetIdentity(target: Command, ctx: CommandContext): void {
   annotate(
@@ -21,11 +22,12 @@ export function registerTargetIdentity(target: Command, ctx: CommandContext): vo
             ctx.code = 1;
             return;
           }
-          const kit = generateIdentityKit(
+          const kit = prepareIdentityBinding(
             resolved.air,
             JSON.parse(readFileSync(options.profile, "utf8")),
+            readBundleDir(resolved.bundleRoot),
           );
-          const written = writeTargetKitAtomically(resolved.bundleRoot, "identity", kit.files, {});
+          const written = writeTargetKitsAtomically(resolved.bundleRoot, kit.files);
           ctx.io.out(
             `Generated identity kit at ${written.targetDir}; profile sha256 ${kit.digest}.`,
           );

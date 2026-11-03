@@ -1111,6 +1111,7 @@ Options:
 - `--oauth-scope <scope...>` — one or more scopes whose resource is this MCP API
 - `--inbound-issuer <url>` — issuer the MCP resource server validates
 - `--inbound-audience <audience>` — audience identifying this MCP API
+- `--identity-profile <file>` — reviewed JSON identity profile for connector OAuth
 - `--wif <pool>` — full locations/global/workforcePools/<pool-id> resource for GE sign-in (separate from /mcp auth)
 - `--allow-unauthenticated-mcp` — acknowledge that no-auth leaves the public /mcp endpoint without a bearer-token gate
 - `--confirm-engine-egress-reroute` — acknowledge that Agent Gateway binding reroutes all agent egress for the engine

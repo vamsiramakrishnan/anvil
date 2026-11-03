@@ -227,6 +227,31 @@ export function createMockConsole(
     );
   };
   const handlers: { [R in ConsoleRoute]: Handler<R> } = {
+    identity: ({ id = "" }) => {
+      bundle(id);
+      return {
+        bundleId: id,
+        bundleHash: "a".repeat(64),
+        configured: false,
+        integrity: { state: "missing", findings: [] },
+        verifiedLive: false,
+        files: [],
+      };
+    },
+    validateIdentity: () => {
+      throw refuse(
+        409,
+        "console/refused",
+        "Identity validation requires a real compiled bundle. Run anvil console on a workspace.",
+      );
+    },
+    applyIdentity: () => {
+      throw refuse(
+        409,
+        "console/refused",
+        "Applying identity configuration requires a real bundle directory.",
+      );
+    },
     businessProjects: () => ({ enabled: false, projects: [] }),
     businessProject: businessUnavailable,
     saveBusinessProject: businessUnavailable,

@@ -16,6 +16,7 @@ import {
 import { GEMINI_ENTERPRISE_PROFILE } from "./gemini-enterprise.js";
 import { generateTargetKit } from "./generate.js";
 import { generateIdentityKit } from "./identity.js";
+import { identityBindingFindings } from "./identity-binding.js";
 import {
   createMcpRegistryTargetConfig,
   generateMcpRegistryTargetKit,
@@ -246,6 +247,8 @@ export function verifyTargetKit(
       });
     }
   }
+  if (profile.id === GEMINI_ENTERPRISE_PROFILE.id)
+    findings.push(...identityBindingFindings(bundleFiles));
   findings.sort(
     (left, right) => left.path.localeCompare(right.path) || left.code.localeCompare(right.code),
   );
@@ -348,7 +351,7 @@ function verifyIdentityKit(
         Buffer.from(file.bytes).toString("utf8"),
       ]),
     );
-    const findings: TargetKitIntegrityFinding[] = [];
+    const findings: TargetKitIntegrityFinding[] = identityBindingFindings(files);
     for (const name of new Set([...Object.keys(expected), ...actualFiles])) {
       if (actual[name] === expected[name]) continue;
       findings.push({

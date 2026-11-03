@@ -20,7 +20,8 @@
             "oidc",
             "google_service_account",
             "google_iap",
-            "jwt_bridge"
+            "jwt_bridge",
+            "oauth2_introspection"
           ]
         },
         "issuer": {
@@ -58,13 +59,58 @@
             "at+jwt",
             "JWT"
           ]
+        },
+        "introspection": {
+          "type": "object",
+          "properties": {
+            "endpoint": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "clientIdEnv": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "clientSecretEnv": {
+              "type": "string",
+              "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
+            },
+            "clientAuth": {
+              "default": "client_secret_basic",
+              "type": "string",
+              "enum": [
+                "client_secret_basic",
+                "client_secret_post"
+              ]
+            },
+            "timeoutMs": {
+              "default": 3000,
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 30000
+            },
+            "audienceSource": {
+              "default": "response",
+              "type": "string",
+              "enum": [
+                "response",
+                "dedicated_client"
+              ]
+            }
+          },
+          "required": [
+            "endpoint",
+            "clientIdEnv",
+            "clientSecretEnv"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
         "provider",
         "issuer",
-        "audience",
-        "jwksUri"
+        "audience"
       ],
       "additionalProperties": false
     },

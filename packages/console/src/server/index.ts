@@ -9,6 +9,7 @@ import { businessExecutions } from "./business-executions.js";
 import * as creation from "./creation.js";
 import { historyView } from "./history.js";
 import { createRequestListener, type Handlers } from "./http.js";
+import * as identity from "./identity.js";
 import * as manifest from "./manifest.js";
 import type { Request } from "./mutations.js";
 import * as mutations from "./mutations.js";
@@ -96,6 +97,11 @@ export function createConsoleServer(options: ConsoleServerOptions): ConsoleServe
   const businessJobs = new BusinessJobs(root, options.businessEvaluator);
   const handlers: Handlers = {
     ...businessHandlers(root, businessJobs),
+    identity: ({ params }) => identity.identityView(root, param(params, "id")),
+    validateIdentity: ({ params, body }) =>
+      identity.validateIdentity(root, param(params, "id"), body as Request<"validateIdentity">),
+    applyIdentity: ({ params, body }) =>
+      identity.applyIdentity(root, param(params, "id"), body as Request<"applyIdentity">),
     businessExecutions: ({ params }) => businessExecutions(root, param(params, "id")),
     preview: ({ params, body }) =>
       workbench.previewOperation(

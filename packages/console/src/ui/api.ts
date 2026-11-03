@@ -176,6 +176,11 @@ export function createConsoleApi(options: ConsoleApiOptions = {}) {
     drift: (id: string, against: string) => call("drift", { id }, undefined, { against }),
     history: (id: string) => call("history", { id }),
     manifest: (id: string) => call("manifest", { id }),
+    identity: (id: string) => call("identity", { id }),
+    validateIdentity: (id: string, body: ConsoleRequest<"validateIdentity">) =>
+      call("validateIdentity", { id }, body),
+    applyIdentity: (id: string, body: ConsoleRequest<"applyIdentity">) =>
+      call("applyIdentity", { id }, body),
     validateManifest: (id: string, body: ConsoleRequest<"validateManifest">) =>
       call("validateManifest", { id }, body),
     writeManifest: (id: string, body: ConsoleRequest<"writeManifest">) =>

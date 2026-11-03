@@ -58,7 +58,9 @@ export function ArtifactsView({
   const surface = OUTPUTS.some((item) => item.id === requestedInterface) ? requestedInterface : "";
   const files = loaded.data?.files ?? [];
   const output = OUTPUTS.find((item) => item.id === surface);
-  const terminalSetup = surface === "targets/gemini-enterprise";
+  const terminalSetup =
+    surface === "targets/gemini-enterprise" &&
+    !files.some((file) => file.path.startsWith("targets/gemini-enterprise/"));
   const interfaceFiles = files.filter((file) => !surface || file.path.startsWith(`${surface}/`));
   const visible = interfaceFiles.filter((file) =>
     file.path.toLowerCase().includes(query.toLowerCase()),
@@ -107,7 +109,7 @@ export function ArtifactsView({
                 <strong>{item.title}</strong>
                 <span>{item.description}</span>
                 <small>
-                  {item.id === "targets/gemini-enterprise"
+                  {item.id === "targets/gemini-enterprise" && !count
                     ? "Terminal setup"
                     : loaded.state === "loading"
                       ? "Loading…"
@@ -151,8 +153,8 @@ export function ArtifactsView({
             <li>Verify the endpoint and register it with your Gemini Enterprise app.</li>
           </ol>
           <p>
-            This browser lists core bundle files only. Connector files and connection status are not
-            available here.
+            This bundle has no Gemini Enterprise kit. Generate the kit, then return here to inspect
+            its configuration. Live connection status requires endpoint qualification.
           </p>
           <a href={href(bundleId, "artifacts")}>Browse core bundle files →</a>
         </section>

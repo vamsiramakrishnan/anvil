@@ -24,6 +24,7 @@ import {
 } from "@anvil/refinement";
 import { z } from "zod";
 import { BUSINESS_ROUTES } from "./business-contract.js";
+import { IDENTITY_ROUTES } from "./identity-contract.js";
 import { REVIEW_ROUTES, zCapabilityBudget, zReprojection } from "./review-contract.js";
 import {
   WORKBENCH_ROUTES,
@@ -36,6 +37,14 @@ import {
   zPreviewRequest,
   zRegenerateRequest,
 } from "./workbench-contract.js";
+
+export {
+  zIdentityApplyResponse,
+  zIdentityDraftRequest,
+  zIdentityIssue,
+  zIdentityValidation,
+  zIdentityView,
+} from "./identity-contract.js";
 
 export {
   type BundleHistory,
@@ -632,6 +641,7 @@ export const CONSOLE_ROUTES = {
   ...WORKBENCH_ROUTES,
   ...BUSINESS_ROUTES,
   ...REVIEW_ROUTES,
+  ...IDENTITY_ROUTES,
   preview: {
     method: "POST",
     path: "/api/bundles/:id/operations/:operationId/preview",

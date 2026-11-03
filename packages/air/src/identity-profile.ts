@@ -13,6 +13,9 @@ const claim = text.refine(
   (value) => !["__proto__", "constructor", "prototype"].includes(value),
   "Invalid claim key",
 );
+const envName = z
+  .string()
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "Expected an environment variable name");
 
 /** Deployment-owned, reusable across bundles. Never inferred from upstream auth. */
 export const IdentityProfile = z
@@ -20,14 +23,33 @@ export const IdentityProfile = z
     version: z.literal(1),
     id: text,
     authentication: z.strictObject({
-      provider: z.enum(["oidc", "google_service_account", "google_iap", "jwt_bridge"]),
+      provider: z.enum([
+        "oidc",
+        "google_service_account",
+        "google_iap",
+        "jwt_bridge",
+        "oauth2_introspection",
+      ]),
       issuer: https,
       audience: text,
-      jwksUri: https,
+      jwksUri: https.optional(),
       resource: https.optional(),
       requiredScopes: z.array(text).default([]),
       /** JWT access-token profiles can require at+jwt; Google assertions use JWT. */
       tokenType: z.enum(["at+jwt", "JWT"]).optional(),
+      introspection: z
+        .strictObject({
+          endpoint: https,
+          clientIdEnv: envName,
+          clientSecretEnv: envName,
+          clientAuth: z
+            .enum(["client_secret_basic", "client_secret_post"])
+            .default("client_secret_basic"),
+          timeoutMs: z.number().int().min(1).max(30000).default(3000),
+          /** Only for an explicitly reviewed OAuth client dedicated to this MCP resource. */
+          audienceSource: z.enum(["response", "dedicated_client"]).default("response"),
+        })
+        .optional(),
     }),
     mapping: z.strictObject({
       tenant: z.discriminatedUnion("source", [
@@ -73,6 +95,23 @@ export const IdentityProfile = z
   })
   .superRefine((profile, ctx) => {
     const auth = profile.authentication;
+    if (auth.provider === "oauth2_introspection") {
+      if (!auth.introspection || auth.jwksUri || auth.tokenType)
+        ctx.addIssue({
+          code: "custom",
+          message: "Introspection requires its configuration and cannot use JWT settings",
+        });
+      if (auth.introspection?.audienceSource === "dedicated_client" && !auth.requiredScopes.length)
+        ctx.addIssue({
+          code: "custom",
+          message: "Dedicated-client audience binding requires explicit connector scopes",
+        });
+    } else if (!auth.jwksUri || auth.introspection) {
+      ctx.addIssue({
+        code: "custom",
+        message: "JWT profiles require JWKS and cannot configure introspection",
+      });
+    }
     if (
       auth.provider === "google_service_account" &&
       (auth.issuer !== "https://accounts.google.com" ||

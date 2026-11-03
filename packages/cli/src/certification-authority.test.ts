@@ -177,8 +177,10 @@ describe("certifyBundle call sites do not agree on what certification means", ()
 
     const certifyCommand = readFileSync(join(root, "packages/cli/src/commands/certify.ts"), "utf8");
     expect(certifyCommand).toContain("@anvil/certification");
-    expect(certifyCommand).toContain("listTargetKitVerifiers");
-    expect(certifyCommand).toContain("profile.verify(air, files)");
+    expect(certifyCommand).toContain("targetKitCertificationChecks(files, air)");
+    expect(readFileSync(join(root, "packages/targets/src/certification.ts"), "utf8")).toContain(
+      "profile.verify(air, files)",
+    );
   });
 
   it("every certification.json on disk is written by exactly one code path", () => {

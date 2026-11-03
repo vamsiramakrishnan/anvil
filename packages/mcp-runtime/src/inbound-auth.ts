@@ -6,16 +6,11 @@
  * OAuth client; this is the other half of that handshake, which the platform
  * cannot do for us ("the MCP server must self-enforce it").
  *
- * Two credential shapes are supported, both RS256 JWTs validated against a JWKS:
- *   - `google_service_account` — a Google-issued access/ID token (machine
- *     identity); issuer `accounts.google.com`, keys from Google's certs.
- *   - `oidc` — a user-delegated token from your IdP (Google, Okta, Entra, …);
- *     issuer + JWKS come from the IdP's OpenID configuration.
- *
- * Dependency-free on purpose: the thin serving path stays deployable on its own,
- * so verification uses `node:crypto` (JWK → public key → RS256 verify), never a
- * JWT library. The JWKS fetch is injectable so the whole thing is unit-testable
- * offline, and keys are cached by URI.
+ * Reviewed identity profiles select JWT verification or online RFC 7662
+ * introspection. The connector issuer is independent of the platform's SSO
+ * authority. Google service-account ID tokens and IAP assertions use separate
+ * issuer/key/audience bindings. JWT verification uses node:crypto; introspection
+ * uses a boot-scoped credential closure. Both paths have injectable fetches.
  */
 import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -28,6 +23,13 @@ import {
   type Principal,
   parseGrants,
 } from "@anvil/runtime";
+import {
+  audienceMatches,
+  isPlainRecord,
+  missingScopes,
+  validClaimsShape,
+} from "./inbound-claims.js";
+import { createTokenIntrospector, type TokenIntrospector } from "./oauth-introspection.js";
 
 /**
  * `branchyard` (ADR-0029): a per-turn EdDSA (Ed25519) token minted by
@@ -44,6 +46,8 @@ export interface InboundAuthConfig {
   credentialHeader?: "authorization" | "x-goog-iap-jwt-assertion";
   tokenType?: "at+jwt" | "JWT";
   algorithms?: readonly string[];
+  /** Boot-scoped credential closure. Secret values are never serialized in configuration. */
+  introspect?: TokenIntrospector;
   /** Expected token issuer (`iss`). */
   issuer?: string;
   /** Expected audience (`aud`) — the connector's public URL / resource id. */
@@ -135,6 +139,9 @@ export function loadInboundAuthConfig(
           : auth.provider === "google_service_account"
             ? ["RS256"]
             : ["RS256", "ES256"],
+      ...(auth.provider === "oauth2_introspection"
+        ? { introspect: createTokenIntrospector(auth, env) }
+        : {}),
     };
     validateEnabledConfig(config);
     return config;
@@ -251,7 +258,7 @@ function b64urlToString(part: string): string {
 export async function verifyInboundToken(
   authorizationHeader: string | undefined,
   config: InboundAuthConfig,
-  opts: { now?: number; fetchJwks?: JwksFetcher } = {},
+  opts: { now?: number; fetchJwks?: JwksFetcher; fetchIntrospection?: typeof fetch } = {},
 ): Promise<InboundAuthResult> {
   if (config.mode === "none") return { ok: true, claims: {} };
   if (
@@ -272,6 +279,48 @@ export async function verifyInboundToken(
 
   const token = bearerToken(authorizationHeader);
   if (!token) return deny(401, "invalid_request", "No bearer token was presented.", config);
+  if (
+    token.length > 65536 ||
+    [...token].some((char) => char.charCodeAt(0) <= 32 || char.charCodeAt(0) >= 127)
+  )
+    return deny(401, "invalid_token", "Bearer token is malformed or exceeds the limit.", config);
+
+  if (config.identityProfile?.authentication.provider === "oauth2_introspection") {
+    try {
+      const claims = await config.introspect?.(token, opts.fetchIntrospection);
+      if (!isPlainRecord(claims) || !validClaimsShape(claims))
+        return deny(401, "invalid_token", "Introspection response is invalid.", config);
+      if (claims.iss !== config.issuer || !audienceMatches(claims.aud, config.audience ?? ""))
+        return deny(
+          401,
+          "invalid_token",
+          "Introspection identity does not match this connector.",
+          config,
+        );
+      // Online validation has no expiry grace: an expired/revoked token cannot be revived locally.
+      if (
+        typeof claims.exp !== "number" ||
+        now >= claims.exp ||
+        (typeof claims.nbf === "number" && now < claims.nbf)
+      )
+        return deny(
+          401,
+          "invalid_token",
+          "Introspection token is expired or not yet valid.",
+          config,
+        );
+      if (missingScopes(claims, config.requiredScopes).length)
+        return deny(
+          403,
+          "insufficient_scope",
+          "Token lacks a scope this connector requires.",
+          config,
+        );
+      return { ok: true, claims };
+    } catch {
+      return deny(401, "invalid_token", "Token could not be validated by its authority.", config);
+    }
+  }
 
   const parts = token.split(".");
   if (parts.length !== 3) return deny(401, "invalid_token", "Malformed JWT.", config);
@@ -415,39 +464,6 @@ export async function verifyInboundToken(
   return { ok: true, claims };
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
-  );
-}
-
-function validClaimsShape(claims: Record<string, unknown>): claims is InboundClaims {
-  const optionalStrings = ["iss", "sub", "scope", "email"] as const;
-  if (optionalStrings.some((key) => claims[key] !== undefined && typeof claims[key] !== "string")) {
-    return false;
-  }
-  for (const key of ["exp", "nbf"] as const) {
-    if (
-      claims[key] !== undefined &&
-      (typeof claims[key] !== "number" || !Number.isFinite(claims[key]))
-    ) {
-      return false;
-    }
-  }
-  const validStringArray = (value: unknown): value is string[] =>
-    Array.isArray(value) && value.every((item) => typeof item === "string");
-  if (claims.aud !== undefined && typeof claims.aud !== "string" && !validStringArray(claims.aud)) {
-    return false;
-  }
-  if (claims.scp !== undefined && typeof claims.scp !== "string" && !validStringArray(claims.scp)) {
-    return false;
-  }
-  return true;
-}
-
 function validateEnabledConfig(config: InboundAuthConfig): void {
   if (config.mode === "none") return;
   if (config.mode === "branchyard") {
@@ -456,6 +472,11 @@ function validateEnabledConfig(config: InboundAuthConfig): void {
   }
   if (!config.issuer) throw new Error("inbound auth requires an issuer");
   if (!config.audience) throw new Error("inbound auth requires an audience");
+  if (
+    config.identityProfile?.authentication.provider === "oauth2_introspection" &&
+    !config.introspect
+  )
+    throw new Error("inbound introspection requires a boot-scoped introspector");
   const resource =
     config.resource ?? (config.audience.startsWith("https://") ? config.audience : undefined);
   if (!resource) {
@@ -485,27 +506,6 @@ function bearerToken(header: string | undefined): string | undefined {
   if (!header) return undefined;
   const match = /^Bearer[ ]+(.+)$/i.exec(header.trim());
   return match ? (match[1] as string).trim() : undefined;
-}
-
-function audienceMatches(aud: string | string[] | undefined, expected: string): boolean {
-  if (aud === undefined) return false;
-  return Array.isArray(aud) ? aud.includes(expected) : aud === expected;
-}
-
-function tokenScopes(claims: InboundClaims): Set<string> {
-  const out = new Set<string>();
-  if (typeof claims.scope === "string")
-    for (const s of claims.scope.split(/\s+/)) if (s) out.add(s);
-  if (Array.isArray(claims.scp)) for (const s of claims.scp) out.add(s);
-  else if (typeof claims.scp === "string")
-    for (const s of claims.scp.split(/\s+/)) if (s) out.add(s);
-  return out;
-}
-
-function missingScopes(claims: InboundClaims, required: string[] | undefined): string[] {
-  if (!required || required.length === 0) return [];
-  const have = tokenScopes(claims);
-  return required.filter((s) => !have.has(s));
 }
 
 function deny(
@@ -779,7 +779,12 @@ export function inboundIdentityFrom(
   return {
     subjectToken: raw,
     exchangeAllowed: config.credentialHeader !== "x-goog-iap-jwt-assertion",
-    subjectTokenType: raw.split(".").length === 3 ? ("jwt" as const) : ("access_token" as const),
+    subjectTokenType:
+      config.identityProfile?.authentication.provider === "oauth2_introspection"
+        ? ("access_token" as const)
+        : raw.split(".").length === 3
+          ? ("jwt" as const)
+          : ("access_token" as const),
     sub: claims.sub as string | undefined,
     email: claims.email as string | undefined,
     scope: claims.scope as string | undefined,

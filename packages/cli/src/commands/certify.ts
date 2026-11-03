@@ -1,6 +1,5 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AirDocument } from "@anvil/air";
 import { certify as certifyContractAir } from "@anvil/certification";
 import {
   CERTIFICATION_FILE,
@@ -13,7 +12,7 @@ import {
   readBundleDir,
   resolveBundleDir,
 } from "@anvil/generators";
-import { listTargetKitVerifiers } from "@anvil/targets";
+import { targetKitCertificationChecks } from "@anvil/targets";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
@@ -111,7 +110,7 @@ export function runCertify(
     ),
   );
   if (canonical.status === "failed") cert.status = "failed";
-  const targetChecks = targetCertificationChecks(files, air);
+  const targetChecks = targetKitCertificationChecks(files, air);
   cert.checks.push(...targetChecks);
   if (targetChecks.some((check) => check.status === "failed")) cert.status = "failed";
   writeFileSync(join(dir, CERTIFICATION_FILE), `${JSON.stringify(cert, null, 2)}\n`, "utf8");
@@ -122,33 +121,6 @@ export function runCertify(
     io.out(renderCertificationSummary(cert, dir));
   }
   return cert.status === "passed" ? 0 : 1;
-}
-
-/**
- * One drift check per registered profile whose target subtree is present in
- * the bundle — checked exactly the way Gemini Enterprise's kit always was,
- * generalized over `listProfiles()` instead of one hardcoded profile.
- */
-function targetCertificationChecks(
-  files: Record<string, string>,
-  air: AirDocument,
-): CertificationCheck[] {
-  const checks: CertificationCheck[] = [];
-  for (const profile of listTargetKitVerifiers()) {
-    const prefix = `targets/${profile.id}/`;
-    if (!Object.keys(files).some((path) => path.startsWith(prefix))) continue;
-
-    const result = profile.verify(air, files);
-    checks.push({
-      id: `contract.target-kit-exact.${profile.id}`,
-      gate: "contract",
-      status: result.ok ? "passed" : "failed",
-      detail: result.ok
-        ? `${profile.id} exactly regenerates from persisted setup config and canonical AIR (${result.expectedFiles.length} files, ${result.expectedDigest?.slice(0, 12)}…).`
-        : result.findings.map((finding) => finding.detail).join("; "),
-    });
-  }
-  return checks;
 }
 
 /** The gate-by-gate summary `anvil certify` prints (details live behind --json). */

@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "id": "siteminder-oidc",
+  "authentication": {
+    "provider": "oidc",
+    "issuer": "https://siteminder.example.com/REPLACE_WITH_REVIEWED_ISSUER",
+    "audience": "https://mcp.example.com",
+    "jwksUri": "https://siteminder.example.com/REPLACE_WITH_REVIEWED_JWKS_URI",
+    "requiredScopes": [
+      "mcp.invoke"
+    ],
+    "resource": "https://mcp.example.com/mcp"
+  },
+  "mapping": {
+    "tenant": {
+      "source": "fixed",
+      "value": "enterprise"
+    },
+    "groupsClaim": "groups",
+    "upstreamScopes": [
+      "payments.read"
+    ]
+  },
+  "authorization": {
+    "rules": [
+      {
+        "id": "payments-readers",
+        "service": "payments",
+        "operations": [
+          "payments.payments.get"
+        ],
+        "effect": "allow",
+        "groups": [
+          "payments-readers"
+        ]
+      }
+    ]
+  }
+}

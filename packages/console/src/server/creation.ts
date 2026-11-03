@@ -17,6 +17,7 @@ import {
   recordBundleManifest,
   verifyCertification,
 } from "@anvil/generators";
+import { targetKitCertificationChecks } from "@anvil/targets";
 import type { ConsoleResponse } from "../contract.js";
 import { ConsoleError, invalidRequest } from "./errors.js";
 import type { Request } from "./mutations.js";
@@ -134,7 +135,10 @@ export function evidenceView(root: string, id: string): ConsoleResponse<"evidenc
   const certification = verifyCertification(files);
   return {
     bundleHash: bundleHash(files),
-    staticChecks: certifyBundle(files, air).checks,
+    staticChecks: [
+      ...certifyBundle(files, air).checks,
+      ...targetKitCertificationChecks(files, air),
+    ],
     certification: {
       valid: certification.ok,
       detail: certification.ok

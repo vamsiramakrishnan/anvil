@@ -22,6 +22,7 @@ export type View =
   | "workbench"
   | "assurance"
   | "compare"
+  | "identity"
   | "manifest";
 
 export type Route =
@@ -36,7 +37,7 @@ export function parseHash(hash: string): Route {
     return { view: "projects", projectId: path.slice(10) };
   if (path === "/new") return { view: "new" };
   const match =
-    /^\/b\/([^/]+)\/(overview|queue|inspect|confusion|evidence|artifacts|catalog|workbench|assurance|compare|manifest)$/.exec(
+    /^\/b\/([^/]+)\/(overview|queue|inspect|confusion|evidence|artifacts|catalog|workbench|assurance|compare|identity|manifest)$/.exec(
       path,
     );
   if (!match) return { view: "workspace" };
@@ -264,13 +265,14 @@ export const BUNDLE_VIEWS: ReadonlyArray<readonly [View, string, string]> = [
   ["confusion", "Routing quality", "08"],
   ["evidence", "Checks & evidence", "09"],
   ["manifest", "Manifest", "10"],
+  ["identity", "Identity", "11"],
 ];
 
 export const BUNDLE_NAV_GROUPS = [
   { label: "Build and use", views: ["overview", "catalog", "queue", "workbench", "artifacts"] },
   {
     label: "Inspect and improve",
-    views: ["inspect", "compare", "confusion", "evidence", "manifest"],
+    views: ["inspect", "compare", "confusion", "evidence", "identity", "manifest"],
   },
 ] as const;
 

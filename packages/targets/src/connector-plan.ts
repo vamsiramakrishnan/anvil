@@ -17,6 +17,7 @@ import {
   type GeminiEnterpriseTargetConfig,
   type GeminiRegistrationSurface,
   includesSurface,
+  usesCloudRunServiceAgent,
 } from "./config.js";
 import type { AgentPlatformTargetProfile } from "./model.js";
 
@@ -104,7 +105,18 @@ function identityGuidance(config: GeminiEnterpriseTargetConfig): IdentityGuidanc
     authUri: endpoints.authUri,
     tokenUri: endpoints.tokenUri,
     createClientWhere: endpoints.createClientWhere,
-    notes: workforceNote,
+    notes: [
+      ...workforceNote,
+      ...(config.identityProfile
+        ? [
+            `Connector identity profile ${config.identityProfile.id} validates ${config.identityProfile.authentication.provider} credentials from ${config.identityProfile.authentication.issuer}; it is independent of the GE login authority.`,
+            "Deploy ANVIL_IDENTITY_PROFILE_JSON as the sole application identity configuration; remove ANVIL_INBOUND_* and ANVIL_PRINCIPALS settings. Supply referenced secrets through deployment-owned secret configuration.",
+            usesCloudRunServiceAgent(config)
+              ? "The default Cloud Run URL uses GE's service-agent IAM token separately from the employee's connector OAuth token. Review the generated invoker binding."
+              : "GE does not send its automatic Cloud Run IAM token to custom domains; review the generated reachability and application-authentication settings.",
+          ]
+        : []),
+    ],
   };
   switch (provider) {
     case "google":
