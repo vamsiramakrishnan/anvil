@@ -26,7 +26,7 @@ import {
   readBundleDir,
   writeBundle,
 } from "@anvil/generators";
-import { listProfiles, verifyTargetKit } from "@anvil/targets";
+import { listTargetKitVerifiers } from "@anvil/targets";
 
 /**
  * Transactional installation of a generated gateway bundle.
@@ -148,11 +148,11 @@ export function gatewayLifecycleArtifacts(
       .map((path) => /^targets\/([^/]+)\//.exec(path)?.[1])
       .filter((targetId): targetId is string => targetId !== undefined),
   );
-  for (const profile of listProfiles()) {
+  for (const profile of listTargetKitVerifiers()) {
     if (!targetIds.has(profile.id)) continue;
 
     targetIds.delete(profile.id);
-    const verification = verifyTargetKit(air, profile, files);
+    const verification = profile.verify(air, files);
     if (!verification.ok) {
       diagnostics.push(
         ...verification.findings.map((finding) => ({

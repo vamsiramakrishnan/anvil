@@ -11,6 +11,7 @@ import type { Command } from "commander";
 import type { CommandContext } from "../context.js";
 import { registerTargetClaude } from "./target-claude.js";
 import { registerTargetGemini } from "./target-gemini.js";
+import { registerTargetIdentity } from "./target-identity.js";
 import { registerTargetMcpRegistry } from "./target-mcp-registry.js";
 import { registerTargetOpenAi } from "./target-openai.js";
 
@@ -30,6 +31,7 @@ export function registerTarget(parent: Command, ctx: CommandContext): void {
         )}. Validates the contract against the platform's requirements first; no files are written when validation fails.`,
     );
 
+  registerTargetIdentity(target, ctx);
   registerTargetGemini(target, ctx);
   registerTargetClaude(target, ctx);
   registerTargetOpenAi(target, ctx);

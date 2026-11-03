@@ -9,6 +9,8 @@ import { registerCredentialBackend } from "./credentials.js";
 import { AnvilError } from "./errors.js";
 import type { LedgerFactory } from "./idempotency.js";
 import { InMemoryLedger, registerLedgerBackend } from "./idempotency.js";
+import type { IdentityAuthorizer } from "./identity.js";
+import { createGoogleIdentityAuthorizer } from "./identity-remote.js";
 import { composeInvocationTransforms } from "./invocation.js";
 import type { Observer } from "./observability.js";
 import type { PolicyHook, PolicyHooks } from "./policy.js";
@@ -63,6 +65,8 @@ export { composeObservers } from "./observability.js";
 export interface RuntimeExtension {
   /** A stable name, recorded on `/healthz` and in the boot log. */
   name: string;
+  /** Boot-scoped enterprise policy adapters. Built-in rules cannot be replaced. */
+  identityAuthorizers?: Record<string, IdentityAuthorizer>;
   /** Hooks the executor runs around every call (`policy.ts`). */
   policy?: PolicyHooks;
   /** One more execution-record sink, fanned out beside the built-in one. */
@@ -79,6 +83,7 @@ export interface RuntimeExtension {
 export interface RuntimeExtensionApi {
   /** Refuse the current call from inside a policy hook with `policy_denied`. */
   denyPolicy: typeof denyPolicy;
+  createGoogleIdentityAuthorizer: typeof createGoogleIdentityAuthorizer;
   AnvilError: typeof AnvilError;
   InMemoryLedger: typeof InMemoryLedger;
   hostIsAllowed: typeof hostIsAllowed;
@@ -97,7 +102,13 @@ export type RuntimeExtensionFactory = (
 /** A module's default export: the extension itself, or a factory that builds it. */
 export type RuntimeExtensionModule = RuntimeExtension | RuntimeExtensionFactory;
 
-export type ExtensionContribution = "policy" | "observer" | "ledgers" | "credentials" | "transport";
+export type ExtensionContribution =
+  | "policy"
+  | "observer"
+  | "ledgers"
+  | "credentials"
+  | "transport"
+  | "identityAuthorizers";
 
 /** One loaded module's identity — what `/healthz` reports and the boot log prints. */
 export interface LoadedExtension {
@@ -114,6 +125,7 @@ export interface LoadedExtension {
 
 /** The composed result of loading every configured module, in order. */
 export interface RuntimeExtensions {
+  identityAuthorizers?: Record<string, IdentityAuthorizer>;
   loaded: LoadedExtension[];
   /** Every extension's hooks, chained in load order — `undefined` when none contributed any. */
   policy?: PolicyHooks;
@@ -178,7 +190,14 @@ export function extensionSpecifiersFromConfig(config: {
 
 /** The api every factory receives — one construction site so surfaces agree. */
 export function runtimeExtensionApi(config: RuntimeConfig): RuntimeExtensionApi {
-  return { denyPolicy, AnvilError, InMemoryLedger, hostIsAllowed, config };
+  return {
+    denyPolicy,
+    AnvilError,
+    InMemoryLedger,
+    hostIsAllowed,
+    config,
+    createGoogleIdentityAuthorizer,
+  };
 }
 
 export interface LoadExtensionsOptions {
@@ -237,6 +256,7 @@ export async function loadRuntimeExtensions(
   const loaded: LoadedExtension[] = [];
   const extensions: RuntimeExtension[] = [];
   const seenNames = new Set<string>();
+  const identityAuthorizers: Record<string, IdentityAuthorizer> = Object.create(null);
 
   for (const specifier of specifiers) {
     const { url, path } = resolveExtensionSpecifier(specifier, cwd);
@@ -291,6 +311,11 @@ export async function loadRuntimeExtensions(
       );
     }
 
+    for (const [name, authorizer] of Object.entries(valid.identityAuthorizers ?? {})) {
+      if (name === "rules" || Object.hasOwn(identityAuthorizers, name))
+        throw extensionError(specifier, "identity authorizer is reserved or duplicated");
+      identityAuthorizers[name] = authorizer;
+    }
     extensions.push(valid);
     loaded.push({
       name: valid.name,
@@ -305,6 +330,7 @@ export async function loadRuntimeExtensions(
   const wrappers = extensions.flatMap((e) => (e.transport ? [e.transport] : []));
   return {
     loaded,
+    identityAuthorizers,
     policy: composePolicyHooks(extensions.flatMap((e) => (e.policy ? [e.policy] : []))),
     observers: extensions.flatMap((e) => (e.observer ? [e.observer] : [])),
     wrapTransport: (base) => wrappers.reduce((transport, wrap) => wrap(transport), base),
@@ -384,7 +410,7 @@ function validateExtension(value: unknown, specifier: string): RuntimeExtension 
       throw extensionError(specifier, "`observer` must have an `onRecord(record)` method");
     }
   }
-  for (const field of ["ledgers", "credentials"] as const) {
+  for (const field of ["ledgers", "credentials", "identityAuthorizers"] as const) {
     if (ext[field] === undefined) continue;
     const table = ext[field];
     if (!table || typeof table !== "object") {
@@ -412,6 +438,8 @@ function contributionsOf(ext: RuntimeExtension): ExtensionContribution[] {
   if (ext.ledgers && Object.keys(ext.ledgers).length > 0) out.push("ledgers");
   if (ext.credentials && Object.keys(ext.credentials).length > 0) out.push("credentials");
   if (ext.transport) out.push("transport");
+  if (ext.identityAuthorizers && Object.keys(ext.identityAuthorizers).length)
+    out.push("identityAuthorizers");
   return out;
 }
 

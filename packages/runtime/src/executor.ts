@@ -41,7 +41,12 @@ import {
   requestFingerprint,
   resolveIdempotencyKey,
 } from "./idempotency.js";
-import type { InboundIdentity } from "./inbound-identity.js";
+import {
+  canonicalUpstream,
+  enforceIdentityAuthorization,
+  ledgerPrincipalScope,
+} from "./identity-execution.js";
+import { currentInboundIdentity, type InboundIdentity } from "./inbound-identity.js";
 import {
   assertInvocationCredentialHeaders,
   invocationHeaderIdentity,
@@ -54,11 +59,11 @@ import { type ExecutionRecord, noopObserver, type Observer } from "./observabili
 import { bindParam } from "./param-serialization.js";
 import {
   missingScopes,
-  type PolicyContext,
   type PolicyHook,
   type PolicyHooks,
   type Principal,
   resolvePrincipal,
+  runPolicyHook,
   UNRESOLVED_PRINCIPAL,
 } from "./policy.js";
 import { applyAgentProjection } from "./response-projection.js";
@@ -98,6 +103,8 @@ export type ExecuteResult = (
 ) & { idempotencyKey?: string };
 
 export interface ExecuteContext {
+  /** Required identity and authorization contract, installed by the shared boot root. */
+  identity?: import("./identity.js").IdentityRuntime;
   /** A compiled business gateway owns the durable intent ledger; clients must not cache its refusals. */
   remoteIdempotency?: boolean;
   transport: Transport;
@@ -550,46 +557,6 @@ function buildRequest(
   return codec.encode(op, { path, query, headers, body: bodyValue, hasBody, baseUrl });
 }
 
-function canonicalUpstream(baseUrl: string): string {
-  try {
-    const url = new URL(baseUrl);
-    // Scheme, host and path only: userinfo, query and fragment never reach the
-    // fingerprint. Trailing slashes are dropped, but the root path stays "/".
-    const path = url.pathname.replace(/\/+$/, "") || "/";
-    return `${url.protocol}//${url.host}${path}`;
-  } catch {
-    // Request construction and host pinning will reject an invalid URL later.
-    // Keeping the exact value here still gives that malformed target a stable,
-    // isolated fingerprint rather than collapsing it into another upstream.
-    return baseUrl;
-  }
-}
-
-function textClaim(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
-/**
- * Stable replay scope from verified identity claims. Raw bearer bytes, email,
- * and other mutable/display claims are deliberately excluded.
- */
-function ledgerPrincipalScope(inbound: InboundIdentity | undefined): unknown | undefined {
-  if (!inbound) return { kind: "anonymous" };
-  const claims = inbound.claims ?? {};
-  const issuer = textClaim(claims.iss);
-  const subject = textClaim(claims.sub) ?? textClaim(inbound.sub);
-  const objectId = textClaim(claims.oid);
-  const authorizedParty = textClaim(claims.azp) ?? textClaim(claims.client_id);
-  if (!issuer || (!subject && !objectId && !authorizedParty)) return undefined;
-  return {
-    issuer,
-    subject: subject ?? null,
-    objectId: objectId ?? null,
-    authorizedParty: authorizedParty ?? null,
-    tenant: textClaim(claims.tid) ?? textClaim(claims.tenant) ?? null,
-  };
-}
-
 function ledgerUnavailableError(
   operation: string,
   traceId: string,
@@ -647,9 +614,15 @@ export async function execute(
   // sentinel below carries NO scopes, and the principal-resolution gate a
   // few lines into the try block refuses before that sentinel could ever be
   // checked against an operation's required scopes.
+  const requestInbound = ctx.inbound ?? currentInboundIdentity();
+  const enterprisePrincipal = ctx.identity?.principalFor(requestInbound);
+  const resolvedPrincipal = ctx.identity ? enterprisePrincipal : ctx.principal;
   const principalUnresolved =
-    ctx.principalDirectoryConfigured === true && ctx.principal === undefined;
-  const principal = principalUnresolved ? UNRESOLVED_PRINCIPAL : resolvePrincipal(ctx.principal);
+    (ctx.identity !== undefined || ctx.principalDirectoryConfigured === true) &&
+    resolvedPrincipal === undefined;
+  const principal = principalUnresolved
+    ? UNRESOLVED_PRINCIPAL
+    : resolvePrincipal(resolvedPrincipal);
 
   const record: ExecutionRecord = {
     traceId,
@@ -702,19 +675,21 @@ export async function execute(
     request?: HttpRequest,
     response?: HttpResponse,
   ): Promise<void> => {
-    if (!hook) return;
-    const pctx: PolicyContext = {
-      operation: op,
-      input,
-      traceId,
-      authProfile: ctx.authProfile,
-      request,
-      response,
-      decide: (d) => policyDecisions.push(d),
-    };
-    await hook(pctx);
+    await runPolicyHook(
+      hook,
+      {
+        operation: op,
+        input,
+        principal,
+        traceId,
+        authProfile: ctx.authProfile,
+        request,
+        response,
+        decide: (decision) => policyDecisions.push(decision),
+      },
+      ctx.identity !== undefined,
+    );
   };
-
   try {
     // 0. Approval gate — the safety contract's first clause: only approved
     // operations execute, on any surface (CLI, MCP, embedders). This refuses
@@ -912,6 +887,17 @@ export async function execute(
       );
     }
 
+    await enforceIdentityAuthorization(
+      ctx.identity,
+      enterprisePrincipal,
+      op,
+      input,
+      ctx.serviceId,
+      confirm,
+      traceId,
+      (decision) => policyDecisions.push(decision),
+    );
+
     // 2. Confirmation gate — explicit refusal over accidental execution (§2.4).
     if (op.confirmation.required && confirm !== true) {
       const flags = ["--confirm"];
@@ -1021,7 +1007,9 @@ export async function execute(
       );
     }
     const providedIdempotencyKey = suppliedKeys[0];
-    const principalScope = ledgerPrincipalScope(ctx.inbound);
+    const principalScope = enterprisePrincipal
+      ? { principal: enterprisePrincipal.id, actor: enterprisePrincipal.identity.actor ?? null }
+      : ledgerPrincipalScope(requestInbound);
     const serviceId = typeof ctx.serviceId === "string" ? ctx.serviceId.trim() : "";
     if (!serviceId) {
       return fail(
@@ -1079,7 +1067,7 @@ export async function execute(
     const ledgerKey = key
       ? requestFingerprint("anvil.idempotency.ledger-key", key, ledgerScope)
       : undefined;
-    if (key && ctx.inbound && !principalScope) {
+    if (key && requestInbound && !principalScope) {
       return fail(
         new AnvilError({
           code: "auth_required",
@@ -1212,7 +1200,7 @@ export async function execute(
       try {
         const grant = grantCredentialContext(principal, ctx.connector, grantDecision);
         material = ctx.credentials
-          ? await ctx.credentials.resolve(profile, op.auth, { inbound: ctx.inbound, ...grant })
+          ? await ctx.credentials.resolve(profile, op.auth, { inbound: requestInbound, ...grant })
           : null;
       } catch (error) {
         // The vault names the unconnected connector; never a connect link.
@@ -1369,6 +1357,13 @@ export async function execute(
       record.retryCount = attempt - 1;
       try {
         throwIfCancelled(ctx.signal);
+        if (enterprisePrincipal && enterprisePrincipal.identity.expiresAt <= Date.now())
+          throw new AnvilError({
+            code: "policy_denied",
+            message: "Caller identity expired before dispatch.",
+            operation: op.id,
+            traceId,
+          });
         upstreamKey = key;
         const res = mcpCall ? await mcpCall.send(request) : await ctx.transport.send(request);
         lastResponse = res;

@@ -118,6 +118,14 @@ Emits draft 2020-12 JSON Schema for the manifest (`--manifest` to `anvil compile
 Options:
 - `--out <file>` — write the schema to a file instead of stdout
 
+#### `anvil schema identity`
+`anvil schema identity [options]`
+
+The JSON Schema for reusable identity profiles.
+
+Options:
+- `--out <file>` — write the schema to a file instead of stdout
+
 #### `anvil schema profile`
 `anvil schema profile [options]`
 
@@ -1070,6 +1078,14 @@ Options:
 Generate an agent-platform connector kit (Gemini Enterprise, Claude, OpenAI, MCP registry).
 
 Each subcommand is a pure projection of AIR plus its own config — no network calls, ever. Registered platforms: gemini-enterprise, claude, openai, mcp-registry. Validates the contract against the platform's requirements first; no files are written when validation fails.
+
+#### `anvil target identity`  *(mutates)*
+`anvil target identity [options] <dir>`
+
+Bind a reusable identity profile to a connector and generate deployment configuration.
+
+Options:
+- `--profile <file>` — versioned JSON identity profile
 
 #### `anvil target gemini-enterprise`  *(mutates)*
 `anvil target gemini-enterprise [options] <dir>`

@@ -20,7 +20,14 @@
 import { createHash, createPublicKey, verify as cryptoVerify } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { fetchPublicJson, type Principal, parseGrants } from "@anvil/runtime";
+import type { IdentityProfile } from "@anvil/air";
+import {
+  fetchPublicJson,
+  loadIdentityProfile,
+  mapIdentity,
+  type Principal,
+  parseGrants,
+} from "@anvil/runtime";
 
 /**
  * `branchyard` (ADR-0029): a per-turn EdDSA (Ed25519) token minted by
@@ -33,6 +40,10 @@ export type InboundAuthMode = "none" | "oidc" | "google_service_account" | "bran
 
 export interface InboundAuthConfig {
   mode: InboundAuthMode;
+  identityProfile?: IdentityProfile;
+  credentialHeader?: "authorization" | "x-goog-iap-jwt-assertion";
+  tokenType?: "at+jwt" | "JWT";
+  algorithms?: readonly string[];
   /** Expected token issuer (`iss`). */
   issuer?: string;
   /** Expected audience (`aud`) — the connector's public URL / resource id. */
@@ -75,6 +86,16 @@ export interface Jwk {
   y?: string;
 }
 
+/** Select only the configured credential channel. Cloud Run's platform header is never an application credential. */
+export function inboundAuthorizationHeader(
+  headers: Record<string, string | string[] | undefined>,
+  config: InboundAuthConfig,
+): string | undefined {
+  const value = headers[config.credentialHeader ?? "authorization"];
+  if (typeof value !== "string") return undefined;
+  return config.credentialHeader === "x-goog-iap-jwt-assertion" ? `Bearer ${value}` : value;
+}
+
 /** Fetches a JWKS document. Injectable so verification is testable offline. */
 export type JwksFetcher = (uri: string) => Promise<{ keys: Jwk[] }>;
 
@@ -91,6 +112,33 @@ export function loadInboundAuthConfig(
   env: NodeJS.ProcessEnv = process.env,
   opts: { allowBranchyard?: boolean } = {},
 ): InboundAuthConfig {
+  const profile = loadIdentityProfile(env);
+  if (profile) {
+    // One authority source; stale legacy environment must not weaken a profile.
+    if (Object.keys(env).some((key) => key.startsWith("ANVIL_INBOUND_") && env[key] !== undefined))
+      throw new Error("Identity profiles cannot be combined with ANVIL_INBOUND_* overrides");
+    const auth = profile.authentication;
+    const config: InboundAuthConfig = {
+      mode: auth.provider === "google_service_account" ? "google_service_account" : "oidc",
+      identityProfile: profile,
+      issuer: auth.issuer,
+      audience: auth.audience,
+      jwksUri: auth.jwksUri,
+      resource: auth.resource,
+      requiredScopes: auth.requiredScopes,
+      tokenType: auth.tokenType,
+      credentialHeader:
+        auth.provider === "google_iap" ? "x-goog-iap-jwt-assertion" : "authorization",
+      algorithms:
+        auth.provider === "google_iap"
+          ? ["ES256"]
+          : auth.provider === "google_service_account"
+            ? ["RS256"]
+            : ["RS256", "ES256"],
+    };
+    validateEnabledConfig(config);
+    return config;
+  }
   const mode = normalizeMode(env.ANVIL_INBOUND_AUTH_MODE);
   if (mode === "branchyard" && !opts.allowBranchyard) {
     throw new Error(
@@ -229,7 +277,7 @@ export async function verifyInboundToken(
   if (parts.length !== 3) return deny(401, "invalid_token", "Malformed JWT.", config);
   const [rawHeader, rawPayload, rawSig] = parts as [string, string, string];
 
-  let header: { alg?: string; kid?: string };
+  let header: { alg?: string; kid?: string; typ?: string };
   let claims: InboundClaims;
   try {
     const parsedHeader: unknown = JSON.parse(b64urlToString(rawHeader));
@@ -268,6 +316,18 @@ export async function verifyInboundToken(
     );
   }
 
+  if (
+    (config.tokenType && header.typ !== config.tokenType) ||
+    (config.algorithms && !config.algorithms.includes(header.alg ?? ""))
+  ) {
+    return deny(
+      401,
+      "invalid_token",
+      "Token type or algorithm does not match the identity profile.",
+      config,
+    );
+  }
+
   // Signature: JWK → public key → verify over "header.payload". RS256 is
   // RSA-SHA256; ES256 is ECDSA-P256 whose JWT signature is raw r||s (IEEE
   // P1363), NOT DER — so it needs `dsaEncoding: "ieee-p1363"`.
@@ -291,6 +351,17 @@ export async function verifyInboundToken(
           : undefined;
     }
     if (!jwk) return deny(401, "invalid_token", "No JWKS key matches the token `kid`.", config);
+    if (
+      (jwk.use && jwk.use !== "sig") ||
+      (header.alg === "RS256" && jwk.kty !== "RSA") ||
+      (header.alg === "ES256" && (jwk.kty !== "EC" || jwk.crv !== "P-256"))
+    )
+      return deny(
+        401,
+        "invalid_token",
+        "JWKS key is not valid for this signature algorithm.",
+        config,
+      );
     if (jwk.alg && jwk.alg !== header.alg) {
       return deny(401, "invalid_token", "JWKS key algorithm does not match the token.", config);
     }
@@ -460,7 +531,7 @@ function deny(
 function challenge(config: InboundAuthConfig, error: string, description: string): string {
   const parts = ['Bearer realm="mcp"'];
   const resource = config.resource ?? config.audience;
-  if (resource?.startsWith("https://")) {
+  if (config.credentialHeader !== "x-goog-iap-jwt-assertion" && resource?.startsWith("https://")) {
     const metadata = new URL("/.well-known/oauth-protected-resource", resource).toString();
     parts.push(`resource_metadata="${metadata}"`);
   }
@@ -477,7 +548,12 @@ function challenge(config: InboundAuthConfig, error: string, description: string
 export function protectedResourceMetadata(
   config: InboundAuthConfig,
 ): { resource: string; authorization_servers: string[]; scopes_supported?: string[] } | null {
-  if (config.mode === "none" || !config.audience) return null;
+  if (
+    config.mode === "none" ||
+    !config.audience ||
+    config.credentialHeader === "x-goog-iap-jwt-assertion"
+  )
+    return null;
   const resource = config.resource ?? config.audience;
   return {
     resource,
@@ -487,9 +563,16 @@ export function protectedResourceMetadata(
 }
 
 /** Stable session identity from already-verified claims; token rotation preserves it. */
-export function verifiedPrincipalFingerprint(claims: unknown): string | undefined {
+export function verifiedPrincipalFingerprint(
+  claims: unknown,
+  profile?: IdentityProfile,
+): string | undefined {
   if (!claims || typeof claims !== "object" || Array.isArray(claims)) return undefined;
   const record = claims as Record<string, unknown>;
+  const mapped = profile
+    ? mapIdentity(profile, { subjectToken: "", subjectTokenType: "jwt", claims: record })
+    : undefined;
+  if (profile && !mapped) return undefined;
   const issuer = typeof record.iss === "string" ? record.iss : undefined;
   // sub is the standard principal. oid covers app-only Entra tokens, while
   // azp / client_id identify a verified machine caller when no subject claim
@@ -500,8 +583,9 @@ export function verifiedPrincipalFingerprint(claims: unknown): string | undefine
   const oid = textClaim(record.oid);
   const authorizedParty = textClaim(record.azp) ?? textClaim(record.client_id);
   if (!issuer || (!sub && !oid && !authorizedParty)) return undefined;
-  const tenant =
-    typeof record.tid === "string"
+  const tenant = mapped
+    ? mapped.identity.tenant
+    : typeof record.tid === "string"
       ? record.tid
       : typeof record.tenant === "string"
         ? record.tenant
@@ -681,4 +765,24 @@ export function branchyardSessionFingerprint(claims: InboundClaims): string {
       }),
     )
     .digest("base64url");
+}
+
+// The raw caller token + its verified claims → the OBO subject. The raw bearer is
+// forwarded ONLY to the configured token endpoint for exchange; it is never sent
+// to the upstream directly, recorded, or logged.
+export function inboundIdentityFrom(
+  raw: string | undefined,
+  claims: Record<string, unknown>,
+  config: InboundAuthConfig,
+) {
+  if (!raw) return undefined;
+  return {
+    subjectToken: raw,
+    exchangeAllowed: config.credentialHeader !== "x-goog-iap-jwt-assertion",
+    subjectTokenType: raw.split(".").length === 3 ? ("jwt" as const) : ("access_token" as const),
+    sub: claims.sub as string | undefined,
+    email: claims.email as string | undefined,
+    scope: claims.scope as string | undefined,
+    claims,
+  };
 }

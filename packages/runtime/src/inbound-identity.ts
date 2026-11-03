@@ -20,6 +20,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 export interface InboundIdentity {
   /** The raw bearer the caller presented — the RFC 8693 `subject_token`. */
   subjectToken: string;
+  /** Platform assertions such as IAP are not OAuth delegation credentials. */
+  exchangeAllowed?: boolean;
   /** The subject-token type, chosen from the inbound token's shape. */
   subjectTokenType: "access_token" | "jwt" | "id_token";
   /** `sub` claim, when present — used to key the exchanged-token cache. */

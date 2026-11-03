@@ -168,6 +168,16 @@ export const RUNTIME_ENV_CONTRACT: readonly RuntimeEnvVar[] = [
       "Comma-separated exact public host allowlist for token endpoints imported from API specifications. Not needed when ANVIL_<PROFILE>_TOKEN_ENDPOINT is explicitly operator-configured.",
   },
   {
+    name: "ANVIL_IDENTITY_PROFILE",
+    description:
+      "Path to a versioned reusable JSON identity profile. Exclusive with ANVIL_IDENTITY_PROFILE_JSON.",
+  },
+  {
+    name: "ANVIL_IDENTITY_PROFILE_JSON",
+    description:
+      "Non-secret versioned identity profile JSON, suitable for Cloud Run environment configuration. Exclusive with ANVIL_IDENTITY_PROFILE.",
+  },
+  {
     name: "ANVIL_PRINCIPALS",
     description:
       "Principal directory, enforced on every serving surface: `token:id:scope1,scope2;…` pairs or a JSON object keyed by bearer token, `issuer:subject`, `subject`, or `email` (an inbound caller resolves by the first key that matches). Unset, every caller is the anonymous every-scope principal. Malformed input yields an empty directory (fail closed).",

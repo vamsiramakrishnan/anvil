@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "id": "enterprise-oidc",
+  "authentication": {
+    "provider": "oidc",
+    "issuer": "https://identity.example.com",
+    "audience": "https://mcp.example.com",
+    "jwksUri": "https://identity.example.com/jwks",
+    "tokenType": "at+jwt"
+  },
+  "mapping": {
+    "tenant": {
+      "source": "claim",
+      "claim": "tenant_id",
+      "allowed": [
+        "enterprise"
+      ]
+    },
+    "groupsClaim": "groups",
+    "upstreamScopes": [
+      "payments.read"
+    ]
+  },
+  "authorization": {
+    "adapter": "rules",
+    "rules": [
+      {
+        "id": "payments-read",
+        "service": "payments",
+        "operations": [
+          "payments.payments.get"
+        ],
+        "effect": "allow",
+        "groups": [
+          "payments-readers"
+        ]
+      }
+    ]
+  }
+}

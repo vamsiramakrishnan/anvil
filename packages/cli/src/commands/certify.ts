@@ -13,7 +13,7 @@ import {
   readBundleDir,
   resolveBundleDir,
 } from "@anvil/generators";
-import { listProfiles, verifyTargetKit } from "@anvil/targets";
+import { listTargetKitVerifiers } from "@anvil/targets";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
@@ -134,11 +134,11 @@ function targetCertificationChecks(
   air: AirDocument,
 ): CertificationCheck[] {
   const checks: CertificationCheck[] = [];
-  for (const profile of listProfiles()) {
+  for (const profile of listTargetKitVerifiers()) {
     const prefix = `targets/${profile.id}/`;
     if (!Object.keys(files).some((path) => path.startsWith(prefix))) continue;
 
-    const result = verifyTargetKit(air, profile, files);
+    const result = profile.verify(air, files);
     checks.push({
       id: `contract.target-kit-exact.${profile.id}`,
       gate: "contract",

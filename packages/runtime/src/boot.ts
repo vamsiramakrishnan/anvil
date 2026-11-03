@@ -9,6 +9,7 @@ import {
   runtimeExtensionApi,
 } from "./extensions.js";
 import { type IdempotencyLedger, resolveLedger } from "./idempotency.js";
+import { createIdentityRuntime, type IdentityRuntime, loadIdentityProfile } from "./identity.js";
 import type { InboundIdentity } from "./inbound-identity.js";
 import { buildLimitsGate, type LimitsGate } from "./limits.js";
 import {
@@ -114,6 +115,7 @@ export interface RuntimeBoot {
     ledger: IdempotencyLedger;
     observer: Observer;
     policy?: PolicyHooks;
+    identity?: IdentityRuntime;
     limits: LimitsGate;
     principalDirectoryConfigured: boolean;
   };
@@ -173,8 +175,18 @@ export async function bootRuntime(
     resolveLedger(config.ledger, { resultTtlMs: config.ledgerResultTtlSeconds * 1000 });
   const policy = extensions.policy;
   const limits = buildLimitsGate(config.limits);
-  const principalDirectoryConfigured = Object.keys(config.principals).length > 0;
+  const profile = loadIdentityProfile(env);
+  if (profile && Object.keys(config.principals).length > 0)
+    throw new Error(
+      "Identity profiles cannot be combined with ANVIL_PRINCIPALS; configure one mapping authority",
+    );
+  const identity = profile
+    ? createIdentityRuntime(profile, extensions.identityAuthorizers)
+    : undefined;
+  const principalDirectoryConfigured =
+    identity !== undefined || Object.keys(config.principals).length > 0;
   const principalFor = (inbound?: InboundIdentity): Principal | undefined => {
+    if (identity) return identity.principalFor(inbound);
     if (!principalDirectoryConfigured) return undefined;
     if (!inbound) return resolvePrincipalForEnv(config.principals, env);
     for (const key of inboundDirectoryKeys(inbound)) {
@@ -204,6 +216,7 @@ export async function bootRuntime(
       ledger,
       observer,
       ...(policy ? { policy } : {}),
+      ...(identity ? { identity } : {}),
       limits,
       principalDirectoryConfigured,
     },

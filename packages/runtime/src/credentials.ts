@@ -406,7 +406,7 @@ export class TokenExchangeResolver implements CredentialResolver {
     // RFC 8693 token exchange (delegated / OBO).
     if (isObo) {
       const inbound = callCtx?.inbound;
-      if (!inbound) return null; // no subject token → fail closed, no static fallback
+      if (!inbound || inbound.exchangeAllowed === false) return null; // no delegation credential → fail closed
       const clientAuth = await this.clientAuth(p, auth, tokenEndpoint);
       if (!clientAuth) return null;
       const actorToken = auth.delegation?.actor

@@ -24,6 +24,7 @@ export * from "./error-spec.js";
 export * from "./eval-vocabulary.js";
 export * from "./hash.js";
 export * from "./idempotency-carrier.js";
+export * from "./identity-profile.js";
 export * from "./jsonschema.js";
 export * from "./ladder.js";
 export * from "./mcp.js";

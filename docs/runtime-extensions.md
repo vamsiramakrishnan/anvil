@@ -154,3 +154,7 @@ proves the same contract from the generated CLI.
 The generated `deploy/env.schema.json` is derived from the runtime's own
 environment contract. A drift guard in `@anvil/generators` fails when a
 serving process reads a variable the schema does not declare.
+
+## Reusable identity policy adapters
+
+Identity authorizers are boot-scoped extension contributions selected by a versioned profile. See [identity adapters](identity-adapters.md) for JWT mapping, GCP deployment, Cloud Run policy services and the SiteMinder bridge contract.

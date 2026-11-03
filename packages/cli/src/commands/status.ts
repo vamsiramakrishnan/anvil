@@ -24,7 +24,7 @@ import {
   resolveBundleDir,
   verifyCertification,
 } from "@anvil/generators";
-import { findProfile, type TargetKitIntegrityFinding, verifyTargetKit } from "@anvil/targets";
+import { listTargetKitVerifiers, type TargetKitIntegrityFinding } from "@anvil/targets";
 import type { Command } from "commander";
 import { recommendsExplicitIdempotencyKey, requiresExplicitIdempotencyKey } from "../explain.js";
 import type { CliIO } from "../io.js";
@@ -1095,9 +1095,9 @@ function targetStatuses(
       files[relativePath] === undefined
         ? join(bundle, "targets", targetId)
         : join(bundle, relativePath);
-    const profile = findProfile(targetId);
+    const profile = listTargetKitVerifiers().find((verifier) => verifier.id === targetId);
     if (air && profile) {
-      const verification = verifyTargetKit(air, profile, files);
+      const verification = profile.verify(air, files);
       const setup = parseTargetSetup(files[relativePath]);
       const corruptSetup = verification.findings.some(
         (finding) =>

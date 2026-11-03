@@ -48,6 +48,8 @@ import { recordWebhookCompletionIfIndexed } from "./async-completion.js";
 import { handleBusinessHttp } from "./business-http.js";
 import { createBusinessServing } from "./business-serving.js";
 import {
+  inboundAuthorizationHeader,
+  inboundIdentityFrom,
   loadInboundAuthConfig,
   protectedResourceMetadata,
   verifiedPrincipalFingerprint,
@@ -350,7 +352,7 @@ const JSON_REFUSAL = { "content-type": "application/json", "x-content-type-optio
 // InboundIdentity so an on-behalf-of upstream call can exchange it (RFC 8693). On
 // failure the 401/403 is written here and { ok:false } signals the caller to stop.
 async function authorized(req: IncomingMessage, res: ServerResponse): Promise<Authorized> {
-  const header = req.headers.authorization;
+  const header = inboundAuthorizationHeader(req.headers, inboundAuth);
   const result = await verifyInboundToken(header, inboundAuth);
   if (!result.ok) {
     res.writeHead(result.status, { ...JSON_REFUSAL, "www-authenticate": result.wwwAuthenticate });
@@ -369,7 +371,9 @@ async function authorized(req: IncomingMessage, res: ServerResponse): Promise<Au
     return { ok: false };
   }
   const callerFingerprint =
-    inboundAuth.mode === "none" ? "anonymous" : verifiedPrincipalFingerprint(result.claims);
+    inboundAuth.mode === "none"
+      ? "anonymous"
+      : verifiedPrincipalFingerprint(result.claims, inboundAuth.identityProfile);
   if (!callerFingerprint) {
     res.writeHead(401, { ...JSON_REFUSAL, "www-authenticate": 'Bearer error="invalid_token"' });
     res.end(
@@ -389,26 +393,11 @@ async function authorized(req: IncomingMessage, res: ServerResponse): Promise<Au
     identity:
       inboundAuth.mode === "none"
         ? undefined
-        : inboundIdentityFrom(rawToken, (result.claims ?? {}) as Claims),
+        : inboundIdentityFrom(rawToken, (result.claims ?? {}) as Claims, inboundAuth),
     // Bind the session to the verified principal, not the bearer bytes. Access
     // tokens rotate during a long MCP session; the same issuer/subject may keep
     // using its session while a different principal cannot take it over.
     callerFingerprint,
-  };
-}
-
-// The raw caller token + its verified claims → the OBO subject. The raw bearer is
-// forwarded ONLY to the configured token endpoint for exchange; it is never sent
-// to the upstream directly, recorded, or logged.
-function inboundIdentityFrom(raw: string | undefined, claims: Claims) {
-  if (!raw) return undefined;
-  return {
-    subjectToken: raw,
-    subjectTokenType: raw.split(".").length === 3 ? ("jwt" as const) : ("access_token" as const),
-    sub: claims.sub as string | undefined,
-    email: claims.email as string | undefined,
-    scope: claims.scope as string | undefined,
-    claims,
   };
 }
 

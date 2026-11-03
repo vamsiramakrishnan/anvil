@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { AirDocument } from "@anvil/air";
+import { type AirDocument, IdentityProfile } from "@anvil/air";
 import {
   CLAUDE_PROFILE,
   type ClaudeTargetConfig,
@@ -15,6 +15,7 @@ import {
 } from "./config.js";
 import { GEMINI_ENTERPRISE_PROFILE } from "./gemini-enterprise.js";
 import { generateTargetKit } from "./generate.js";
+import { generateIdentityKit } from "./identity.js";
 import {
   createMcpRegistryTargetConfig,
   generateMcpRegistryTargetKit,
@@ -32,6 +33,7 @@ import {
   type OpenAiTargetConfigInput,
   validateOpenAiTarget,
 } from "./openai.js";
+import { listProfiles } from "./registry.js";
 import { validateTarget } from "./validate.js";
 
 /** The union of every profile's persisted (secret-free) target config shape. */
@@ -39,7 +41,8 @@ export type TargetKitConfig =
   | GeminiEnterpriseTargetConfig
   | ClaudeTargetConfig
   | OpenAiTargetConfig
-  | McpRegistryTargetConfig;
+  | McpRegistryTargetConfig
+  | IdentityProfile;
 
 /**
  * Per-profile regeneration triad: build a config from a persisted (untrusted)
@@ -289,4 +292,89 @@ function targetFileDigest(files: Record<string, string>): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Independently verifiable deployment inputs, including non-platform identity kits. */
+export function listTargetKitVerifiers(): Array<{
+  id: string;
+  verify: (air: AirDocument, files: Record<string, string>) => TargetKitIntegrityResult;
+}> {
+  return [
+    ...listProfiles().map((profile) => ({
+      id: profile.id,
+      verify: (air: AirDocument, files: Record<string, string>) =>
+        verifyTargetKit(air, profile, files),
+    })),
+    { id: "identity", verify: verifyIdentityKit },
+  ];
+}
+
+function verifyIdentityKit(
+  air: AirDocument,
+  files: Record<string, string>,
+): TargetKitIntegrityResult {
+  const actual = Object.fromEntries(
+    Object.entries(files).filter(([path]) => path.startsWith("targets/identity/")),
+  );
+  const actualFiles = Object.keys(actual).sort();
+  const base = {
+    targetId: "identity",
+    present: actualFiles.length > 0,
+    actualDigest: actualFiles.length ? targetFileDigest(actual) : null,
+    actualFiles,
+  };
+  if (!base.present)
+    return {
+      ...base,
+      ok: true,
+      config: null,
+      expectedDigest: null,
+      expectedFiles: [],
+      findings: [],
+    };
+  const path = "targets/identity/setup.json";
+  if (actual[path] === undefined)
+    return failedWithoutExpected(base, {
+      code: "target/missing_setup",
+      path,
+      detail: "Identity setup is missing.",
+    });
+  try {
+    const setup = JSON.parse(actual[path]);
+    const config = IdentityProfile.parse(setup.config);
+    const expected = Object.fromEntries(
+      generateIdentityKit(air, config).files.map((file) => [
+        file.path,
+        Buffer.from(file.bytes).toString("utf8"),
+      ]),
+    );
+    const findings: TargetKitIntegrityFinding[] = [];
+    for (const name of new Set([...Object.keys(expected), ...actualFiles])) {
+      if (actual[name] === expected[name]) continue;
+      findings.push({
+        code:
+          actual[name] === undefined
+            ? "target/missing_file"
+            : expected[name] === undefined
+              ? "target/unexpected_file"
+              : "target/file_mismatch",
+        path: name,
+        detail: `${name} does not exactly regenerate from the identity profile and AIR.`,
+      });
+    }
+    return {
+      ...base,
+      ok: findings.length === 0,
+      config,
+      expectedDigest: targetFileDigest(expected),
+      expectedFiles: Object.keys(expected).sort(),
+      findings,
+    };
+  } catch {
+    return failedWithoutExpected(base, {
+      code: "target/invalid_setup",
+      path,
+      detail: "Identity setup or its operation bindings are invalid.",
+    });
+  }
 }

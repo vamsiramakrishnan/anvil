@@ -13,6 +13,7 @@ export * from "./connector-plan.js";
 export * from "./coordinates.js";
 export * from "./gemini-enterprise.js";
 export * from "./generate.js";
+export * from "./identity.js";
 export * from "./mcp-connector.js";
 export * from "./mcp-registry.js";
 export * from "./model.js";
