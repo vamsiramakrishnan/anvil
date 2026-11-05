@@ -4,10 +4,10 @@ import { DEFAULT_ACCOUNT } from "./grants.js";
 import { type McpOAuthConfig, VaultMcpOAuth } from "./mcp-oauth.js";
 import { isSendableOAuthEndpoint } from "./oauth-endpoint.js";
 import {
-  type ConnectionVault,
   type OAuthClientConfig,
   type StoredConnection,
   tokenRequest,
+  type VaultBackend,
 } from "./vault.js";
 
 /**
@@ -147,7 +147,7 @@ export type ConnectCallbackResult =
   | { ok: false; status: 400 | 502; code: string; message: string };
 
 export interface ConnectFlowOptions {
-  vault: ConnectionVault;
+  vault: VaultBackend;
   profiles: ReadonlyMap<string, ConnectorAuthProfile>;
   /** The gateway's own `/connect/callback` URL, registered with each provider. */
   redirectUri: string;
@@ -425,7 +425,12 @@ export class ConnectFlow {
       };
     }
     const stamp = new Date(this.now()).toISOString();
-    const existing = safeGet(this.options.vault, pending.sub, pending.connector, pending.account);
+    const existing = await safeGet(
+      this.options.vault,
+      pending.sub,
+      pending.connector,
+      pending.account,
+    );
     // A reconnect whose response does not rotate the refresh token keeps the
     // one already stored, exactly as a refresh does (vault.ts).
     const refreshToken =
@@ -449,19 +454,20 @@ export class ConnectFlow {
       createdAt: existing?.createdAt ?? stamp,
       updatedAt: stamp,
     };
-    this.options.vault.put(connection);
+    await this.options.vault.put(connection);
     return { ok: true, connector: pending.connector, account: pending.account };
   }
 
   /** Store an API key or personal token the person submitted for a key-based connector. */
-  putStatic(input: {
+  async putStatic(input: {
     sub: string;
     connector: string;
     account?: string;
     secret: string;
-  }):
+  }): Promise<
     | { ok: true; connector: string; account: string }
-    | { ok: false; status: 400 | 404 | 409; code: string; message: string } {
+    | { ok: false; status: 400 | 404 | 409; code: string; message: string }
+  > {
     const account = input.account ?? DEFAULT_ACCOUNT;
     const profile = this.options.profiles.get(input.connector);
     if (!profile) {
@@ -489,8 +495,8 @@ export class ConnectFlow {
       };
     }
     const stamp = new Date(this.now()).toISOString();
-    const existing = safeGet(this.options.vault, input.sub, input.connector, account);
-    this.options.vault.put({
+    const existing = await safeGet(this.options.vault, input.sub, input.connector, account);
+    await this.options.vault.put({
       sub: input.sub,
       connector: input.connector,
       account,
@@ -514,14 +520,14 @@ export class ConnectFlow {
   }
 }
 
-function safeGet(
-  vault: ConnectionVault,
+async function safeGet(
+  vault: VaultBackend,
   sub: string,
   connector: string,
   account: string,
-): StoredConnection | undefined {
+): Promise<StoredConnection | undefined> {
   try {
-    return vault.get(sub, connector, account);
+    return await vault.get(sub, connector, account);
   } catch {
     return undefined;
   }

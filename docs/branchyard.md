@@ -172,8 +172,11 @@ from the Anvil checkout.
 | `ANVIL_INBOUND_ISSUER` | The yard's issuer: its server URL, or `branchyard:local:<yard id>`. |
 | `ANVIL_INBOUND_AUDIENCE` | The gateway's canonical `/mcp` URL: HTTPS, or HTTP on a loopback host. |
 | `ANVIL_INBOUND_JWKS_URI` | The yard's JWKS: `https://…/.well-known/jwks.json`, or `file://…/.branchyard/gateway/jwks.json` (read on every verification). |
-| `ANVIL_VAULT_KEY_FILE` | Required. A file only its owner can read holding a 32-byte key (raw, 64 hex characters, or base64). |
-| `ANVIL_VAULT_DIR` | Where encrypted connections live. Default `~/.anvil/gateway/vault`. |
+| `ANVIL_VAULT_BACKEND` | `file` (the default) or `firestore`. See [Vault backends](#vault-backends). |
+| `ANVIL_VAULT_KEY_FILE` | `file` backend. Required. A file only its owner can read holding a 32-byte key (raw, 64 hex characters, or base64). Refused with `firestore`. |
+| `ANVIL_VAULT_DIR` | `file` backend. Where encrypted connections live. Default `~/.anvil/gateway/vault`. Refused with `firestore`. |
+| `ANVIL_VAULT_KMS_KEY` | `firestore` backend. Required. The Cloud KMS crypto key, `projects/P/locations/L/keyRings/R/cryptoKeys/K` (not a key version). |
+| `ANVIL_VAULT_FIRESTORE_COLLECTION`, `ANVIL_VAULT_FIRESTORE_DATABASE`, `ANVIL_VAULT_FIRESTORE_PROJECT` | `firestore` backend, optional. Defaults: `anvil_vault`, `(default)`, and the KMS key's project. |
 | `ANVIL_AUDIT_FILE` | Append one JSON line per call here (created 0600). Unset: no audit log. |
 | `ANVIL_GATEWAY_PUBLIC_URL` | The base for `/connect/callback` when it differs from the audience's origin. |
 | `ANVIL_CONNECT_<CONNECTOR>_CLIENT_ID`, `_CLIENT_SECRET` | The gateway's OAuth client for one connector. `_AUTHORIZATION_ENDPOINT`, `_TOKEN_ENDPOINT`, `_ISSUER`, `_SCOPES` override what AIR declares. Both endpoints, from either source, must be HTTPS (plain HTTP only to `127.0.0.1`): otherwise `/connect/start` answers `503 connector_not_configured`, a stored connection's refresh fails as `connector/refresh_failed`, and nothing is sent to the token endpoint. Neither request follows a redirect. |
@@ -340,12 +343,70 @@ person by the `state` a connect token's `/connect/start` made.
 | `GET /connect/callback?state&code[&iss]` | — | Plain text for the browser. `state` is single use and expires after ten minutes. |
 | `POST /connect/api-key` | `{"connector", "account", "api_key"}` | `{"connected": true, "connector", "account"}` |
 | `GET /connect/status` | — | `{"sub", "connections": [{connector, account, kind, status, …}]}`, no secrets |
+| `POST /connect/disconnect` | `{"connector": "github", "account": "work"}` | `{"connector", "account", "disconnected": true}`; `"disconnected": false` when nothing was stored |
+
+`/connect/disconnect` removes the stored connection of the person the connect
+token names, for the connector and account in the body (`account` defaults to
+`default`). The owner comes from the verified token, never from the body, so a
+person cannot remove another person's record. Repeating it is safe and answers
+`200` with `disconnected: false`. It writes one audit line with `operation`
+`connect.disconnect`, `decision` `allowed` and `disconnected`, and no secret. A
+later call to that connector fails with `connector/not_connected`. A turn token
+gets `403 connect_token_required`; no token gets `401`. The contract also asks
+for a best-effort upstream revocation when AIR declares a revocation endpoint;
+AIR declares none in this tree, so only the local record is removed.
+
+`anvil capabilities --json` prints `{"features": [...]}` for this build; it
+lists `vault.firestore` and `connect.disconnect`.
 
 `anvil connect <workspace> <connector> [--account <name>] [--gateway <url>]
 [--token-file <path>] [--open] [--api-key-stdin]` calls these for a person:
 it prints the authorization URL (and opens it with `--open`), or submits a key
 read from stdin. OAuth connectors use the authorization-code grant with PKCE
 (S256); the redirect URI is `<gateway origin>/connect/callback`.
+
+### Vault backends
+
+The gateway keeps each person's upstream authorizations in a vault chosen by
+`ANVIL_VAULT_BACKEND`. The owner key is the same in both: the vault `sub` is
+`by:v1:sha256([iss, by_tenant, sub])`, and a record's id is the hex SHA-256 of
+the coordinates JSON `[sub, connector, account]`.
+
+- **`file`** (default, unchanged). One AES-256-GCM file per connection under
+  `ANVIL_VAULT_DIR`, sealed with the key in `ANVIL_VAULT_KEY_FILE`.
+- **`firestore`.** One Firestore document per connection, so several gateway
+  instances that share no disk share one vault. Each write seals the record with
+  AES-256-GCM under a fresh 32-byte data key; Cloud KMS wraps that key
+  (`ANVIL_VAULT_KMS_KEY`). The document holds `v` (2), `sub`, `connector`,
+  `account`, `kind`, `status`, `created_at`, `updated_at`, `wrapped_dek`,
+  `kms_key_version`, `iv`, `ciphertext` and `tag`; every token or key is inside
+  `ciphertext`. The coordinates JSON is the additional authenticated data for
+  both the record and the KMS wrap, so a document copied to other coordinates
+  does not decrypt. A document wrapped by a different KMS key is refused.
+  Reads call KMS `Decrypt` once per document and keep the unwrapped key in
+  process for at most 60 seconds. Writes run in a Firestore transaction. With
+  this backend the gateway starts without `ANVIL_VAULT_KEY_FILE`, and refuses to
+  start if `ANVIL_VAULT_KEY_FILE` or `ANVIL_VAULT_DIR` is set.
+
+A Firestore or KMS failure fails the call: a turn gets `upstream_unavailable`
+(retryable) with `details.code: "connector/vault_unavailable"`, and a connect
+route answers `503 vault_unavailable`. No stale secret is returned. A document
+that will not decrypt is `connector/vault_unreadable`, as for a file record.
+
+The Firestore and KMS clients call the REST APIs with `fetch` and an access
+token from the metadata server (Cloud Run, GCE). Other Application Default
+Credentials sources, such as a key file or `gcloud` user credentials, are not
+read. No Google client library is used.
+
+Qualification, 5 November 2026: hermetic. The tests use in-memory fakes of
+Firestore and KMS (`packages/runtime/src/vault-fakes.ts`) and a scripted
+`fetch` for the REST clients. They cover a round trip across two instances,
+ciphertext only in the fake Firestore, a wrong KMS key, tampered fields, a
+document moved to other coordinates, KMS and Firestore outages and the 60
+second key cache, and the connect routes over a real socket with the Firestore
+backend. Not done: a run against real Firestore or Cloud KMS, the Firestore
+emulator, key rotation, the `anvil vault migrate` command, and a transaction
+conflict between two real instances (the fake serializes writes).
 
 ### Harness environment
 

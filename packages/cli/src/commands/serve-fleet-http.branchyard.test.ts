@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { airToJson, loadAirDocument, Operation } from "@anvil/air";
-import { ConnectionVault } from "@anvil/runtime";
+import { ConnectionVault, FakeKms, InMemoryFirestore } from "@anvil/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Server as McpServer } from "@modelcontextprotocol/sdk/server/index.js";
@@ -754,5 +754,197 @@ describe("the Branchyard gateway", () => {
       body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
     });
     expect(reuse.status).toBe(403);
+  });
+});
+
+const KMS_KEY = "projects/p1/locations/global/keyRings/r1/cryptoKeys/k1";
+
+/** The yard's environment switched to the Firestore vault, with in-memory Firestore and KMS. */
+function firestoreEnv(y: Yard): NodeJS.ProcessEnv {
+  return {
+    ...y.env,
+    ANVIL_VAULT_KEY_FILE: undefined,
+    ANVIL_VAULT_DIR: undefined,
+    ANVIL_VAULT_BACKEND: "firestore",
+    ANVIL_VAULT_KMS_KEY: KMS_KEY,
+  };
+}
+
+async function startWith(
+  y: Yard,
+  port: number,
+  env: NodeJS.ProcessEnv,
+  vaultClients?: { store: InMemoryFirestore; kms: FakeKms },
+) {
+  return startFleetHttp(y.workspace, {
+    host: "127.0.0.1",
+    port,
+    env,
+    io: bufferIO(),
+    ...(vaultClients ? { gatewayDeps: { vaultClients } } : {}),
+  });
+}
+
+function auditLines(y: Yard): Array<Record<string, unknown>> {
+  return readFileSync(y.auditFile, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+}
+
+async function statusOf(port: number, token: string) {
+  const res = await fetch(`http://127.0.0.1:${port}/connect/status`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  return (await res.json()) as { connections: Array<{ connector: string; account: string }> };
+}
+
+describe("POST /connect/disconnect", () => {
+  it("removes only the caller's own connection, idempotently, and audits it without secrets", async () => {
+    const port = await freePort();
+    const y = await yard(port);
+    await startGateway(y, port);
+    const ada = y.connectToken();
+    const bob = y.connectToken({ sub: "local:bob" });
+    for (const [token, key] of [
+      [ada, "pat-ada"],
+      [bob, "pat-bob"],
+    ] as const) {
+      expect(
+        (await post(port, "/connect/api-key", token, { connector: "github", api_key: key })).status,
+      ).toBe(200);
+    }
+    expect(
+      (
+        await post(port, "/connect/api-key", ada, {
+          connector: "github",
+          account: "work",
+          api_key: "pat-ada-work",
+        })
+      ).status,
+    ).toBe(200);
+
+    const gone = await post(port, "/connect/disconnect", ada, { connector: "github" });
+    expect(gone).toEqual({
+      status: 200,
+      json: { connector: "github", account: "default", disconnected: true },
+    });
+    // Idempotent: nothing left to remove is still a 200.
+    expect(await post(port, "/connect/disconnect", ada, { connector: "github" })).toEqual({
+      status: 200,
+      json: { connector: "github", account: "default", disconnected: false },
+    });
+
+    // Ada's other account and Bob's connection are untouched.
+    expect((await statusOf(port, ada)).connections).toMatchObject([
+      { connector: "github", account: "work" },
+    ]);
+    expect((await statusOf(port, bob)).connections).toMatchObject([
+      { connector: "github", account: "default" },
+    ]);
+
+    // A turn of Ada's now fails, and the refusal names the connector.
+    const mcp = await client(port, y.mint(githubRead));
+    const refused = envelope(await mcp.callTool({ name: "github__list_issues", arguments: {} }));
+    expect(refused).toMatchObject({
+      code: "auth_required",
+      details: { code: "connector/not_connected", connector: "github", account: "default" },
+    });
+    expect(y.upstream.hits).toHaveLength(0);
+
+    const lines = auditLines(y).filter((l) => l.operation === "connect.disconnect");
+    expect(lines.map((l) => [l.decision, l.disconnected, l.account, l.connector])).toEqual([
+      ["allowed", true, "default", "github"],
+      ["allowed", false, "default", "github"],
+    ]);
+    expect(lines[0]).toMatchObject({ sub: "local:ada", by_tenant: "t1" });
+    expect(readFileSync(y.auditFile, "utf8")).not.toMatch(/pat-(ada|bob)/);
+  });
+
+  it("refuses an unauthenticated caller, a turn token, and a bad request, leaving the record", async () => {
+    const port = await freePort();
+    const y = await yard(port);
+    await startGateway(y, port);
+    const ada = y.connectToken();
+    await post(port, "/connect/api-key", ada, { connector: "github", api_key: "pat-ada" });
+
+    const anonymous = await fetch(`http://127.0.0.1:${port}/connect/disconnect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ connector: "github" }),
+    });
+    expect(anonymous.status).toBe(401);
+    await anonymous.text();
+    expect(
+      await post(port, "/connect/disconnect", y.mint(githubRead), { connector: "github" }),
+    ).toMatchObject({ status: 403, json: { error: { code: "connect_token_required" } } });
+    expect(await post(port, "/connect/disconnect", ada, {})).toMatchObject({
+      status: 400,
+      json: { error: { code: "invalid_request" } },
+    });
+    expect((await statusOf(port, ada)).connections).toHaveLength(1);
+    expect(auditLines(y).filter((l) => l.operation === "connect.disconnect")).toEqual([]);
+  });
+
+  it("works on the Firestore vault, which never holds a secret in the clear", async () => {
+    const port = await freePort();
+    const y = await yard(port);
+    const clients = { store: new InMemoryFirestore(), kms: new FakeKms() };
+    const started = await startWith(y, port, firestoreEnv(y), clients);
+    if (!started.ok) throw new Error(started.message);
+    cleanups.push(() => started.handle.close());
+    const ada = y.connectToken();
+    const bob = y.connectToken({ sub: "local:bob" });
+    await post(port, "/connect/api-key", ada, { connector: "github", api_key: "pat-ada-secret" });
+    await post(port, "/connect/api-key", bob, { connector: "github", api_key: "pat-bob-secret" });
+    expect(clients.store.docs.size).toBe(2);
+    for (const doc of clients.store.docs.values()) {
+      expect(JSON.stringify(doc)).not.toMatch(/pat-/);
+      expect(doc.ciphertext.toString("utf8")).not.toContain("pat-");
+    }
+
+    // Ada's turn resolves her key from Firestore, through KMS.
+    const mcp = await client(port, y.mint(githubRead));
+    expect(
+      (await mcp.callTool({ name: "github__list_issues", arguments: {} })).isError,
+    ).toBeFalsy();
+    expect(y.upstream.hits.map((h) => h.authorization)).toEqual(["Bearer pat-ada-secret"]);
+
+    expect(await post(port, "/connect/disconnect", ada, { connector: "github" })).toMatchObject({
+      status: 200,
+      json: { disconnected: true },
+    });
+    expect(clients.store.docs.size).toBe(1);
+    expect((await statusOf(port, bob)).connections).toHaveLength(1);
+
+    // With the backing service down the route says so and removes nothing.
+    clients.store.down = true;
+    expect(await post(port, "/connect/disconnect", bob, { connector: "github" })).toMatchObject({
+      status: 503,
+      json: { error: { code: "vault_unavailable" } },
+    });
+    clients.store.down = false;
+    expect(clients.store.docs.size).toBe(1);
+  });
+
+  it("starts the Firestore vault without a key file and refuses a mixed or incomplete configuration", async () => {
+    const port = await freePort();
+    const y = await yard(port);
+    const clients = { store: new InMemoryFirestore(), kms: new FakeKms() };
+    const started = await startWith(y, port, firestoreEnv(y), clients);
+    expect(started.ok).toBe(true);
+    if (started.ok) await started.handle.close();
+    const refusals: Array<[Record<string, string | undefined>, string]> = [
+      [{ ANVIL_VAULT_KEY_FILE: y.env.ANVIL_VAULT_KEY_FILE }, "ANVIL_VAULT_KEY_FILE"],
+      [{ ANVIL_VAULT_DIR: join(y.root, "vault") }, "ANVIL_VAULT_DIR"],
+      [{ ANVIL_VAULT_KMS_KEY: undefined }, "ANVIL_VAULT_KMS_KEY"],
+      [{ ANVIL_VAULT_KMS_KEY: `${KMS_KEY}/cryptoKeyVersions/1` }, "ANVIL_VAULT_KMS_KEY"],
+      [{ ANVIL_VAULT_BACKEND: "sqlite" }, "ANVIL_VAULT_BACKEND"],
+    ];
+    for (const [override, name] of refusals) {
+      const refused = await startWith(y, port, { ...firestoreEnv(y), ...override }, clients);
+      expect(refused).toMatchObject({ ok: false, message: expect.stringContaining(name) });
+    }
   });
 });

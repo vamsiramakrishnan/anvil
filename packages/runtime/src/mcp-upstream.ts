@@ -12,7 +12,7 @@ import {
   MAX_UPSTREAM_RESPONSE_BYTES,
   TransportError,
 } from "./transport.js";
-import { type ConnectionVault, CredentialUnavailableError } from "./vault.js";
+import { CredentialUnavailableError, type VaultBackend } from "./vault.js";
 
 /** A deployer-selected credential kind. Missing human credentials never select workload auth. */
 export type McpConnectionConfig = { url: string } & (
@@ -86,7 +86,7 @@ function policyRequest(request: HttpRequest, binding: McpBinding, material: Auth
 export class McpUpstream {
   constructor(
     private readonly configurations: ReadonlyMap<string, McpConnectionConfig>,
-    private readonly vault: ConnectionVault,
+    private readonly vault: VaultBackend,
     private readonly credentials: CredentialResolver,
     private readonly redirectUri: string,
     private readonly fetchImpl: typeof fetch = fetch,

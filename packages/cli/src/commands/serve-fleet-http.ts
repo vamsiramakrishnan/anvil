@@ -18,7 +18,15 @@ import {
   verifiedPrincipalFingerprint,
   verifyInboundToken,
 } from "@anvil/mcp-runtime";
-import { type Principal, resolvePrincipalForBearer, withInboundIdentity } from "@anvil/runtime";
+import {
+  type AuditSink,
+  auditDisconnect,
+  DEFAULT_ACCOUNT,
+  type Principal,
+  resolvePrincipalForBearer,
+  VaultUnavailableError,
+  withInboundIdentity,
+} from "@anvil/runtime";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { CliIO } from "../io.js";
@@ -29,7 +37,12 @@ import {
   json,
   readSmallJson,
 } from "./fleet-http-io.js";
-import { auditSinkFromEnv, buildGatewayRuntime, type GatewayRuntime } from "./gateway.js";
+import {
+  auditSinkFromEnv,
+  buildGatewayRuntime,
+  type GatewayRuntime,
+  type VaultClients,
+} from "./gateway.js";
 import { prepareFleetForWorkspace } from "./serve.js";
 import { handleRestCall } from "./serve-fleet-rest.js";
 
@@ -58,7 +71,7 @@ import { handleRestCall } from "./serve-fleet-rest.js";
  * (ADR-0029, docs/branchyard.md): each session belongs to one turn's token,
  * its principal and grant come from that token's claims, every tool is
  * mounted under its connector id, credentials come from the vault
- * (`ANVIL_VAULT_KEY_FILE`, required), and the listener also serves the
+ * (`ANVIL_VAULT_KEY_FILE`, or Firestore + KMS with `ANVIL_VAULT_BACKEND=firestore`), and the listener also serves the
  * connect flow at `/connect/*`.
  */
 
@@ -68,7 +81,12 @@ export interface FleetHttpOptions {
   env?: NodeJS.ProcessEnv;
   io?: CliIO;
   /** Test seams for the connect flow and vault refreshes (the provider's token endpoint). */
-  gatewayDeps?: { fetchImpl?: typeof fetch; now?: () => number };
+  gatewayDeps?: {
+    fetchImpl?: typeof fetch;
+    now?: () => number;
+    /** In-memory Firestore and KMS for the `firestore` vault backend. */
+    vaultClients?: VaultClients;
+  };
 }
 
 export type FleetHttpHandle = {
@@ -394,7 +412,7 @@ export async function startFleetHttp(
           });
     }
     if (gateway && url.pathname.startsWith("/connect/")) {
-      return handleConnect(req, res, url, inbound, gateway);
+      return handleConnect(req, res, url, inbound, gateway, audit);
     }
     if (url.pathname.startsWith("/call/")) {
       if (shuttingDown) return json(res, 503, { error: { code: "shutting_down" } });
@@ -545,6 +563,21 @@ function text(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+/** A vault failure as a response: 503 `vault_unavailable` when the backing service failed; other errors propagate. */
+function vaultFailure(res: ServerResponse, error: unknown): void {
+  if (error instanceof VaultUnavailableError) {
+    json(res, 503, {
+      error: {
+        code: "vault_unavailable",
+        message: "The credential vault is unavailable; try again shortly.",
+      },
+    });
+    return;
+  }
+  // Anything else reaches the listener's own handler, which answers 500.
+  throw error;
+}
+
 /**
  * The connect flow's routes (docs/branchyard.md):
  *
@@ -555,6 +588,9 @@ function text(value: unknown): string | undefined {
  *   bearer (a browser follows it), bound to the person by `state`.
  * - `POST /connect/api-key` `{connector, account?, api_key}` with the token.
  * - `GET /connect/status` with the token → the person's connections, no secrets.
+ * - `POST /connect/disconnect` `{connector, account?}` with the token → removes
+ *   the person's own stored connection; `{connector, account, disconnected}`,
+ *   `disconnected: false` when nothing was stored (idempotent). One audit line.
  *
  * "The token" on every route but the callback is a connect token
  * (`by_purpose: "connect"`, at most ten minutes, minted by `by connect` for
@@ -568,6 +604,7 @@ async function handleConnect(
   url: URL,
   inbound: InboundAuthConfig,
   gateway: GatewayRuntime,
+  audit: AuditSink | undefined,
 ): Promise<void> {
   if (url.pathname === "/connect/callback") {
     if (req.method !== "GET") return json(res, 405, { error: { code: "method_not_allowed" } });
@@ -619,7 +656,11 @@ async function handleConnect(
       error: { code: "invalid_token", message: "Missing credential owner." },
     });
   if (url.pathname === "/connect/status" && req.method === "GET") {
-    return json(res, 200, { sub: claims.sub, connections: gateway.vault.list(sub) });
+    try {
+      return json(res, 200, { sub: claims.sub, connections: await gateway.vault.list(sub) });
+    } catch (error) {
+      return vaultFailure(res, error);
+    }
   }
   if (req.method !== "POST") {
     return json(res, 404, { error: { code: "not_found", message: "No such route." } });
@@ -652,14 +693,46 @@ async function handleConnect(
         : { kind: "static", connector, submit: started.submit },
     );
   }
+  if (url.pathname === "/connect/disconnect") {
+    // The owner is the verified token's, never a request field: a person can
+    // remove only their own connection.
+    const started = Date.now();
+    const target = account ?? DEFAULT_ACCOUNT;
+    let removed: boolean;
+    try {
+      removed = await gateway.vault.delete(sub, connector, target);
+    } catch (error) {
+      return vaultFailure(res, error);
+    }
+    // The local record is gone before anything else could run. An upstream
+    // revocation would follow here; AIR declares no revocation endpoint in
+    // this tree, so there is none to call.
+    if (audit) {
+      auditDisconnect(audit, {
+        sub: claims.sub ?? sub,
+        tenant: typeof claims.by_tenant === "string" ? claims.by_tenant : null,
+        connector,
+        account: target,
+        disconnected: removed,
+        latencyMs: Date.now() - started,
+        traceId: randomUUID(),
+      });
+    }
+    return json(res, 200, { connector, account: target, disconnected: removed });
+  }
   if (url.pathname === "/connect/api-key") {
     const secret = typeof body.api_key === "string" ? body.api_key : "";
-    const stored = gateway.connect.putStatic({
-      sub,
-      connector,
-      ...(account ? { account } : {}),
-      secret,
-    });
+    let stored: Awaited<ReturnType<typeof gateway.connect.putStatic>>;
+    try {
+      stored = await gateway.connect.putStatic({
+        sub,
+        connector,
+        ...(account ? { account } : {}),
+        secret,
+      });
+    } catch (error) {
+      return vaultFailure(res, error);
+    }
     if (!stored.ok) {
       return json(res, stored.status, { error: { code: stored.code, message: stored.message } });
     }

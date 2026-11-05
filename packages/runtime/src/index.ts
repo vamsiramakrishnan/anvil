@@ -41,4 +41,6 @@ export * from "./retry.js";
 export * from "./safe-http.js";
 export * from "./transport.js";
 export * from "./vault.js";
+export * from "./vault-fakes.js";
+export * from "./vault-firestore.js";
 export * from "./webhook-receiver.js";
