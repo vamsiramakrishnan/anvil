@@ -24,7 +24,7 @@ import { fileURLToPath } from "node:url";
 import type { AirDocument } from "@anvil/air";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { runAnvilCli } from "../anvil-cli.js";
-import { FEATURES } from "../capabilities.js";
+import { CAPABILITY_FEATURES } from "../capabilities.js";
 import { bufferIO } from "../io.js";
 import { LEAN_SKILL_MAX_BYTES, leanSkillMd } from "./harness-package.js";
 import { buildLayout, checkLayout, pushLayout, writeLayout } from "./package-oci.js";
@@ -339,7 +339,7 @@ describe("anvil capabilities", () => {
   it("lists exactly the features this tree implements", async () => {
     const { code, io } = await anvil(["capabilities", "--json"]);
     expect(code).toBe(0);
-    expect(JSON.parse(io.stdout.join("\n"))).toEqual({ features: [...FEATURES].sort() });
+    expect(JSON.parse(io.stdout.join("\n"))).toEqual({ features: [...CAPABILITY_FEATURES].sort() });
     for (const feature of [
       "bundle.icon",
       "install.prefix",
@@ -347,7 +347,7 @@ describe("anvil capabilities", () => {
       "package.search",
       "skill.lean",
     ]) {
-      expect(FEATURES).toContain(feature);
+      expect(CAPABILITY_FEATURES).toContain(feature);
     }
   });
 });

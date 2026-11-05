@@ -61,7 +61,7 @@ export interface VaultClients {
  *   optional. `ANVIL_VAULT_KEY_FILE` and `ANVIL_VAULT_DIR` are refused: the
  *   two backends are never mixed.
  */
-export function vaultFromEnv(
+function vaultFromEnv(
   env: NodeJS.ProcessEnv,
   clients: VaultClients & { fetchImpl?: typeof fetch } = {},
 ): VaultBackend {

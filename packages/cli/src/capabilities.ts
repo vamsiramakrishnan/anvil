@@ -19,10 +19,6 @@ export const CAPABILITY_FEATURES: readonly string[] = [
   "vault.firestore", // ANVIL_VAULT_BACKEND=firestore, envelope-encrypted with Cloud KMS
 ];
 
-/** The same list, under the names other tests use. */
-export const CAPABILITIES: readonly string[] = CAPABILITY_FEATURES;
-export const FEATURES: readonly string[] = CAPABILITY_FEATURES;
-
 /** The `anvil capabilities --json` document: the names, unique and sorted. */
 export function capabilitiesDocument(features: readonly string[] = CAPABILITY_FEATURES): {
   features: string[];

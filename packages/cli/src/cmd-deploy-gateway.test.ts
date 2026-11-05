@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import { runAnvilCli } from "./anvil-cli.js";
-import { CAPABILITIES } from "./capabilities.js";
+import { CAPABILITY_FEATURES } from "./capabilities.js";
 import { bufferIO } from "./io.js";
 
 /**
@@ -116,7 +116,7 @@ describe("anvil capabilities", () => {
     const run = await cli(["capabilities", "--json"]);
     expect(run.code).toBe(0);
     const parsed = JSON.parse(run.io.stdout.join("").trim()) as { features: string[] };
-    expect(parsed.features).toEqual([...CAPABILITIES].sort());
+    expect(parsed.features).toEqual([...CAPABILITY_FEATURES].sort());
     expect(parsed.features).toEqual(expect.arrayContaining(["token.proxy", "manifest.claim"]));
     // Only names the contract defines.
     const contract = [

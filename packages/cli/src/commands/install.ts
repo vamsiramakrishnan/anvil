@@ -206,7 +206,7 @@ exports.gatewayToken = () => {
   return { files, recorded, source: "builtin" };
 }
 
-export async function runInstall(
+async function runInstall(
   opts: { prefix: string; from?: string; prune?: boolean },
   io: CliIO,
 ): Promise<number> {

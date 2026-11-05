@@ -15,12 +15,12 @@ import {
  * gives the same bytes every time.
  */
 
-export const SEARCH_SCHEMA = "anvil.search/v1";
-export const SUMMARY_MAX = 160;
+const SEARCH_SCHEMA = "anvil.search/v1";
+const SUMMARY_MAX = 160;
 /** Where the JSON Schema for `search.json` ships inside a package. */
 export const SEARCH_SCHEMA_PATH = "schemas/anvil-search-v1.json";
 
-export interface SearchOperation {
+interface SearchOperation {
   id: string;
   title: string;
   summary: string;
@@ -35,7 +35,7 @@ export interface SearchOperation {
   cli: string;
 }
 
-export interface SearchIndex {
+interface SearchIndex {
   schema: typeof SEARCH_SCHEMA;
   connector: string;
   bundle_hash: string;
@@ -67,7 +67,7 @@ function sortKeys(value: unknown): unknown {
 }
 
 /** The first sentence of a description, on one line, at most 160 characters. */
-export function summaryOf(description: string, fallback: string): string {
+function summaryOf(description: string, fallback: string): string {
   const text = description.replace(/\s+/g, " ").trim() || fallback.replace(/\s+/g, " ").trim();
   const match = /^(.+?[.!?])(\s|$)/.exec(text);
   const sentence = match ? (match[1] as string) : text;
@@ -77,7 +77,7 @@ export function summaryOf(description: string, fallback: string): string {
 }
 
 /** Lower-case letters and digits, split on punctuation and camelCase. */
-export function termsOf(...parts: readonly string[]): string[] {
+function termsOf(...parts: readonly string[]): string[] {
   const words = new Set<string>();
   for (const part of parts) {
     for (const word of part
