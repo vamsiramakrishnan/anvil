@@ -685,7 +685,7 @@ function branchyardClaimsProblem(
   if (typeof claims.by_tenant !== "string" || claims.by_tenant.length === 0) {
     return "Token by_tenant is required.";
   }
-  for (const key of ["by_tenant", "by_branch", "by_turn"] as const) {
+  for (const key of ["by_tenant", "by_branch", "by_turn", "by_manifest"] as const) {
     if (!optionalText(claims[key])) return `Token ${key} is invalid.`;
   }
   if (parseGrants(claims.by_grants) === undefined) return "Token grant (by_grants) is malformed.";
@@ -721,7 +721,7 @@ export function branchyardCredentialOwner(claims: InboundClaims): string | undef
 
 /**
  * The principal a verified branchyard token names: `id` is the isolated owner, the grant
- * is `by_grants`, and `by_tenant`/`by_branch`/`by_turn` ride along for audit.
+ * is `by_grants`, and `by_tenant`/`by_branch`/`by_turn`/`by_manifest` ride along for audit.
  * Scopes are every scope: the grant, not a scope list, is what limits this
  * caller, and it is checked per operation before any upstream call. A token
  * with a `by_purpose` (a connect token) names no tool caller: undefined.
@@ -742,6 +742,8 @@ export function branchyardPrincipal(claims: InboundClaims): Principal | undefine
     ...(text(claims.by_tenant) ? { tenant: text(claims.by_tenant) } : {}),
     ...(text(claims.by_branch) ? { branch: text(claims.by_branch) } : {}),
     ...(text(claims.by_turn) ? { turn: text(claims.by_turn) } : {}),
+    // Recorded, never enforced: it changes neither the owner, the grant nor the decision.
+    ...(text(claims.by_manifest) ? { manifest: text(claims.by_manifest) } : {}),
   };
   return { id: owner, scopes: ["*"], grants, attribution };
 }

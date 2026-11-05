@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
@@ -9,6 +9,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -123,6 +124,90 @@ describe("anvil package harness", () => {
     const typo = spawnSync(bin, ["issues", "list", "--ownr", "o"], { env, encoding: "utf8" });
     expect(typo.status).toBe(2);
     expect(typo.stderr).toContain("--ownr");
+  });
+
+  it("with ANVIL_GATEWAY_AUTH=proxy the packaged CLI sends no bearer and reads no token file", async () => {
+    const bin = join(work, "home", "github", "bin", "github");
+    const seen: Array<{ method: string; authorization: string | null }> = [];
+    const proxy = createServer((req, res) => {
+      let raw = "";
+      req.on("data", (chunk) => {
+        raw += chunk;
+      });
+      req.on("end", () => {
+        const message = raw ? JSON.parse(raw) : {};
+        seen.push({
+          method: message.method ?? req.method,
+          authorization: req.headers.authorization ?? null,
+        });
+        if (req.method === "DELETE" || message.method === "notifications/initialized") {
+          res.writeHead(202);
+          res.end();
+        } else if (message.method === "initialize") {
+          res.writeHead(200, { "content-type": "application/json", "mcp-session-id": "s-1" });
+          res.end(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: { protocolVersion: "2025-06-18", capabilities: {} },
+            }),
+          );
+        } else {
+          const result = { content: [{ type: "text", text: '[{"number":1}]' }] };
+          res.writeHead(200, { "content-type": "text/event-stream" });
+          res.end(`data: ${JSON.stringify({ jsonrpc: "2.0", id: message.id, result })}\n\n`);
+        }
+      });
+    });
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    try {
+      const url = `http://127.0.0.1:${(proxy.address() as { port: number }).port}/mcp`;
+      const run = (env: Record<string, string>) =>
+        new Promise<{ status: number | null; stdout: string; stderr: string }>((resolve) => {
+          const child = spawn(bin, ["issues", "list", "--owner", "o", "--repo", "r"], {
+            env: { PATH: process.env.PATH ?? "", ...env },
+          });
+          let stdout = "";
+          let stderr = "";
+          child.stdout.on("data", (chunk) => {
+            stdout += chunk;
+          });
+          child.stderr.on("data", (chunk) => {
+            stderr += chunk;
+          });
+          child.on("close", (status) => resolve({ status, stdout, stderr }));
+        });
+      const decoy = join(work, "decoy.token");
+      writeFileSync(decoy, "decoy-must-not-be-sent");
+      const ok = await run({
+        ANVIL_GATEWAY_URL: url,
+        ANVIL_GATEWAY_AUTH: "proxy",
+        ANVIL_GATEWAY_TOKEN_FILE: decoy,
+      });
+      expect(ok.status).toBe(0);
+      expect(ok.stdout).toContain('"number":1');
+      expect(seen.length).toBeGreaterThanOrEqual(3);
+      expect(seen.every((entry) => entry.authorization === null)).toBe(true);
+      // Token-file mode is unchanged: the same CLI still sends the file's bearer.
+      seen.length = 0;
+      const tokened = await run({ ANVIL_GATEWAY_URL: url, ANVIL_GATEWAY_TOKEN_FILE: decoy });
+      expect(tokened.status).toBe(0);
+      expect(seen.every((entry) => entry.authorization === "Bearer decoy-must-not-be-sent")).toBe(
+        true,
+      );
+      // A non-loopback URL is refused before any request.
+      seen.length = 0;
+      const refused = await run({
+        ANVIL_GATEWAY_URL: "https://gateway.example.com/mcp",
+        ANVIL_GATEWAY_AUTH: "proxy",
+      });
+      expect(refused.status).toBe(2);
+      expect(refused.stderr).toContain("loopback");
+      expect(seen).toEqual([]);
+    } finally {
+      proxy.closeAllConnections();
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+    }
   });
 
   it.runIf(PYTHON)("the packaged Python SDK imports and starts in gateway mode", () => {

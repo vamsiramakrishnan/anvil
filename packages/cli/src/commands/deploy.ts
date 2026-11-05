@@ -9,6 +9,7 @@ import { loadAir } from "@anvil/refinement";
 import type { Command } from "commander";
 import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
+import { registerDeployGateway } from "./deploy-gateway.js";
 import { registerDeployKubernetes } from "./deploy-kubernetes.js";
 import { registerDeployLedger } from "./idempotency-store.js";
 import { annotate } from "./meta.js";
@@ -55,6 +56,7 @@ export function registerDeploy(parent: Command, ctx: CommandContext): void {
         ctx.code = await runDeployCredentials(dir, opts, ctx.io);
       },
     );
+  registerDeployGateway(deploy, ctx);
   registerDeployKubernetes(deploy, ctx);
   registerDeployLedger(deploy, ctx);
 }

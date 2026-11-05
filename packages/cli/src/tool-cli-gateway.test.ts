@@ -196,4 +196,50 @@ describe("generated CLI in gateway mode", () => {
     expect(flagged.io.stderr.join("\n")).toContain("Gateway mode");
     expect(captured).toHaveLength(0);
   });
+
+  it("with ANVIL_GATEWAY_AUTH=proxy sends no bearer and reads no token file", async () => {
+    const { env, reads } = recordingEnv({
+      ANVIL_GATEWAY_URL: "http://127.0.0.1:8788/mcp",
+      ANVIL_GATEWAY_AUTH: "proxy",
+      ANVIL_GATEWAY_TOKEN_FILE: join(dir, "decoy.token"),
+    });
+    const captured: Captured[] = [];
+    const d = deps(env, captured, okResult);
+    const code = await runToolCli(air, ["issues", "list", "--owner", "o", "--repo", "r"], d);
+    expect(code).toBe(0);
+    expect(captured).toHaveLength(1);
+    expect(captured[0]?.target).toBe("http://127.0.0.1:8788/mcp");
+    expect(captured[0]?.bearer).toBeUndefined();
+    expect(reads).not.toContain("ANVIL_GATEWAY_TOKEN_FILE");
+  });
+
+  it("refuses proxy mode for a non-loopback gateway URL and for an unknown mode, before any call", async () => {
+    for (const [url, auth, text] of [
+      ["https://gateway.example.com/mcp", "proxy", "loopback"],
+      ["http://localhost.evil.example/mcp", "proxy", "loopback"],
+      ["http://127.0.0.1:8788/mcp", "bogus", "proxy or token_file"],
+    ] as const) {
+      const captured: Captured[] = [];
+      const d = deps({ ANVIL_GATEWAY_URL: url, ANVIL_GATEWAY_AUTH: auth }, captured, okResult);
+      expect(await runToolCli(air, ["issues", "list", "--owner", "o", "--repo", "r"], d)).toBe(2);
+      expect(d.io.stderr.join("\n")).toContain(text);
+      expect(captured).toHaveLength(0);
+    }
+  });
+
+  it("accepts ::1 and 127.x as loopback, and explicit token_file mode still needs the file", async () => {
+    for (const url of ["http://[::1]:8788/mcp", "http://127.0.0.2:8788/mcp"]) {
+      const captured: Captured[] = [];
+      const d = deps({ ANVIL_GATEWAY_URL: url, ANVIL_GATEWAY_AUTH: "proxy" }, captured, okResult);
+      expect(await runToolCli(air, ["issues", "list", "--owner", "o", "--repo", "r"], d)).toBe(0);
+    }
+    const captured: Captured[] = [];
+    const d = deps(
+      { ANVIL_GATEWAY_URL: "http://127.0.0.1:8788/mcp", ANVIL_GATEWAY_AUTH: "token_file" },
+      captured,
+      okResult,
+    );
+    expect(await runToolCli(air, ["issues", "list", "--owner", "o", "--repo", "r"], d)).toBe(4);
+    expect(captured).toHaveLength(0);
+  });
 });

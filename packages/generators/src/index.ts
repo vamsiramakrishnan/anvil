@@ -21,6 +21,7 @@ export * from "./certify.js";
 export * from "./compose/index.js";
 export * from "./conformance.js";
 export * from "./deploy.js";
+export * from "./deploy-gateway.js";
 export * from "./deploy-github-actions.js";
 export * from "./deploy-kubernetes.js";
 export * from "./deploy-targets.js";

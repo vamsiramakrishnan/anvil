@@ -86,6 +86,26 @@ const MCP_REQUEST_MAX_BYTES = 1024 * 1024;
 const SESSION_IDLE_TTL_MS = 15 * 60 * 1000;
 const SESSION_SWEEP_MS = 60 * 1000;
 const MAX_SESSIONS = 100;
+/** Under Cloud Run's 10-second SIGTERM window; `ANVIL_SHUTDOWN_GRACE_SECONDS` overrides it. */
+const DEFAULT_SHUTDOWN_GRACE_SECONDS = 8;
+const MAX_SHUTDOWN_GRACE_SECONDS = 3600;
+
+/** The drain window in milliseconds, or the reason the variable is unusable. */
+function shutdownGraceMs(
+  env: NodeJS.ProcessEnv,
+): { ok: true; ms: number } | { ok: false; message: string } {
+  const raw = env.ANVIL_SHUTDOWN_GRACE_SECONDS?.trim();
+  if (raw === undefined || raw === "")
+    return { ok: true, ms: DEFAULT_SHUTDOWN_GRACE_SECONDS * 1000 };
+  const seconds = Number(raw);
+  if (!/^[0-9]+$/.test(raw) || seconds > MAX_SHUTDOWN_GRACE_SECONDS) {
+    return {
+      ok: false,
+      message: `ANVIL_SHUTDOWN_GRACE_SECONDS must be an integer from 0 to ${MAX_SHUTDOWN_GRACE_SECONDS}`,
+    };
+  }
+  return { ok: true, ms: seconds * 1000 };
+}
 
 const JSON_REFUSAL = { "content-type": "application/json", "x-content-type-options": "nosniff" };
 
@@ -266,6 +286,8 @@ export async function startFleetHttp(
         "listener must self-enforce inbound auth (oidc, google_service_account, or branchyard), exactly as the deployed server does",
     };
   }
+  const grace = shutdownGraceMs(env);
+  if (!grace.ok) return { ok: false, message: grace.message };
   const audit = auditSinkFromEnv(env, log);
   const prepared = await prepareFleetForWorkspace(workspaceRoot, env, { audit });
   if (!prepared.ok) return { ok: false, message: prepared.message };
@@ -297,6 +319,11 @@ export async function startFleetHttp(
   const sessions = new Map<string, Session>();
   const live = new Set<Session>();
   let shuttingDown = false;
+  // Requests that can run a tool (POST /mcp, DELETE /mcp, /call/*) and have not
+  // finished: a SIGTERM drain waits for these. The standalone GET /mcp event
+  // stream is not one; it can stay open indefinitely and is closed at the end.
+  let inFlight = 0;
+  let drained: (() => void) | undefined;
 
   const forget = (session: Session) => {
     live.delete(session);
@@ -345,6 +372,13 @@ export async function startFleetHttp(
   // closed once a response has started) and logged; it never ends the process.
   const reportFailure = () => log("anvil: a fleet request failed unexpectedly; answered 500.");
   const server: Server = createGuardedServer(async (req, res) => {
+    if (req.method !== "GET" || (req.url ?? "").startsWith("/call/")) {
+      inFlight += 1;
+      res.once("close", () => {
+        inFlight = Math.max(0, inFlight - 1);
+        if (inFlight === 0) drained?.();
+      });
+    }
     // With no inbound auth the loopback bind is the only gate, and DNS rebinding
     // walks around it: a web page can re-point its own domain at 127.0.0.1 and
     // POST same-origin. So an unauthenticated listener answers only requests
@@ -383,6 +417,8 @@ export async function startFleetHttp(
       return json(res, 200, { status: "ok", fleet: true, bundles: bundleIds.length });
     }
     if (url.pathname === "/readyz") {
+      // A draining instance is not ready: a load balancer stops sending it work.
+      if (shuttingDown) return json(res, 503, { ready: false, draining: true });
       const body = probe.readyz();
       return json(res, body.ready ? 200 : 503, body);
     }
@@ -528,15 +564,35 @@ export async function startFleetHttp(
       `(${bundleIds.join(", ")}); inbound auth ${inbound.mode}; /readyz and /healthz on the same listener`,
   );
 
-  const close = async () => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    clearInterval(sweep);
-    await Promise.allSettled([...live].map((session) => closeSession(session)));
-    await probe.close();
-    server.closeIdleConnections?.();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    server.closeAllConnections?.();
+  // SIGTERM path (Cloud Run gives 10 seconds): stop accepting connections, refuse
+  // new work with 503, let the calls that started finish for up to the grace
+  // period, then close sessions and sockets. Calls still running at the end are
+  // cut; the idempotency ledger covers their retry.
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    closing ??= (async () => {
+      shuttingDown = true;
+      clearInterval(sweep);
+      const listenerClosed = new Promise<void>((resolve) => server.close(() => resolve()));
+      server.closeIdleConnections?.();
+      if (inFlight > 0) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, grace.ms);
+          timer.unref();
+          drained = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+        });
+      }
+      // Whatever is still running is cut here: its socket first, so a handler
+      // stuck on an upstream cannot hold the close open past the window.
+      server.closeAllConnections?.();
+      await Promise.allSettled([...live].map((session) => closeSession(session)));
+      await probe.close();
+      await listenerClosed;
+    })();
+    return closing;
   };
   return { ok: true, handle: { host: options.host, port, bundleIds, close } };
 }

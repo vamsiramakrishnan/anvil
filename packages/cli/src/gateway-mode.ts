@@ -13,6 +13,11 @@ import { AnvilError } from "@anvil/runtime";
  * The token file is read here, per call, so a token replaced each turn is
  * picked up; its contents never reach argv, a URL, or an error. No upstream
  * credential variable is read.
+ *
+ * `ANVIL_GATEWAY_AUTH=proxy` is the other mode (Anvil contract v2, item 6): no
+ * token file is read and no bearer is sent. A local proxy at `ANVIL_GATEWAY_URL`
+ * adds the token, so this process never holds one. The mode is refused unless
+ * the URL names a loopback host. Unset or `token_file` is the mode above.
  */
 
 /** Flags that choose where or how a direct/MCP call runs — meaningless in gateway mode. */
@@ -37,8 +42,8 @@ export type GatewayCall =
       target: string;
       /** The CLI's safety flags, carried as the tool's reserved inputs. */
       safety: { confirm: boolean; dryRun: boolean; idempotencyKey?: string };
-      /** The bearer, read from the token file for this call only. */
-      auth: { bearerToken: string };
+      /** The bearer, read from the token file for this call only; empty in proxy mode. */
+      auth: { bearerToken?: string };
       toolName: string;
     }
   | { ok: false; error: AnvilError };
@@ -59,6 +64,12 @@ function refusal(
       details,
     }),
   };
+}
+
+/** Loopback hosts a proxy-mode gateway URL may name. */
+function isLoopbackUrl(url: URL): boolean {
+  const host = url.hostname;
+  return host === "localhost" || host === "[::1]" || /^127(\.\d{1,3}){3}$/.test(host);
 }
 
 /** The gateway call for this invocation, its refusal, or undefined when gateway mode is off. */
@@ -98,21 +109,40 @@ export function resolveGatewayCall(
       { env: "ANVIL_GATEWAY_URL" },
     );
   }
-  const tokenFile = env.ANVIL_GATEWAY_TOKEN_FILE?.trim();
-  let bearerToken = "";
-  try {
-    bearerToken = tokenFile ? readFileSync(tokenFile, "utf8").trim() : "";
-  } catch {
-    bearerToken = "";
+  const authMode = env.ANVIL_GATEWAY_AUTH?.trim() || "token_file";
+  if (authMode !== "proxy" && authMode !== "token_file") {
+    return refusal("validation_error", op, "ANVIL_GATEWAY_AUTH must be proxy or token_file.", {
+      env: "ANVIL_GATEWAY_AUTH",
+    });
   }
-  if (!bearerToken) {
-    return refusal(
-      "auth_required",
-      op,
-      tokenFile
-        ? "The gateway token file named by ANVIL_GATEWAY_TOKEN_FILE is missing, unreadable, or empty."
-        : "Gateway mode needs ANVIL_GATEWAY_TOKEN_FILE to name this turn's token file.",
-    );
+  let auth: { bearerToken?: string } = {};
+  if (authMode === "proxy") {
+    if (!isLoopbackUrl(url)) {
+      return refusal(
+        "validation_error",
+        op,
+        "ANVIL_GATEWAY_AUTH=proxy needs ANVIL_GATEWAY_URL to name a loopback host.",
+        { env: "ANVIL_GATEWAY_URL" },
+      );
+    }
+  } else {
+    const tokenFile = env.ANVIL_GATEWAY_TOKEN_FILE?.trim();
+    let bearerToken = "";
+    try {
+      bearerToken = tokenFile ? readFileSync(tokenFile, "utf8").trim() : "";
+    } catch {
+      bearerToken = "";
+    }
+    if (!bearerToken) {
+      return refusal(
+        "auth_required",
+        op,
+        tokenFile
+          ? "The gateway token file named by ANVIL_GATEWAY_TOKEN_FILE is missing, unreadable, or empty."
+          : "Gateway mode needs ANVIL_GATEWAY_TOKEN_FILE to name this turn's token file.",
+      );
+    }
+    auth = { bearerToken };
   }
   const connector =
     env.ANVIL_GATEWAY_CONNECTOR?.trim() || connectorOverride || defaultGatewayConnector(serviceId);
@@ -125,7 +155,7 @@ export function resolveGatewayCall(
       dryRun: flags["dry-run"] === true,
       ...(typeof idempotencyKey === "string" ? { idempotencyKey } : {}),
     },
-    auth: { bearerToken },
+    auth,
     toolName: `${connector}__${op.mcp.toolName}`,
   };
 }

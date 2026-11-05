@@ -176,6 +176,8 @@ from the Anvil checkout.
 | `ANVIL_VAULT_DIR` | Where encrypted connections live. Default `~/.anvil/gateway/vault`. |
 | `ANVIL_AUDIT_FILE` | Append one JSON line per call here (created 0600). Unset: no audit log. |
 | `ANVIL_GATEWAY_PUBLIC_URL` | The base for `/connect/callback` when it differs from the audience's origin. |
+| `ANVIL_LEDGER` | The idempotency ledger. The fleet listener boots it through the same composition root as every other surface, so `firestore://PROJECT/DATABASE/NAMESPACE` selects the Firestore ledger and an unknown scheme or a malformed URI stops the start. Unset, the ledger is in memory, which is for `dev`. |
+| `ANVIL_SHUTDOWN_GRACE_SECONDS` | On `SIGTERM` the listener stops accepting connections, answers new work `503` (and `/readyz` not ready), lets calls already running finish for this many seconds, then closes and exits 0. Default 8, under Cloud Run's 10-second window. An integer from 0 to 3600; anything else stops the start. |
 | `ANVIL_CONNECT_<CONNECTOR>_CLIENT_ID`, `_CLIENT_SECRET` | The gateway's OAuth client for one connector. `_AUTHORIZATION_ENDPOINT`, `_TOKEN_ENDPOINT`, `_ISSUER`, `_SCOPES` override what AIR declares. Both endpoints, from either source, must be HTTPS (plain HTTP only to `127.0.0.1`): otherwise `/connect/start` answers `503 connector_not_configured`, a stored connection's refresh fails as `connector/refresh_failed`, and nothing is sent to the token endpoint. Neither request follows a redirect. |
 | `ANVIL_CONNECT_<CONNECTOR>_MCP_URL`, `_MCP_AUTH` | Reviewed upstream Streamable HTTP MCP endpoint and explicit auth mode: `oauth`, `workload`, `static`, or `none`. OAuth requires `_ISSUER` and `_CLIENT_ID`, with optional `_CLIENT_SECRET` and `_SCOPES`. |
 | `ANVIL_ALLOWED_HOSTS` | The upstream egress allowlist, as for every serving surface. |
@@ -185,8 +187,11 @@ from the Anvil checkout.
 A compact JWT, `alg: EdDSA`, with `kid` in the header. The gateway checks the
 signature, `iss`, `aud`, `exp` (and refuses one more than an hour away), `nbf`,
 `iat` (not in the future), and requires nonempty `sub` and `by_tenant` plus a
-well-formed `by_grants`. `by_branch` and `by_turn` are optional strings, recorded
-in the audit log. Any failure is a `401` with `WWW-Authenticate`. A session belongs to
+well-formed `by_grants`. `by_branch`, `by_turn` and `by_manifest` are optional
+strings of at most 256 characters, recorded in the audit log (`by_manifest` is
+the digest of the turn's manifest, `<algorithm>:<hex>`, and the gateway treats
+it as opaque text; a longer value is a `401`). It is recorded, never enforced:
+it changes neither the credential owner, nor the grant, nor the decision. Any failure is a `401` with `WWW-Authenticate`. A session belongs to
 one token: a different token presenting its session id gets `403`.
 
 There are two kinds of token, told apart by `by_purpose`:
@@ -353,11 +358,48 @@ read from stdin. OAuth connectors use the authorization-code grant with PKCE
 | --- | --- |
 | `ANVIL_GATEWAY_URL` | The gateway's `/mcp` URL. When set, the generated CLI and the Python and TypeScript SDKs send every call there and read no upstream credential variable. |
 | `ANVIL_GATEWAY_TOKEN_FILE` | This turn's token. Read on every call, so a replaced file takes effect at once. |
+| `ANVIL_GATEWAY_AUTH` | `token_file` (the default) reads the token file as above. `proxy` sends no `Authorization` header and reads no token file: a proxy at `ANVIL_GATEWAY_URL` adds the token, so the process holds none. `proxy` is refused, before any request, unless `ANVIL_GATEWAY_URL` names a loopback host (`localhost`, `127.x.x.x`, `::1`). Any other value is refused. The generated CLI, the packaged `bin/<connector>` script and the Python and TypeScript SDKs all follow it. |
 | `ANVIL_GATEWAY_CONNECTOR` | Optional. Overrides the connector id a client was built with. |
 
 Local confirmation and idempotency checks still run before a call leaves the
 client. `--dry-run` / `dry_run=True` / `{ dryRun: true }` returns the gateway's
 plan. Go and Java clients do not have a gateway mode yet.
+
+### Cloud Run
+
+`anvil deploy gateway --out <dir> --image <ref> --project <id> --public-url <url> --branchyard-url <url>`
+writes `deploy/gateway/Dockerfile` and `deploy/gateway/service.yaml`. It writes
+files and calls nothing. The Dockerfile's command is
+`anvil serve mcp /srv/bundles --fleet --http "$PORT" --host 0.0.0.0` run with
+`exec`, so Node receives Cloud Run's `SIGTERM`. The service definition carries:
+
+- a startup probe on `/readyz` and a liveness probe on `/healthz`;
+- `ANVIL_INBOUND_AUTH_MODE=branchyard`, `ANVIL_INBOUND_ISSUER` (the Branchyard URL),
+  `ANVIL_INBOUND_AUDIENCE` (`<public url>/mcp`) and `ANVIL_INBOUND_JWKS_URI`
+  (`<Branchyard URL>/.well-known/jwks.json`, or `--jwks-uri`). The JWKS cache lasts
+  five minutes, so after a key rotation keep the old key published for that long;
+- `ANVIL_GATEWAY_PUBLIC_URL`, `ANVIL_LEDGER=firestore://<project>/<database>/<namespace>`
+  and `ANVIL_SHUTDOWN_GRACE_SECONDS=8`;
+- `ANVIL_VAULT_KEY_FILE`, read from a mounted Secret Manager secret.
+
+The image expects a prebuilt Anvil tree in `anvil/` and the reviewed bundles in
+`bundles/` of the build context; it resolves nothing from a registry. The
+per-bundle `deploy/` output of `anvil compile` is unchanged, and its server still
+refuses `branchyard` mode.
+
+`anvil capabilities --json` prints `{"features": [...]}` for this build:
+`token.proxy` and `manifest.claim`. A caller reads it to tell what the Anvil in
+use supports.
+
+What ran: the listener's drain (a running call finishes, a new connection is
+refused, a call past the grace period is cut, `SIGTERM` through `anvil serve mcp
+--fleet --http` exits 0), the `ANVIL_LEDGER` selection (the Firestore class is
+chosen from the URI; a bad URI stops the start), the generated files' contents,
+and `by_manifest` in the audit line, all hermetic on loopback sockets. Not
+done: a deployment on Cloud Run, a call against a real Firestore, building the
+image, and a run of two gateway instances sharing one ledger (the ledger's
+cross-instance rules are covered with a fake Firestore in
+`packages/runtime/src/firestore-ledger.test.ts`).
 
 ### Harness package
 

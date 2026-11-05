@@ -109,6 +109,8 @@ describe("branchyard inbound auth", () => {
     ["grant not a list", { by_grants: "github:read" }, "by_grants"],
     ["missing grant", { by_grants: undefined }, "by_grants"],
     ["non-string turn", { by_turn: 7 }, "by_turn"],
+    ["non-string manifest", { by_manifest: 7 }, "by_manifest"],
+    ["257-character manifest", { by_manifest: `blake3:${"a".repeat(250)}` }, "by_manifest"],
     ["unknown purpose", { by_purpose: "admin" }, "by_purpose"],
     ["connect token over ten minutes", { by_purpose: "connect", exp: NOW + 1200 }, "ten minutes"],
   ])("rejects a token with a bad %s", async (_label, change, message) => {
@@ -117,6 +119,26 @@ describe("branchyard inbound auth", () => {
     if (result.ok) return;
     expect(result.status).toBe(401);
     expect(result.description).toContain(message);
+  });
+
+  it("carries by_manifest into the attribution without changing the owner or the grant", async () => {
+    const digest = `blake3:${"ab".repeat(32)}`;
+    const withManifest = await verify(mint({ ...claims, by_manifest: digest }));
+    const without = await verify(mint(claims));
+    const other = await verify(mint({ ...claims, by_manifest: "blake3:other" }));
+    expect(withManifest.ok && without.ok && other.ok).toBe(true);
+    if (!withManifest.ok || !without.ok || !other.ok) return;
+    const a = branchyardPrincipal(withManifest.claims);
+    const b = branchyardPrincipal(without.claims);
+    const c = branchyardPrincipal(other.claims);
+    expect(a?.attribution?.manifest).toBe(digest);
+    expect(b?.attribution?.manifest).toBeUndefined();
+    expect(c?.attribution?.manifest).toBe("blake3:other");
+    expect(a?.id).toBe(b?.id);
+    expect(c?.id).toBe(b?.id);
+    expect(a?.grants).toEqual(b?.grants);
+    // A 256-character value is accepted.
+    expect((await verify(mint({ ...claims, by_manifest: "x".repeat(256) }))).ok).toBe(true);
   });
 
   it("tells a connect token from a turn token, and gives a connect token no principal", async () => {

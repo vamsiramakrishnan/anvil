@@ -84,6 +84,8 @@ export interface Principal {
     tenant?: string;
     branch?: string;
     turn?: string;
+    /** `by_manifest`: the turn manifest digest, opaque text, recorded and never enforced. */
+    manifest?: string;
   };
 }
 

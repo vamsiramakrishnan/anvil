@@ -136,6 +136,16 @@ Emits draft 2020-12 JSON Schema for an exposure profile (`--profile` to `anvil c
 Options:
 - `--out <file>` — write the schema to a file instead of stdout
 
+### `anvil capabilities`
+`anvil capabilities [options]`
+
+List the gateway-contract features this Anvil implements.
+
+Prints the feature names (for example token.proxy, manifest.claim) so a caller can tell which contract items this build supports. With --json, prints {"features": [...]}.
+
+Options:
+- `--json` — print {"features": [...]} as JSON
+
 ### `anvil status`
 `anvil status [options] <path>`
 
@@ -1210,6 +1220,25 @@ Options:
 - `--project <id>` — GCP project id for links and sm:// references
 - `--json` — emit one machine-readable credential plan
 - `--tfvars` — emit only Terraform auto-tfvars JSON for an external plan work directory
+
+#### `anvil deploy gateway`
+`anvil deploy gateway [options]`
+
+Write the Cloud Run Dockerfile and service for the fleet gateway.
+
+Writes deploy/gateway/Dockerfile and service.yaml for `anvil serve mcp <bundles> --fleet --http $PORT`: /readyz startup and /healthz liveness probes, the branchyard inbound-auth configuration (issuer, audience, JWKS), the Firestore idempotency ledger, and the SIGTERM drain window. Configuration only; it never applies anything.
+
+Options:
+- `--out <dir>` — directory to write deploy/gateway/ into
+- `--image <ref>` — container image reference built from the Dockerfile
+- `--project <id>` — GCP project id (the ledger's project)
+- `--public-url <url>` — the gateway's public https URL
+- `--branchyard-url <url>` — the Branchyard server's https URL (token issuer)
+- `--jwks-uri <url>` — JWKS URL (default: <branchyard-url>/.well-known/jwks.json)
+- `--service <name>` — Cloud Run service name
+- `--ledger-database <id>` — Firestore database for the ledger
+- `--ledger-namespace <name>` — ledger namespace
+- `--env <env>` — ANVIL_ENV
 
 #### `anvil deploy kubernetes`
 `anvil deploy kubernetes [options] <dir>`

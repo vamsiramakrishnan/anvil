@@ -896,6 +896,8 @@ describe("anvil adopt speaks the operator envelope", () => {
 const UNEXERCISED: Record<string, string> = {
   // Driven end to end (success, manifest refusals, compile errors) in cmd-compile.test.ts.
   compile: "needs a source fixture; its --json envelopes are driven in cmd-compile.test.ts",
+  // Prints Branchyard's bare {"features": [...]} object, not an operator envelope; driven in cmd-deploy-gateway.test.ts.
+  capabilities: "prints the contract's bare features object; driven in cmd-deploy-gateway.test.ts",
   // Need a compiled bundle plus lifecycle state to reach their refusal paths.
   agentify: "needs a compiled bundle fixture",
   certify: "needs a compiled bundle fixture",

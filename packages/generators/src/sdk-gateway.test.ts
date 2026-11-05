@@ -1,5 +1,5 @@
 import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -34,7 +34,7 @@ const PYTHON = has("python3", ["--version"]);
 const TYPE_ROOTS = fileURLToPath(new URL("../../../node_modules/@types", import.meta.url));
 
 const STUB = String.raw`import { appendFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 const log = process.argv[2];
 const record = (entry) => appendFileSync(log, JSON.stringify(entry) + "\n");
 const upstream = createServer((req, res) => {
@@ -71,15 +71,27 @@ const gateway = createServer((req, res) => {
     res.end("event: message\ndata: " + JSON.stringify({ jsonrpc: "2.0", id: message.id, result }) + "\n\n");
   });
 });
-upstream.listen(0, "127.0.0.1", () => gateway.listen(0, "127.0.0.1", () => {
-  process.stdout.write(JSON.stringify({ upstream: upstream.address().port, gateway: gateway.address().port }) + "\n");
-}));
+// A stand-in for the sandbox proxy: the client sends it no bearer; it adds one.
+const proxy = createServer((req, res) => {
+  record({ proxy: true, clientAuthorization: req.headers.authorization ?? null });
+  const headers = { ...req.headers, authorization: "Bearer proxy-injected" };
+  delete headers.host;
+  const onward = httpRequest({ host: "127.0.0.1", port: gateway.address().port, path: req.url, method: req.method, headers }, (reply) => {
+    res.writeHead(reply.statusCode, reply.headers);
+    reply.pipe(res);
+  });
+  req.pipe(onward);
+});
+upstream.listen(0, "127.0.0.1", () => gateway.listen(0, "127.0.0.1", () => proxy.listen(0, "127.0.0.1", () => {
+  process.stdout.write(JSON.stringify({ upstream: upstream.address().port, gateway: gateway.address().port, proxy: proxy.address().port }) + "\n");
+})));
 `;
 
 let work = "";
 let child: ChildProcess | undefined;
 let gatewayUrl = "";
 let upstreamUrl = "";
+let proxyUrl = "";
 let logFile = "";
 
 beforeAll(async () => {
@@ -90,12 +102,15 @@ beforeAll(async () => {
   child = spawn(process.execPath, [join(work, "stub.mjs"), logFile], {
     stdio: ["ignore", "pipe", "inherit"],
   });
-  const ports = await new Promise<{ upstream: number; gateway: number }>((resolve, reject) => {
-    child?.stdout?.once("data", (chunk) => resolve(JSON.parse(String(chunk))));
-    child?.once("error", reject);
-  });
+  const ports = await new Promise<{ upstream: number; gateway: number; proxy: number }>(
+    (resolve, reject) => {
+      child?.stdout?.once("data", (chunk) => resolve(JSON.parse(String(chunk))));
+      child?.once("error", reject);
+    },
+  );
   gatewayUrl = `http://127.0.0.1:${ports.gateway}/mcp`;
   upstreamUrl = `http://127.0.0.1:${ports.upstream}`;
+  proxyUrl = `http://127.0.0.1:${ports.proxy}/mcp`;
   const air = await compile({
     spec: read("openapi.yaml").replace("https://api.github.example", upstreamUrl),
     manifest: read("anvil.yaml"),
@@ -242,6 +257,68 @@ except AnvilError as error:
   });
 });
 
+describe.runIf(PYTHON)("Python SDK with ANVIL_GATEWAY_AUTH=proxy", () => {
+  it("sends no Authorization header and reads no token file; the proxy adds the token", () => {
+    writeFileSync(logFile, "");
+    const decoy = join(work, "py-decoy.token");
+    writeFileSync(decoy, "decoy-must-not-be-sent");
+    const script = `
+import json
+from anvil_github import GithubClient
+client = GithubClient()
+print(json.dumps({"first": client.list_issue(owner="o", repo="r"), "second": client.list_issue(owner="o", repo="r")}))
+`;
+    const out = execFileSync("python3", ["-c", script], {
+      env: {
+        ...clean(),
+        PYTHONPATH: join(work, "sdk", "python"),
+        ANVIL_GATEWAY_URL: proxyUrl,
+        ANVIL_GATEWAY_AUTH: "proxy",
+        ANVIL_GATEWAY_TOKEN_FILE: decoy,
+      },
+      encoding: "utf8",
+    });
+    expect(JSON.parse(out.trim()).first).toEqual([{ number: 1, title: "First", state: "open" }]);
+    const entries = log();
+    const fromClient = entries.filter((e) => e.proxy);
+    expect(fromClient.length).toBeGreaterThan(0);
+    expect(fromClient.every((e) => e.clientAuthorization === null)).toBe(true);
+    const atGateway = entries.filter((e) => e.gateway);
+    expect(atGateway.every((e) => e.authorization === "Bearer proxy-injected")).toBe(true);
+    expect(JSON.stringify(entries)).not.toContain("decoy-must-not-be-sent");
+  });
+
+  it("refuses a non-loopback ANVIL_GATEWAY_URL before any request, and an unknown mode", () => {
+    writeFileSync(logFile, "");
+    const script = `
+import json
+from anvil_github import GithubClient, AnvilError
+try:
+    GithubClient().list_issue(owner="o", repo="r")
+except AnvilError as error:
+    print(json.dumps({"code": error.code, "message": error.message}))
+`;
+    const run = (url: string, mode: string) =>
+      JSON.parse(
+        execFileSync("python3", ["-c", script], {
+          env: {
+            ...clean(),
+            PYTHONPATH: join(work, "sdk", "python"),
+            ANVIL_GATEWAY_URL: url,
+            ANVIL_GATEWAY_AUTH: mode,
+          },
+          encoding: "utf8",
+        }).trim(),
+      );
+    expect(run("https://gateway.example.com/mcp", "proxy")).toMatchObject({
+      code: "validation_error",
+      message: expect.stringContaining("loopback"),
+    });
+    expect(run(proxyUrl, "bogus")).toMatchObject({ code: "validation_error" });
+    expect(log()).toEqual([]);
+  });
+});
+
 describe("TypeScript SDK in gateway mode", () => {
   it("calls the gateway with the per-call token and never reads GITHUB_TOKEN", () => {
     writeFileSync(logFile, "");
@@ -292,5 +369,56 @@ process.stdout.write(JSON.stringify({ first, plan, remote, reads }));
       "Bearer ts-token-B",
     ]);
     expect(log().filter((e) => e.upstream)).toEqual([]);
+  });
+});
+
+describe("TypeScript SDK with ANVIL_GATEWAY_AUTH=proxy", () => {
+  function runTs(env: Record<string, string>, body: string): string {
+    const root = join(work, "sdk", "typescript");
+    if (!existsSync(join(root, "dist", "index.js"))) {
+      execFileSync(
+        process.execPath,
+        [TYPESCRIPT, "-p", "tsconfig.json", "--typeRoots", TYPE_ROOTS],
+        { cwd: root },
+      );
+    }
+    writeFileSync(
+      join(work, "run-proxy.mjs"),
+      `const { GithubClient } = await import(${JSON.stringify(join(root, "dist", "index.js"))});\n${body}`,
+    );
+    return execFileSync(process.execPath, [join(work, "run-proxy.mjs")], {
+      env: { ...clean(), ...env },
+      encoding: "utf8",
+    });
+  }
+
+  it("sends no authorization header and reads no token file; the proxy adds the token", () => {
+    writeFileSync(logFile, "");
+    const decoy = join(work, "ts-decoy.token");
+    writeFileSync(decoy, "decoy-must-not-be-sent");
+    const out = runTs(
+      { ANVIL_GATEWAY_URL: proxyUrl, ANVIL_GATEWAY_AUTH: "proxy", ANVIL_GATEWAY_TOKEN_FILE: decoy },
+      `process.stdout.write(JSON.stringify(await new GithubClient().listIssue({ owner: "o", repo: "r" })));`,
+    );
+    expect(JSON.parse(out)).toEqual([{ number: 1, title: "First", state: "open" }]);
+    const entries = log();
+    expect(entries.filter((e) => e.proxy).every((e) => e.clientAuthorization === null)).toBe(true);
+    expect(
+      entries.filter((e) => e.gateway).every((e) => e.authorization === "Bearer proxy-injected"),
+    ).toBe(true);
+    expect(JSON.stringify(entries)).not.toContain("decoy-must-not-be-sent");
+  });
+
+  it("refuses a non-loopback ANVIL_GATEWAY_URL before any request", () => {
+    writeFileSync(logFile, "");
+    const out = runTs(
+      { ANVIL_GATEWAY_URL: "https://gateway.example.com/mcp", ANVIL_GATEWAY_AUTH: "proxy" },
+      `try { await new GithubClient().listIssue({ owner: "o", repo: "r" }); } catch (e) { process.stdout.write(JSON.stringify({ code: e.code, message: e.message })); }`,
+    );
+    expect(JSON.parse(out)).toMatchObject({
+      code: "validation_error",
+      message: expect.stringContaining("loopback"),
+    });
+    expect(log()).toEqual([]);
   });
 });

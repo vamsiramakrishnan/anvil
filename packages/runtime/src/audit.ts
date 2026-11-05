@@ -23,6 +23,8 @@ export interface AuditLine {
   by_tenant: string | null;
   by_branch: string | null;
   by_turn: string | null;
+  /** The `by_manifest` claim as it came, or null when the token carried none. */
+  by_manifest: string | null;
   connector: string | null;
   account: string | null;
   operation: string;
@@ -147,6 +149,7 @@ export function auditCall(sink: AuditSink, call: AuditedCall): void {
       by_tenant: principal.attribution?.tenant ?? null,
       by_branch: principal.attribution?.branch ?? null,
       by_turn: principal.attribution?.turn ?? null,
+      by_manifest: principal.attribution?.manifest ?? null,
       connector: call.connector ?? null,
       account: grant?.allowed ? grant.account : (entry?.account ?? null),
       operation: record.operationId,

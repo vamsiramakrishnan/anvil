@@ -7,6 +7,7 @@ import { registerAssess } from "./commands/assess.js";
 import { registerAuth } from "./commands/auth.js";
 import { registerBenchmark } from "./commands/benchmark.js";
 import { registerBuild } from "./commands/build.js";
+import { registerCapabilities } from "./commands/capabilities.js";
 import { registerCapability } from "./commands/capability/capability.js";
 import { registerCase } from "./commands/case.js";
 import { registerCertify } from "./commands/certify.js";
@@ -102,6 +103,7 @@ export function createAnvilProgram(deps: AnvilCliDeps = {}): Command {
   registerCompile(program, ctx);
   // The manifest schema sits beside compile: it describes the file compile reads.
   registerSchema(program, ctx);
+  registerCapabilities(program, ctx);
   program.commandsGroup("Review:");
   registerStatus(program, ctx);
   registerInspect(program, ctx);

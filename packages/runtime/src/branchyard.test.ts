@@ -129,6 +129,25 @@ describe("the grant gate", () => {
     expect(h.lines[0]?.input_sha256).toBe(redactedInputHash({ owner: "octo" }));
   });
 
+  it("records by_manifest in the audit line, null when absent, and decides the same either way", async () => {
+    const grants: GrantEntry[] = [{ connector: "github", operations: ["issues.*"], mode: "read" }];
+    const digest = `blake3:${"cd".repeat(32)}`;
+    const withManifest = harness(grants);
+    connect(withManifest.vault);
+    withManifest.ctx.principal = {
+      ...principal(grants),
+      attribution: { tenant: "t1", branch: "feature-x", turn: "7", manifest: digest },
+    };
+    const plain = harness(grants);
+    connect(plain.vault);
+    const a = await execute(list, { input: { owner: "octo" } }, withManifest.ctx);
+    const b = await execute(list, { input: { owner: "octo" } }, plain.ctx);
+    expect(a.outcome).toBe(b.outcome);
+    expect(withManifest.lines[0]).toMatchObject({ by_manifest: digest, decision: "allowed" });
+    expect(plain.lines[0]).toMatchObject({ by_manifest: null, decision: "allowed" });
+    expect(JSON.stringify(withManifest.lines[0])).not.toContain("pat-123");
+  });
+
   it("uses the account the matching entry names", async () => {
     const h = harness([{ connector: "github", operations: ["*"], mode: "read", account: "work" }]);
     connect(h.vault, "default", "personal-token");
