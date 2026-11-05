@@ -1624,6 +1624,16 @@ Options:
 - `--api-key-stdin` — read an API key or personal token for a key-based connector from stdin
 - `--open` — open the authorization URL in the default browser as well as printing it
 
+### `anvil capabilities`
+`anvil capabilities [options]`
+
+List the optional features this anvil implements.
+
+Read-only. Lists the contract features this build supports by name (for example vault.firestore and connect.disconnect), so a caller can tell what to rely on.
+
+Options:
+- `--json` — print {"features": [...]} as JSON
+
 ### `anvil package`  *(mutates)*
 `anvil package [options] [command]`
 

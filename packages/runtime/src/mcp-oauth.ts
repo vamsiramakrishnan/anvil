@@ -11,7 +11,7 @@ import {
   OAuthTokensSchema,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { isSendableOAuthEndpoint } from "./oauth-endpoint.js";
-import { type ConnectionVault, CredentialUnavailableError } from "./vault.js";
+import { CredentialUnavailableError, type VaultBackend } from "./vault.js";
 
 /** Reviewed resource and pre-registered OAuth client, supplied only by the deployer. */
 export interface McpOAuthConfig {
@@ -64,7 +64,7 @@ export class VaultMcpOAuth implements OAuthClientProvider {
   private readonly fetchImpl: typeof fetch;
 
   constructor(
-    private readonly vault: ConnectionVault,
+    private readonly vault: VaultBackend,
     readonly account: McpAccount,
     readonly config: McpOAuthConfig,
     readonly redirectUrl: string,
@@ -97,8 +97,12 @@ export class VaultMcpOAuth implements OAuthClientProvider {
     };
   }
 
-  private connection() {
-    const current = this.vault.get(this.account.sub, this.account.connector, this.account.account);
+  private async connection() {
+    const current = await this.vault.get(
+      this.account.sub,
+      this.account.connector,
+      this.account.account,
+    );
     if (!current) return undefined;
     if (
       current.status !== "active" ||
@@ -109,18 +113,22 @@ export class VaultMcpOAuth implements OAuthClientProvider {
     return current;
   }
 
-  tokens(): OAuthTokens | undefined {
+  async tokens(): Promise<OAuthTokens | undefined> {
     // Starting human consent must not silently refresh an existing account instead.
     if (this.interactive) return undefined;
-    const current = this.connection();
+    const current = await this.connection();
     return current?.mcp ? OAuthTokensSchema.parse(current.mcp.tokens) : undefined;
   }
 
-  saveTokens(tokens: OAuthTokens): void {
+  async saveTokens(tokens: OAuthTokens): Promise<void> {
     if (tokens.issuer !== this.config.issuer || tokens.token_type.toLowerCase() !== "bearer") {
       throw this.unavailable();
     }
-    const old = this.vault.get(this.account.sub, this.account.connector, this.account.account);
+    const old = await this.vault.get(
+      this.account.sub,
+      this.account.connector,
+      this.account.account,
+    );
     const sameResource =
       old?.mcp?.resource === this.config.resource && old.mcp.issuer === this.config.issuer;
     const previous = sameResource && old.status === "active" ? old.mcp?.tokens : undefined;
@@ -133,7 +141,7 @@ export class VaultMcpOAuth implements OAuthClientProvider {
       throw this.unavailable();
     }
     const stamp = new Date(this.now()).toISOString();
-    this.vault.put({
+    await this.vault.put({
       sub: this.account.sub,
       connector: this.account.connector,
       account: this.account.account,
@@ -202,7 +210,9 @@ export class VaultMcpOAuth implements OAuthClientProvider {
     return this.discovery;
   }
 
-  invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): void {
+  async invalidateCredentials(
+    scope: "all" | "client" | "tokens" | "verifier" | "discovery",
+  ): Promise<void> {
     if (scope === "discovery") {
       this.discovery = undefined;
       return;
@@ -211,8 +221,12 @@ export class VaultMcpOAuth implements OAuthClientProvider {
       this.verifier = undefined;
       return;
     }
-    const current = this.vault.get(this.account.sub, this.account.connector, this.account.account);
-    if (current) this.vault.put({ ...current, status: "needs_reconnect" });
+    const current = await this.vault.get(
+      this.account.sub,
+      this.account.connector,
+      this.account.account,
+    );
+    if (current) await this.vault.put({ ...current, status: "needs_reconnect" });
     throw this.unavailable();
   }
 
@@ -254,7 +268,7 @@ export class VaultMcpOAuth implements OAuthClientProvider {
       this.account.connector,
       this.account.account,
       async () => {
-        const current = this.connection();
+        const current = await this.connection();
         if (!current?.mcp) throw this.unavailable();
         if (current.expiresAt !== undefined && current.expiresAt <= this.now() + 60_000) {
           if (!current.mcp.tokens.refresh_token || (await this.authorize()) !== "AUTHORIZED") {

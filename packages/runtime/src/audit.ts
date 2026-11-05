@@ -46,6 +46,8 @@ export interface AuditLine {
   ledger_id: string | null;
   /** On a staged call (`stage: true`), the operation whose draft form this call performed. */
   staged_for: string | null;
+  /** `connect.disconnect` lines only: whether a stored connection was removed. */
+  disconnected?: boolean;
 }
 
 export type AuditSink = (line: AuditLine) => void;
@@ -170,5 +172,54 @@ export function auditCall(sink: AuditSink, call: AuditedCall): void {
     });
   } catch {
     // An audit sink never fails the call it describes.
+  }
+}
+
+/**
+ * One line for `POST /connect/disconnect`: `operation` `connect.disconnect`,
+ * `decision` `allowed`, and whether a record was removed. The line carries the
+ * coordinates the person named and never a secret. A sink that throws never
+ * fails the route.
+ */
+export function auditDisconnect(
+  sink: AuditSink,
+  input: {
+    sub: string;
+    tenant: string | null;
+    connector: string;
+    account: string;
+    disconnected: boolean;
+    latencyMs: number;
+    traceId: string;
+  },
+): void {
+  try {
+    sink({
+      time: new Date().toISOString(),
+      sub: input.sub,
+      by_tenant: input.tenant,
+      // A connect token is no turn's: it carries no manifest.
+      by_manifest: null,
+      by_branch: null,
+      by_turn: null,
+      connector: input.connector,
+      account: input.account,
+      operation: "connect.disconnect",
+      decision: "allowed",
+      grant: null,
+      upstream_status: null,
+      latency_ms: input.latencyMs,
+      input_sha256: redactedInputHash({ connector: input.connector, account: input.account }),
+      error_code: null,
+      rule: null,
+      dry_run: false,
+      trace_id: input.traceId,
+      effect_class: "irreversible",
+      ledger_id: null,
+      staged_for: null,
+      disconnected: input.disconnected,
+    });
+  } catch {
+    // An audit sink never fails the route it describes.
   }
 }

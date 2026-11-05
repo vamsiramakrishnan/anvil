@@ -6,7 +6,19 @@
  * One name per line, sorted, so a change that adds a feature merges as a
  * one-line addition. Add a name only with the code and tests that earn it.
  */
-export const CAPABILITIES: readonly string[] = [
+export const CAPABILITY_FEATURES: readonly string[] = [
+  "connect.disconnect", // POST /connect/disconnect on the fleet gateway
   "manifest.claim", // by_manifest token claim, recorded in the audit line
   "token.proxy", // ANVIL_GATEWAY_AUTH=proxy in the SDKs and the CLIs
+  "vault.firestore", // ANVIL_VAULT_BACKEND=firestore, envelope-encrypted with Cloud KMS
 ];
+
+/** The same list, under the name the gateway tests use. */
+export const CAPABILITIES: readonly string[] = CAPABILITY_FEATURES;
+
+/** The `anvil capabilities --json` document: the names, unique and sorted. */
+export function capabilitiesDocument(features: readonly string[] = CAPABILITY_FEATURES): {
+  features: string[];
+} {
+  return { features: [...new Set(features)].sort() };
+}

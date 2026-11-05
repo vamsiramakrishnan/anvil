@@ -795,7 +795,9 @@ describe("the connect flow", () => {
       kind: "static",
       submit: "/connect/api-key",
     });
-    expect(connect.putStatic({ sub: "local:ada", connector: "linear", secret: "lin_1" })).toEqual({
+    expect(
+      await connect.putStatic({ sub: "local:ada", connector: "linear", secret: "lin_1" }),
+    ).toEqual({
       ok: true,
       connector: "linear",
       account: "default",
@@ -804,14 +806,14 @@ describe("the connect flow", () => {
       kind: "static",
       secret: "lin_1",
     });
-    expect(connect.putStatic({ sub: "local:ada", connector: "github", secret: "x" })).toMatchObject(
-      {
-        ok: false,
-        code: "wrong_connect_kind",
-      },
-    );
     expect(
-      connect.putStatic({ sub: "local:ada", connector: "linear", secret: "a\nb" }),
+      await connect.putStatic({ sub: "local:ada", connector: "github", secret: "x" }),
+    ).toMatchObject({
+      ok: false,
+      code: "wrong_connect_kind",
+    });
+    expect(
+      await connect.putStatic({ sub: "local:ada", connector: "linear", secret: "a\nb" }),
     ).toMatchObject({
       ok: false,
       code: "invalid_secret",
