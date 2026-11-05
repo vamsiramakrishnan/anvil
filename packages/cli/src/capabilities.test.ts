@@ -9,16 +9,14 @@ describe("anvil capabilities", () => {
     const code = await runAnvilCli(["capabilities", "--json"], { io });
     expect(code).toBe(0);
     expect(JSON.parse(io.stdout.join("\n"))).toEqual({
-      features: ["connect.disconnect", "manifest.claim", "token.proxy", "vault.firestore"],
+      features: [...CAPABILITY_FEATURES].sort(),
     });
   });
 
   it("prints one feature per line without --json", async () => {
     const io = bufferIO();
     expect(await runAnvilCli(["capabilities"], { io })).toBe(0);
-    expect(io.stdout.join("\n")).toBe(
-      "connect.disconnect\nmanifest.claim\ntoken.proxy\nvault.firestore",
-    );
+    expect(io.stdout.join("\n")).toBe([...CAPABILITY_FEATURES].sort().join("\n"));
   });
 
   it("keeps names unique and sorted", () => {

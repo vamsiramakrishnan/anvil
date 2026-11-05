@@ -8,6 +8,7 @@ import {
   MAX_RETRY_ATTEMPTS,
   type Operation,
   type RetryCondition,
+  ServiceIcon,
   SQL_DIALECTS,
   STREAM_MAX_EVENTS_CEILING,
   STREAM_MAX_SECONDS_CEILING,
@@ -282,10 +283,7 @@ export const OperationManifest = z.strictObject({
       header: z.string().optional(),
       /** Exact source parameter name when key_location is query or path. */
       parameter: z.string().optional(),
-      /**
-       * Exact JSON body field. A leading slash is a JSON Pointer for a nested
-       * field (for example /input/idempotencyKey).
-       */
+      /** Exact JSON body field. A leading slash is a JSON Pointer for a nested field (for example /input/idempotencyKey). */
       field: z.string().optional(),
     })
     .optional(),
@@ -703,6 +701,8 @@ export const AnvilManifest = z.strictObject({
     .strictObject({
       name: z.string().optional(),
       display_name: z.string().optional(),
+      /** A Simple Icons slug (`github`); see AIR's `service.icon`. */
+      icon: ServiceIcon.optional(),
       owner: z.string().optional(),
       environment: z.string().optional(),
     })

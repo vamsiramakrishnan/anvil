@@ -750,8 +750,7 @@ async function handleConnect(
     );
   }
   if (url.pathname === "/connect/disconnect") {
-    // The owner is the verified token's, never a request field: a person can
-    // remove only their own connection.
+    // The owner is the verified token's, never a request field.
     const started = Date.now();
     const target = account ?? DEFAULT_ACCOUNT;
     let removed: boolean;
@@ -760,9 +759,7 @@ async function handleConnect(
     } catch (error) {
       return vaultFailure(res, error);
     }
-    // The local record is gone before anything else could run. An upstream
-    // revocation would follow here; AIR declares no revocation endpoint in
-    // this tree, so there is none to call.
+    // No upstream revocation follows: AIR declares no revocation endpoint here.
     if (audit) {
       auditDisconnect(audit, {
         sub: claims.sub ?? sub,

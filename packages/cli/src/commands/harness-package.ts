@@ -15,6 +15,7 @@ import type { GrantEntry } from "@anvil/runtime";
 import type { Command } from "commander";
 import { harnessCliSource, harnessOperations } from "../harness-cli-source.js";
 import type { CliIO } from "../io.js";
+import { buildSearchIndex, SEARCH_SCHEMA_PATH, searchJsonSchema } from "../search-index.js";
 import type { CommandContext } from "./context.js";
 import { annotate } from "./meta.js";
 
@@ -92,7 +93,7 @@ export function registerPackageHarness(pkg: Command, ctx: CommandContext): void 
     .command("harness")
     .summary("Package one connector for a Branchyard harness home (gateway mode).")
     .description(
-      "Writes <out>/SKILL.md, reference/, schemas/, examples/, python/, typescript/, bin/<connector>, and harness.json. The SDKs and CLI call the Anvil gateway named by ANVIL_GATEWAY_URL with the token in ANVIL_GATEWAY_TOKEN_FILE and never read an upstream credential. The CLI needs Node.js 18+, the Python SDK Python 3.9+, the TypeScript SDK a TypeScript build or a runtime that strips types.",
+      "Writes <out>/SKILL.md, search.json, reference/, schemas/, examples/, python/, typescript/, bin/<connector>, and harness.json. search.json lists every approved operation (sorted by id, the same bytes for the same bundle) and points at one input schema file per operation under schemas/. The SDKs and CLI call the Anvil gateway named by ANVIL_GATEWAY_URL with the token in ANVIL_GATEWAY_TOKEN_FILE and never read an upstream credential. The CLI needs Node.js 18+, the Python SDK Python 3.9+, the TypeScript SDK a TypeScript build or a runtime that strips types.",
     )
     .argument("<bundle>", "compiled bundle directory")
     .requiredOption(
@@ -107,8 +108,16 @@ export function registerPackageHarness(pkg: Command, ctx: CommandContext): void 
       "--workspace <dir>",
       "the workspace the gateway serves (`anvil serve mcp <dir> --fleet`); the bundle's connector id is its path there, folded as the fleet folds it (default: the bundle served alone, named by its directory)",
     )
+    .option(
+      "--skill-mode <mode>",
+      "full (default): SKILL.md lists every operation; lean: at most 4 KB, with one line per capability and a pointer to search.json",
+      "full",
+    )
     .action(
-      async (bundle: string, opts: { out: string; connector?: string; workspace?: string }) => {
+      async (
+        bundle: string,
+        opts: { out: string; connector?: string; workspace?: string; skillMode: string },
+      ) => {
         ctx.code = await runPackageHarness(bundle, opts, ctx.io);
       },
     );
@@ -319,6 +328,75 @@ Read on demand: \`reference/operations.md\` (every operation's contract),
 `;
 }
 
+/** The most a lean SKILL.md may hold, in bytes (contract v2, item 3). */
+export const LEAN_SKILL_MAX_BYTES = 4096;
+
+/**
+ * The lean SKILL.md: frontmatter, the safety rules, one line per capability
+ * with its operation count, and pointers to `search.json` and `reference/`.
+ * The capability lines stop when the file would pass 4 KB; the line that ends
+ * the list says how many were left out, so the cap holds for any bundle.
+ */
+export function leanSkillMd(
+  air: AirDocument,
+  connector: string,
+  index: ReturnType<typeof buildSearchIndex>["index"],
+): string {
+  const title = air.service.displayName ?? air.service.id;
+  const description = `Use when a task needs ${title} — ${capabilityLine(air)}. Calls go through the Anvil gateway; this branch's grant decides what is allowed.`;
+  const head = `---
+name: ${skillName(connector)}
+description: ${JSON.stringify(description.length > 400 ? `${description.slice(0, 397)}...` : description)}
+---
+
+# ${title} (connector \`${connector}\`)
+
+Everything here already talks to the Anvil gateway (\`ANVIL_GATEWAY_URL\`,
+\`ANVIL_GATEWAY_TOKEN_FILE\`). Never look for, ask for, or set an upstream token.
+
+## Safety
+
+- Preview with \`--dry-run\`; nothing reaches the upstream.
+- A write marked \`confirm\` in \`search.json\` runs only with \`--confirm\`, and only when the task asks for that effect.
+- Reuse an idempotency key to retry the same intent; never invent a new one.
+- A \`policy_denied\` or \`auth_required\` answer is final: report it, do not work around it.
+
+## Find an operation
+
+Search \`search.json\` (id, title, summary, effect, terms, input schema, CLI line);
+call it with \`bin/${connector}\`. The full table is \`reference/operations.md\`;
+errors are in \`reference/errors.md\`.
+
+## Capabilities
+`;
+  const counts = new Map<string, number>();
+  for (const op of index.operations) counts.set(op.resource, (counts.get(op.resource) ?? 0) + 1);
+  const names = new Map(
+    air.capabilities.map((capability) => [capability.id, capability.displayName]),
+  );
+  const lines = [...counts.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([resource, count]) => {
+      const name = names.get(resource);
+      const label = name && name !== resource ? ` (${name.replace(/\s+/g, " ").slice(0, 60)})` : "";
+      return `- \`${resource}\`${label}: ${count} operation${count === 1 ? "" : "s"}`;
+    });
+  const bytes = (text: string) => Buffer.byteLength(text, "utf8");
+  const kept: string[] = [];
+  let used = bytes(head);
+  for (const line of lines) {
+    const rest = lines.length - kept.length - 1;
+    const reserve = rest > 0 ? 80 : 0;
+    if (used + bytes(line) + 1 + reserve > LEAN_SKILL_MAX_BYTES - 1) break;
+    kept.push(line);
+    used += bytes(line) + 1;
+  }
+  const left = lines.length - kept.length;
+  if (left > 0)
+    kept.push(`- ... and ${left} more capabilit${left === 1 ? "y" : "ies"}: see \`search.json\``);
+  return `${head}${kept.join("\n")}\n`;
+}
+
 function errorsMd(connector: string): string {
   return `---
 name: ${skillName(connector)}-errors
@@ -369,9 +447,14 @@ async function writeSdk(
 
 async function runPackageHarness(
   bundle: string,
-  opts: { out: string; connector?: string; workspace?: string },
+  opts: { out: string; connector?: string; workspace?: string; skillMode?: string },
   io: CliIO,
 ): Promise<number> {
+  const skillMode = opts.skillMode ?? "full";
+  if (skillMode !== "full" && skillMode !== "lean") {
+    io.err(`anvil: --skill-mode is full or lean, not '${skillMode}'.`);
+    return 1;
+  }
   const { bundleHash, readBundleDir, resolveBundleDir, sdkPlan } = await import(
     "@anvil/generators"
   );
@@ -395,6 +478,20 @@ async function runPackageHarness(
     io.err(`anvil: ${bundle} has no approved, callable operations; there is nothing to package.`);
     return 1;
   }
+  let hash: string;
+  try {
+    hash = bundleHash(readBundleDir(bundleDir));
+  } catch (error) {
+    io.err(`anvil: cannot hash ${bundle}: ${(error as Error).message}`);
+    return 1;
+  }
+  let search: ReturnType<typeof buildSearchIndex>;
+  try {
+    search = buildSearchIndex(air, connector, hash);
+  } catch (error) {
+    io.err(`anvil: ${(error as Error).message}.`);
+    return 1;
+  }
   const out = resolve(opts.out);
   if (existsSync(out)) {
     const entries = readdirSync(out);
@@ -411,7 +508,13 @@ async function runPackageHarness(
   const plan = sdkPlan(air, { gatewayConnector: connector });
   const pythonPackage = `anvil_${plan.service.names.snake}`;
   const client = `${plan.service.names.pascal}Client`;
-  writeFileSync(join(out, "SKILL.md"), skillMd(air, connector, pythonPackage, client), "utf8");
+  writeFileSync(
+    join(out, "SKILL.md"),
+    skillMode === "lean"
+      ? leanSkillMd(air, connector, search.index)
+      : skillMd(air, connector, pythonPackage, client),
+    "utf8",
+  );
   writeFileSync(join(out, "reference", "errors.md"), errorsMd(connector), "utf8");
   const skillDir = join(bundleDir, "skill");
   for (const name of ["operations.md", "idempotency.md", "workflows.md", "capabilities.md"]) {
@@ -422,6 +525,13 @@ async function runPackageHarness(
     const source = join(skillDir, dir);
     if (existsSync(source)) cpSync(source, join(out, dir), { recursive: true });
   }
+  for (const [path, text] of Object.entries(search.schemas)) {
+    mkdirSync(dirname(join(out, path)), { recursive: true });
+    writeFileSync(join(out, path), text, "utf8");
+  }
+  mkdirSync(join(out, "schemas"), { recursive: true });
+  writeFileSync(join(out, SEARCH_SCHEMA_PATH), searchJsonSchema(), "utf8");
+  writeFileSync(join(out, "search.json"), `${JSON.stringify(search.index, null, 2)}\n`, "utf8");
   await writeSdk(air, connector, out, "python");
   await writeSdk(air, connector, out, "typescript");
   mkdirSync(join(out, "bin"), { recursive: true });
@@ -431,20 +541,17 @@ async function runPackageHarness(
   // The CLI is CommonJS whatever package.json a harness home sits under.
   writeFileSync(join(out, "bin", "package.json"), `${JSON.stringify({ type: "commonjs" })}\n`);
 
-  let hash: string | null = null;
-  try {
-    hash = bundleHash(readBundleDir(bundleDir));
-  } catch {
-    hash = null;
-  }
   const manifest = {
     schemaVersion: 1,
     connector,
     service: { id: air.service.id, version: air.service.version },
     bundleHash: hash,
+    bundle_hash: search.index.bundle_hash,
+    icon: search.index.icon,
     gateway: { urlEnv: "ANVIL_GATEWAY_URL", tokenFileEnv: "ANVIL_GATEWAY_TOKEN_FILE" },
     entrypoints: {
       skill: "SKILL.md",
+      search: "search.json",
       cli: `bin/${connector}`,
       python: `python/${pythonPackage}`,
       typescript: "typescript/src/index.ts",
@@ -540,6 +647,7 @@ async function runConnectorsIndex(
         `- **For:** ${servicePurpose(air)}`,
         `- **Use when:** a task needs ${title}: ${capabilityLine(air)}.`,
         `- **Granted:** ${access}`,
+        `- **Icon:** ${air.service.icon === undefined ? "none" : `\`${air.service.icon}\``}`,
         `- **Skill:** \`${skillPath.split("\\").join("/")}\` (CLI: \`${connector}/bin/${connector}\`)`,
       ].join("\n"),
     );

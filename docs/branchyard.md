@@ -464,18 +464,20 @@ cross-instance rules are covered with a fake Firestore in
 
 ### Harness package
 
-`anvil package harness <bundle> --out <dir> [--workspace <dir>] [--connector <id>]` writes:
+`anvil package harness <bundle> --out <dir> [--workspace <dir>] [--connector <id>] [--skill-mode full|lean]` writes:
 
 ```text
 <dir>/
   SKILL.md        routing, safety, and refusals; under 80 lines
   reference/      operations.md, errors.md (gateway mode), idempotency.md, workflows.md, capabilities.md
-  schemas/        one input schema per operation
+  search.json     the operation search index (below)
+  schemas/        one input schema per operation, plus <connector>.<operation>.input.json
+                  for each one in search.json and anvil-search-v1.json, the schema of search.json
   examples/       one example input per operation
   python/         the Python SDK (standard library only; Python 3.9+)
   typescript/     the TypeScript SDK source (build with tsc, or a runtime that strips types)
   bin/<connector> the CLI: one dependency-free script, Node.js 18+
-  harness.json    connector, service, bundle hash, entry points, operations
+  harness.json    connector, service, bundle hash, icon, entry points, operations
 ```
 
 The connector id is the one the gateway serves the bundle under: its path in
@@ -485,6 +487,105 @@ fleet folds it, so `<workspace>/team/github` is `team_github`. Without
 `--connector` overrides both. Only operations the gateway serves are packaged:
 approved, and never a `webhook_receiver` (the same rule as the MCP server and
 the SDKs).
+
+#### Search index and lean skill
+
+`search.json` lists every operation the gateway serves, and only those, so a
+ranker need not read `reference/operations.md`. It is sorted by operation id
+and holds no time or path from the machine that wrote it, so one bundle gives
+the same bytes every time.
+
+```json
+{
+  "schema": "anvil.search/v1",
+  "connector": "github",
+  "bundle_hash": "sha256:…",
+  "icon": null,
+  "operations": [
+    {
+      "id": "github.issues.list", "title": "List issues",
+      "summary": "List issues in a repository, filtered by state.",
+      "effect": "read", "risk": null, "confirm": false, "idempotency": "safe",
+      "resource": "github.issue", "tags": [], "terms": ["issues", "list", "owner", "repo"],
+      "schema": "schemas/github.issues.list.input.json",
+      "cli": "bin/github issues list"
+    }
+  ]
+}
+```
+
+- `id` is the connector id and the operation's dotted name. `effect` is the
+  effect class (ADR-0030). `risk` is the operation's risk, or `null` for none.
+  `confirm` is whether the call needs `--confirm`. `idempotency` is `safe` when
+  repeating is harmless, `keyed` when the operation takes an idempotency key,
+  else `none`.
+- `summary` is the first sentence of the description, on one line, at most 160
+  characters. `resource` is the id of the capability that owns the operation.
+  `terms` are the lower-case tokens of the id, title, tags and parameter names.
+- `bundle_hash` is `sha256:` and the hex digest that `harness.json` keeps as
+  `bundleHash`.
+
+`--skill-mode lean` writes a `SKILL.md` of at most 4 KB: the safety rules, one
+line per capability with its operation count, and pointers to `search.json` and
+`reference/`. When a bundle has too many capabilities for 4 KB, the last line
+says how many were left out. The default, `full`, is unchanged.
+
+#### Connector icon
+
+`service.icon` in the manifest is a Simple Icons slug (`github`): lower-case
+letters and digits, words joined by single hyphens, at most 64 characters. A
+slug that breaks this is refused at compile time, and the error names
+`service.icon`. Anvil ships no image and fetches none. The slug is copied to
+`harness.json`, `search.json` (`"icon": null` when the bundle has none) and to
+the `- **Icon:**` line of each `INDEX.md` entry (`none` when absent).
+
+#### Host toolchain and OCI packages
+
+`anvil install --prefix <dir> [--from <dir>] [--prune]` installs the toolchain
+once per host:
+
+```text
+<prefix>/
+  current -> versions/<digest>   switched last, by renaming a new link over it
+  versions/<digest>/             manifest.json, bin/anvil, python/, typescript/, compose/, env.sh
+```
+
+`--from` names a directory with a `manifest.json` (`{"files": {path: sha256}}`)
+and the files it lists. Every file is hashed before anything is written, so a
+tampered file stops the install with `digest mismatch for <path>` and leaves
+the prefix as it was. The version directory is named by the SHA-256 of the file
+map (as `json.dumps(files, sort_keys=True)` writes it), so the same toolchain is
+the same directory: a second run changes nothing, and `--prune` removes the
+versions `current` does not name. Without `--from` the toolchain is the one
+this Anvil carries: `bin/anvil` is a launcher that runs this installation's CLI
+(`--version` prints `anvil <digest>`), `python/anvil_sdk` and `typescript/` hold
+the gateway settings the clients share, and `compose/` holds the composite
+runtime. `source env.sh` puts `bin` on `PATH` and the Python directories on
+`PYTHONPATH`. A registry reference for `--from` is not supported; pull the
+image and pass the directory.
+
+`anvil package oci <package-dir> --out <dir> [--push <ref>]` writes a harness
+package as an OCI image layout: `oci-layout`, `index.json` and
+`blobs/sha256/<digest>`, with one blob per file (its path in
+`org.opencontainers.image.title`), a config blob and an image manifest. The
+index and the manifest carry `dev.anvil.bundle-hash`, `dev.anvil.connector` and
+`dev.anvil.version`. One package gives one layout, byte for byte. `--push
+<host>[:port]/<repository>[:<tag>]` checks the manifest by tag, uploads the
+blobs the registry lacks, and puts the manifest; when the registry already
+holds the same digest it sends nothing more. A bearer token is read from the
+file named by `ANVIL_OCI_TOKEN_FILE`. Loopback hosts use `http`, all others
+`https`.
+
+`anvil capabilities --json` prints `{"features": [...]}`: the optional features
+of this build (`package.search`, `skill.lean`, `install.prefix`, `package.oci`,
+`bundle.icon`).
+
+Tested here with fakes only: the search index against the field rules Branchyard
+pins and, when a Branchyard checkout is present, against its `tools.py`; the
+install against directories on disk; the OCI layout against a check that
+re-hashes every blob and a registry that is an in-process loopback server. Not
+tested: a pull or push against a real registry such as Artifact Registry, and a
+registry that demands a token exchange rather than a bearer token.
 
 Branchyard can cache a package by `harness.json`'s `bundleHash`. `anvil
 connectors index --grants <file> --out INDEX.md [--workspace <dir>]
