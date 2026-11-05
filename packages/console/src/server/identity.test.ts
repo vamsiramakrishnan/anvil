@@ -33,15 +33,18 @@ function profile() {
   const operation = workspace.air.operations[0]!;
   return {
     version: 1,
-    id: "ultimatix",
+    id: "enterprise",
     authentication: {
       provider: "oidc",
       issuer: "https://siteminder.example.com",
-      audience: "https://ultimatix-mcp.example.com",
-      resource: "https://ultimatix-mcp.example.com/mcp",
+      audience: "https://enterprise-mcp.example.com",
+      resource: "https://enterprise-mcp.example.com/mcp",
       jwksUri: "https://siteminder.example.com/keys",
     },
-    mapping: { tenant: { source: "fixed", value: "tcs" }, upstreamScopes: operation.auth.scopes },
+    mapping: {
+      tenant: { source: "fixed", value: "example-org" },
+      upstreamScopes: operation.auth.scopes,
+    },
     authorization: {
       rules: [
         {
@@ -228,12 +231,12 @@ describe("identity configuration console parity", () => {
     const config = createGeminiEnterpriseTargetConfig({
       surface: "custom-mcp",
       serverAuth: "oauth",
-      endpoint: "https://ultimatix-mcp.example.com/mcp",
-      project: "tcs-test",
+      endpoint: "https://enterprise-mcp.example.com/mcp",
+      project: "example-org-test",
       projectNumber: "123456789012",
       appLocation: "global",
       engine: "test-engine",
-      workforcePool: "locations/global/workforcePools/tcs-entra",
+      workforcePool: "locations/global/workforcePools/example-org-entra",
       connectorOAuth: {
         provider: "other",
         authorizationUrl: "https://siteminder.example.com/authorize",
@@ -265,7 +268,7 @@ describe("identity configuration console parity", () => {
     expect(response.status).toBe(422);
     expect(response.json).toMatchObject({ error: { code: "console/identity_required" } });
 
-    const reviewed = { ...identity, id: "ultimatix-reviewed" };
+    const reviewed = { ...identity, id: "enterprise-reviewed" };
     const validation = CONSOLE_ROUTES.validateIdentity.response.parse(
       (await running.client.post(route("/validate"), { bundleHash: digest(), profile: reviewed }))
         .json,
@@ -280,8 +283,8 @@ describe("identity configuration console parity", () => {
     const persisted = JSON.parse(
       readFileSync(join(workspace.bundleDir, "targets/gemini-enterprise/setup.json"), "utf8"),
     ).config;
-    expect(persisted.identityProfile.id).toBe("ultimatix-reviewed");
-    expect(persisted.workforcePool).toBe("locations/global/workforcePools/tcs-entra");
+    expect(persisted.identityProfile.id).toBe("enterprise-reviewed");
+    expect(persisted.workforcePool).toBe("locations/global/workforcePools/example-org-entra");
     expect(persisted.connectorOAuth.authorizationUrl).toBe(
       "https://siteminder.example.com/authorize",
     );

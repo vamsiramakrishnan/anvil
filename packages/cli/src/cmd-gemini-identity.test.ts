@@ -42,7 +42,7 @@ it("binds SiteMinder connector identity separately from Entra sign-in through th
         requiredScopes: ["mcp.invoke"],
       },
       mapping: {
-        tenant: { source: "fixed", value: "tcs-demo" },
+        tenant: { source: "fixed", value: "example-org-demo" },
         upstreamScopes: air.operations[0].auth.scopes,
       },
       authorization: {
@@ -69,7 +69,7 @@ it("binds SiteMinder connector identity separately from Entra sign-in through th
       "--endpoint",
       profile.authentication.resource,
       "--project",
-      "tcs-demo",
+      "example-org-demo",
       "--project-number",
       "123456789",
       "--location",

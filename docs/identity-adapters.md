@@ -61,7 +61,7 @@ review again; generated configuration remains `verifiedLive: false`.
 
 ## Independent sign-in and connector authorities
 
-The identity profile describes the MCP connector's authority. It does not configure the employee's Gemini Enterprise sign-in provider. Entra ID can authenticate employees to Gemini Enterprise while SiteMinder independently authorizes the Ultimatix connector. Matching employee emails do not make their tokens interchangeable.
+The identity profile describes the MCP connector's authority. It does not configure the employee's Gemini Enterprise sign-in provider. Entra ID can authenticate employees to Gemini Enterprise while SiteMinder independently authorizes the protected-system connector. Matching employee emails do not make their tokens interchangeable.
 
 Configure Gemini Enterprise's Custom MCP Server OAuth authorization URL, token URL, client ID, client secret and scopes for the SiteMinder application registration. Register the platform callback `https://vertexaisearch.cloud.google.com/oauth-redirect` there. The MCP resource's issuer, audience and scopes must agree with the identity profile. Entra tokens remain invalid at a SiteMinder-bound connector. Existing corporate SSO may avoid another credential prompt during connector authorization; account linking and step-up policy still belong to the configured identity service.
 
@@ -70,9 +70,9 @@ Configure Gemini Enterprise's Custom MCP Server OAuth authorization URL, token U
 | Employee → Gemini Enterprise | Entra sign-in assertion/session | Gemini's configured sign-in provider |
 | Gemini Enterprise → MCP | SiteMinder-issued OAuth access token | Anvil's configured JWT verifier or introspection client |
 | Gemini Enterprise → Cloud Run IAM | Google service-agent ID token | Cloud Run IAM; never mapped to the employee |
-| Anvil → Ultimatix API | Credential accepted by that API | The upstream credential resolver and Ultimatix/gateway policy |
+| Anvil → protected-system API | Credential accepted by that API | The upstream credential resolver and application/gateway policy |
 
-The upstream credential is independent. Anvil's existing RFC 8693 path works only with a configured token endpoint that supports that grant. A local authorization decision cannot mint a SiteMinder session or grant a downstream API permission. If Ultimatix requires a legacy session, implement or connect a shared, reviewed gateway using the supported SiteMinder deployment. Browser cookies are not automatically available to Gemini's server-side MCP requests.
+The upstream credential is independent. Anvil's existing RFC 8693 path works only with a configured token endpoint that supports that grant. A local authorization decision cannot mint a SiteMinder session or grant a downstream API permission. If the protected system requires a legacy session, implement or connect a shared, reviewed gateway using the supported SiteMinder deployment. Browser cookies are not automatically available to Gemini's server-side MCP requests.
 
 ## JWT and opaque OAuth access tokens
 
@@ -143,9 +143,9 @@ Set `authorization.adapter` to `enterprise` and load the extension through `ANVI
 
 ## Qualification
 
-The automated independent-authority test is `packages/mcp-runtime/src/connector-federation.test.ts`. It signs local JWTs and combines the actual verifier, per-request identity context, policy gate and executor. It checks that the SiteMinder profile rejects an Entra issuer even with a matching subject and a valid signature; two employees remain isolated; platform-only credentials do not admit a caller; and a denied resource request reaches neither upstream credential resolution nor transport. The opaque-token case checks activity on every invocation and rejects a token after revocation. Policy decisions, introspection responses and downstream credentials are explicit local fixtures, not a claim of live SiteMinder or Ultimatix interoperability.
+The automated independent-authority test is `packages/mcp-runtime/src/connector-federation.test.ts`. It signs local JWTs and combines the actual verifier, per-request identity context, policy gate and executor. It checks that the SiteMinder profile rejects an Entra issuer even with a matching subject and a valid signature; two employees remain isolated; platform-only credentials do not admit a caller; and a denied resource request reaches neither upstream credential resolution nor transport. The opaque-token case checks activity on every invocation and rejects a token after revocation. Policy decisions, introspection responses and downstream credentials are explicit local fixtures, not a claim of live SiteMinder or protected-system interoperability.
 
-Before declaring a TCS deployment qualified, collect the following evidence against one exact bundle/profile digest:
+Before declaring a customer deployment qualified, collect the following evidence against one exact bundle/profile digest:
 
 | Test | Required evidence |
 | --- | --- |
@@ -153,13 +153,13 @@ Before declaring a TCS deployment qualified, collect the following evidence agai
 | Token contract | Actual issuer, audience or reviewed dedicated-client binding, token type, signing keys/introspection endpoint, scopes, subject and group claim shapes match the profile |
 | Two employees | Separate tool calls retain the right subject and upstream credential; replay/session reuse never changes the caller |
 | Policy matrix | Allowed read, denied write, confirmation and cross-employee access match reviewed SiteMinder/application policy; every denial has zero upstream effects |
-| Downstream authority | Actual Ultimatix API accepts the intended per-user credential; a workload identity or user-supplied employee number cannot substitute for it |
+| Downstream authority | Actual protected-system API accepts the intended per-user credential; a workload identity or user-supplied employee number cannot substitute for it |
 | Revocation | Logout, disablement and group removal are measured with an open MCP session, including access-token and refresh-token lifetimes |
 | Failure and rotation | Unknown/rotated keys, inactive tokens, wrong client/issuer/audience, policy timeout and unavailable identity service all fail closed |
 | GCP boundaries | Service-agent IAM authentication, user OAuth token, ingress and upstream private routing work through the actual Gemini Enterprise client |
 | Audit | Correlated trace, mapped principal, operation and policy version appear without tokens, cookies or client secrets |
 
-The prerequisites are a non-production SiteMinder issuer/Access Gateway with the exact deployed version and token/client settings, two test employees with distinct permissions, reviewed operation/resource mappings, a sandbox Ultimatix API and its supported credential mechanism, and the target Gemini Enterprise/Cloud Run network configuration. Run one identity profile across two generated connectors to prove reuse. Record expected and observed outcomes; a mock-only pass must remain `verifiedLive: false`.
+The prerequisites are a non-production SiteMinder issuer/Access Gateway with the exact deployed version and token/client settings, two test employees with distinct permissions, reviewed operation/resource mappings, a sandbox protected-system API and its supported credential mechanism, and the target Gemini Enterprise/Cloud Run network configuration. Run one identity profile across two generated connectors to prove reuse. Record expected and observed outcomes; a mock-only pass must remain `verifiedLive: false`.
 
 Tests cover real JWT signatures, IAP audience/type failures, separate Cloud Run headers, identity isolation, deny precedence, unknown operations, no anonymous fallback, input constraints, confirmation, denied-call zero side effects, non-delegable assertions, adapter failures, response bounds and profile reuse. Live Google IAM, Gemini OAuth consent, private-network routing and SiteMinder session/policy interoperability require customer-environment qualification. Generated binding metadata deliberately records `verifiedLive: false`.
 
