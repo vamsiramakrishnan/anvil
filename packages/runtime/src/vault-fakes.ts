@@ -10,6 +10,8 @@ import type { KmsClient, VaultDocument, VaultDocumentStore } from "./vault-fires
  */
 export class InMemoryFirestore implements VaultDocumentStore {
   readonly docs = new Map<string, VaultDocument>();
+  /** Leases by path: holder and expiry. Shared by every vault over this fake. */
+  readonly leases = new Map<string, { holder: string; expiresAtMs: number }>();
   /** When set, every call throws `VaultUnavailableError`. */
   down = false;
 
@@ -51,6 +53,21 @@ export class InMemoryFirestore implements VaultDocumentStore {
   async remove(collection: string, id: string) {
     this.check();
     return this.docs.delete(this.path(collection, id));
+  }
+
+  async acquireLease(collection: string, id: string, holder: string, ttlMs: number, nowMs: number) {
+    this.check();
+    const path = this.path(collection, id);
+    const current = this.leases.get(path);
+    if (current && current.expiresAtMs > nowMs) return false;
+    this.leases.set(path, { holder, expiresAtMs: nowMs + ttlMs });
+    return true;
+  }
+
+  async releaseLease(collection: string, id: string, holder: string) {
+    this.check();
+    const path = this.path(collection, id);
+    if (this.leases.get(path)?.holder === holder) this.leases.delete(path);
   }
 }
 

@@ -20,8 +20,6 @@ import {
 } from "@anvil/mcp-runtime";
 import {
   type AuditSink,
-  auditDisconnect,
-  DEFAULT_ACCOUNT,
   type Principal,
   resolvePrincipalForBearer,
   VaultUnavailableError,
@@ -30,6 +28,7 @@ import {
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { CliIO } from "../io.js";
+import { disconnectConnection } from "./fleet-disconnect.js";
 import {
   isLoopbackHost,
   isOwnLoopbackHost,
@@ -750,28 +749,19 @@ async function handleConnect(
     );
   }
   if (url.pathname === "/connect/disconnect") {
-    // The owner is the verified token's, never a request field.
-    const started = Date.now();
-    const target = account ?? DEFAULT_ACCOUNT;
-    let removed: boolean;
     try {
-      removed = await gateway.vault.delete(sub, connector, target);
+      const done = await disconnectConnection({
+        vault: gateway.vault,
+        audit,
+        sub,
+        claims,
+        connector,
+        account,
+      });
+      return json(res, 200, done);
     } catch (error) {
       return vaultFailure(res, error);
     }
-    // No upstream revocation follows: AIR declares no revocation endpoint here.
-    if (audit) {
-      auditDisconnect(audit, {
-        sub: claims.sub ?? sub,
-        tenant: typeof claims.by_tenant === "string" ? claims.by_tenant : null,
-        connector,
-        account: target,
-        disconnected: removed,
-        latencyMs: Date.now() - started,
-        traceId: randomUUID(),
-      });
-    }
-    return json(res, 200, { connector, account: target, disconnected: removed });
   }
   if (url.pathname === "/connect/api-key") {
     const secret = typeof body.api_key === "string" ? body.api_key : "";

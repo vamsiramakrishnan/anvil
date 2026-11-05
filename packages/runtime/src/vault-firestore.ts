@@ -30,6 +30,11 @@ import {
 
 export const DEFAULT_VAULT_COLLECTION = "anvil_vault";
 export const DEFAULT_VAULT_DATABASE = "(default)";
+/** Lease TTL: longer than a provider refresh plus the vault write; an expired lease frees itself. */
+export const LEASE_TTL_MS = 60_000;
+/** How long `withLock` waits for another instance's lease before `VaultUnavailableError`. */
+export const LEASE_WAIT_MS = 30_000;
+const LEASE_POLL_MS = 100;
 /** How long an unwrapped data key may be kept in process. */
 export const DEK_CACHE_MS = 60_000;
 
@@ -69,6 +74,20 @@ export interface VaultDocumentStore {
   ): Promise<void>;
   /** Delete in a transaction; whether a document existed. */
   remove(collection: string, id: string): Promise<boolean>;
+  /**
+   * Take the lease `id` in `collection` for `holder` until `nowMs + ttlMs`,
+   * in one transaction: true when the lease was absent or expired, false when
+   * another holder's lease is still live. A lease holds no secret.
+   */
+  acquireLease(
+    collection: string,
+    id: string,
+    holder: string,
+    ttlMs: number,
+    nowMs: number,
+  ): Promise<boolean>;
+  /** Delete the lease only when `holder` still holds it. */
+  releaseLease(collection: string, id: string, holder: string): Promise<void>;
 }
 
 /** The slice of Cloud KMS the vault uses. Failures throw `VaultUnavailableError`. */
@@ -89,6 +108,11 @@ export interface FirestoreVaultOptions {
   kmsKey: string;
   collection?: string;
   now?: () => number;
+  /** Waits between lease attempts. Default: a real timer. */
+  sleep?: (ms: number) => Promise<void>;
+  leaseTtlMs?: number;
+  leaseWaitMs?: number;
+  leasePollMs?: number;
 }
 
 const KMS_KEY_PATTERN = /^projects\/[^/]+\/locations\/[^/]+\/keyRings\/[^/]+\/cryptoKeys\/[^/]+$/;
@@ -110,6 +134,10 @@ export class FirestoreVault implements VaultBackend {
   private readonly collection: string;
   private readonly now: () => number;
   private readonly lock = new KeyedLock();
+  private readonly sleep: (ms: number) => Promise<void>;
+  private readonly leaseTtlMs: number;
+  private readonly leaseWaitMs: number;
+  private readonly leasePollMs: number;
   private readonly dekCache = new Map<string, CachedKey>();
 
   constructor(options: FirestoreVaultOptions) {
@@ -123,6 +151,10 @@ export class FirestoreVault implements VaultBackend {
     this.kmsKey = options.kmsKey;
     this.collection = options.collection ?? DEFAULT_VAULT_COLLECTION;
     this.now = options.now ?? Date.now;
+    this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.leaseTtlMs = options.leaseTtlMs ?? LEASE_TTL_MS;
+    this.leaseWaitMs = options.leaseWaitMs ?? LEASE_WAIT_MS;
+    this.leasePollMs = options.leasePollMs ?? LEASE_POLL_MS;
   }
 
   async get(sub: string, connector: string, account: string) {
@@ -210,8 +242,36 @@ export class FirestoreVault implements VaultBackend {
     );
   }
 
+  /**
+   * Serialize `fn` per account: the in-process lock keeps one instance from
+   * hammering Firestore, and a Firestore lease orders `fn` against other
+   * instances, so a rotating refresh token is read, used and written by one
+   * holder at a time. The lease outlives a crashed holder by `leaseTtlMs`.
+   */
   withLock<T>(sub: string, connector: string, account: string, fn: () => Promise<T>) {
-    return this.lock.run(coordinates(sub, connector, account), fn);
+    return this.lock.run(coordinates(sub, connector, account), async () => {
+      const id = vaultRecordId(sub, connector, account);
+      const leases = `${this.collection}_leases`;
+      const holder = randomBytes(16).toString("hex");
+      const deadline = this.now() + this.leaseWaitMs;
+      while (!(await this.store.acquireLease(leases, id, holder, this.leaseTtlMs, this.now()))) {
+        if (this.now() >= deadline) {
+          throw new VaultUnavailableError(
+            "another instance holds this connection's refresh lease; try again",
+          );
+        }
+        await this.sleep(this.leasePollMs);
+      }
+      try {
+        return await fn();
+      } finally {
+        try {
+          await this.store.releaseLease(leases, id, holder);
+        } catch {
+          // Best effort: an unreleased lease expires on its own.
+        }
+      }
+    });
   }
 
   private async open(
@@ -479,7 +539,7 @@ export function restFirestoreStore(options: RestFirestoreOptions): VaultDocument
     collection: string,
     id: string,
     decide: (
-      current: VaultDocument | undefined,
+      current: FirestoreFields | undefined,
       exists: boolean,
     ) => { write?: FirestoreFields; delete?: true; result: T },
   ): Promise<T> {
@@ -490,16 +550,10 @@ export function restFirestoreStore(options: RestFirestoreOptions): VaultDocument
         `${docUrl(collection, id)}?transaction=${encodeURIComponent(transaction)}`,
       );
       if (read.status !== 200 && read.status !== 404) throw failure("get", read.status);
-      let current: VaultDocument | undefined;
-      try {
-        current =
-          read.status === 200
-            ? decodeDocument((read.json as { fields?: FirestoreFields }).fields)
-            : undefined;
-      } catch {
-        // A malformed document is replaced or deleted like any other.
-        current = undefined;
-      }
+      const current =
+        read.status === 200
+          ? ((read.json as { fields?: FirestoreFields }).fields ?? {})
+          : undefined;
       const outcome = decide(current, read.status === 200);
       const write = outcome.write
         ? { update: { name: docName(collection, id), fields: outcome.write } }
@@ -554,15 +608,40 @@ export function restFirestoreStore(options: RestFirestoreOptions): VaultDocument
       return out;
     },
     transact(collection, id, mutate) {
-      return inTransaction(collection, id, (current) => ({
-        write: encodeDocument(mutate(current)),
-        result: undefined,
-      }));
+      return inTransaction(collection, id, (fields) => {
+        let current: VaultDocument | undefined;
+        try {
+          current = fields ? decodeDocument(fields) : undefined;
+        } catch {
+          // A malformed document is replaced like any other.
+          current = undefined;
+        }
+        return { write: encodeDocument(mutate(current)), result: undefined };
+      });
     },
     remove(collection, id) {
       return inTransaction(collection, id, (_current, exists) => ({
         ...(exists ? { delete: true as const } : {}),
         result: exists,
+      }));
+    },
+    acquireLease(collection, id, holder, ttlMs, nowMs) {
+      return inTransaction(collection, id, (fields) => {
+        const expires = Number(fields?.expires_at_ms?.integerValue ?? 0);
+        if (fields && expires > nowMs) return { result: false };
+        return {
+          write: {
+            holder: { stringValue: holder },
+            expires_at_ms: { integerValue: String(nowMs + ttlMs) },
+          },
+          result: true,
+        };
+      });
+    },
+    async releaseLease(collection, id, holder) {
+      await inTransaction(collection, id, (fields) => ({
+        ...(fields?.holder?.stringValue === holder ? { delete: true as const } : {}),
+        result: undefined,
       }));
     },
   };

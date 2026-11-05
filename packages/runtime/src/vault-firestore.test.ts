@@ -378,4 +378,43 @@ describe("the REST clients", () => {
     // The commit body carries bytes as base64 fields, never a bare secret.
     expect(JSON.stringify(commit?.body)).toContain('"bytesValue"');
   });
+
+  it("takes and releases a lease in transactions on the lease collection", async () => {
+    const { calls, fetchImpl } = scripted([
+      { status: 200, body: { transaction: "t1" } },
+      { status: 404, body: {} }, // absent: free
+      { status: 200, body: {} }, // commit
+      { status: 200, body: { transaction: "t2" } },
+      {
+        status: 200,
+        body: {
+          fields: { holder: { stringValue: "h1" }, expires_at_ms: { integerValue: "5000" } },
+        },
+      }, // live
+      { status: 200, body: { transaction: "t3" } },
+      {
+        status: 200,
+        body: {
+          fields: { holder: { stringValue: "h1" }, expires_at_ms: { integerValue: "5000" } },
+        },
+      },
+      { status: 200, body: {} }, // delete commit
+      { status: 200, body: { transaction: "t4" } },
+      {
+        status: 200,
+        body: {
+          fields: { holder: { stringValue: "h1" }, expires_at_ms: { integerValue: "5000" } },
+        },
+      }, // not ours: no write
+    ]);
+    const store = restFirestoreStore({ project: "p", fetchImpl, accessToken: async () => "tok" });
+    expect(await store.acquireLease("anvil_vault_leases", "id1", "h1", 5000, 0)).toBe(true);
+    expect(JSON.stringify(calls[2]?.body)).toContain("anvil_vault_leases/id1");
+    expect(JSON.stringify(calls[2]?.body)).toContain('"expires_at_ms":{"integerValue":"5000"}');
+    expect(await store.acquireLease("anvil_vault_leases", "id1", "h2", 5000, 100)).toBe(false);
+    await store.releaseLease("anvil_vault_leases", "id1", "h1");
+    expect(JSON.stringify(calls.at(-1)?.body)).toContain('"delete"');
+    await store.releaseLease("anvil_vault_leases", "id1", "h2");
+    expect(calls.length).toBe(10);
+  });
 });

@@ -393,6 +393,17 @@ the coordinates JSON `[sub, connector, account]`.
   this backend the gateway starts without `ANVIL_VAULT_KEY_FILE`, and refuses to
   start if `ANVIL_VAULT_KEY_FILE` or `ANVIL_VAULT_DIR` is set.
 
+  Refreshes and `POST /connect/disconnect` are serialized across instances by a
+  Firestore lease, so a rotating refresh token is spent once and a disconnect
+  cannot be undone by a refresh that already read the record. The lease is a
+  document in `<collection>_leases` (default `anvil_vault_leases`, id = the
+  record id) holding a random holder id and an expiry, no secret. It is taken
+  in a transaction before the read and released after the write; it lasts 60
+  seconds, so a crashed holder is taken over once it expires. A caller waits up
+  to 30 seconds for another instance's lease, then fails as `vault_unavailable`
+  (retryable). Tested with the in-memory Firestore fake and a scripted REST
+  client only; not run against real Firestore.
+
 A Firestore or KMS failure fails the call: a turn gets `upstream_unavailable`
 (retryable) with `details.code: "connector/vault_unavailable"`, and a connect
 route answers `503 vault_unavailable`. No stale secret is returned. A document
