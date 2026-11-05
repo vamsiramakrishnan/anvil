@@ -100,6 +100,7 @@ Prefer the source operation id when it is stable and unique.
 | `side_effect` | Correct read vs mutation classification | Changing a mutation to a read loosens safety and requires strong evidence |
 | `risk` | Record `none`, `low`, `medium`, `high`, `financial`, or `destructive` | Drives confirmation and human-approval policy |
 | `reversible` | State whether the effect can be undone | Do not infer reversibility from HTTP method |
+| `service.icon` | Name a Simple Icons slug (`github`) for the connector's mark in a console | Lower-case words joined by single hyphens, at most 64 characters; anything else is refused at compile time |
 | `display_name`, `description` | Improve agent-facing explanation | Keep descriptions factual and task-specific |
 | `intent_examples` | Agent-phrased routing examples ("refund a customer") | Feed the skill surface and `anvil benchmark`; write them as a user would ask, not as the API names things |
 | `name.resource`, `name.verb` | Repair weak routing names across CLI, MCP, and skill | Changes the projected name while preserving stable operation identity |

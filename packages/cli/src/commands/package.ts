@@ -6,6 +6,7 @@ import type { CliIO } from "../io.js";
 import type { CommandContext } from "./context.js";
 import { registerPackageHarness } from "./harness-package.js";
 import { annotate } from "./meta.js";
+import { registerPackageOci } from "./package-oci.js";
 
 /** `anvil package skill <dir>` — validate and package the portable skill. */
 export function registerPackage(parent: Command, ctx: CommandContext): void {
@@ -30,6 +31,7 @@ export function registerPackage(parent: Command, ctx: CommandContext): void {
     });
 
   registerPackageHarness(pkg, ctx);
+  registerPackageOci(pkg, ctx);
 }
 
 /** One validation failure: the file it names, the rule it broke, and why. */

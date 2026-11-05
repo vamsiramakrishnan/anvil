@@ -573,6 +573,7 @@ async function buildAir(
           ? `${(doc.info?.version as string) ?? "0.0.0"}-${manifest.service.environment}`
           : ((doc.info?.version as string) ?? "0.0.0"),
         displayName: manifest.service?.display_name ?? title,
+        ...(manifest.service?.icon !== undefined ? { icon: manifest.service.icon } : {}),
         owner: manifest.service?.owner,
         environment: manifest.service?.environment,
         source: {

@@ -894,6 +894,9 @@ describe("anvil adopt speaks the operator envelope", () => {
  * offline" is a boundary. Only the second is a real exemption.
  */
 const UNEXERCISED: Record<string, string> = {
+  // Branchyard reads `{"features": [...]}` bare (docs/branchyard.md), so it has no envelope; driven in commands/contract-v2.test.ts.
+  capabilities:
+    "prints the bare {features} object a host reads; driven in commands/contract-v2.test.ts",
   // Driven end to end (success, manifest refusals, compile errors) in cmd-compile.test.ts.
   compile: "needs a source fixture; its --json envelopes are driven in cmd-compile.test.ts",
   // Need a compiled bundle plus lifecycle state to reach their refusal paths.
