@@ -136,6 +136,16 @@ Emits draft 2020-12 JSON Schema for an exposure profile (`--profile` to `anvil c
 Options:
 - `--out <file>` — write the schema to a file instead of stdout
 
+### `anvil capabilities`
+`anvil capabilities [options]`
+
+List the optional contract features this Anvil implements.
+
+Read-only. Lists the contract features this build supports by name (for example vault.firestore, token.proxy), so a caller can tell what to rely on. With --json, prints {"features": [...]}.
+
+Options:
+- `--json` — print {"features": [...]} as JSON
+
 ### `anvil status`
 `anvil status [options] <path>`
 
@@ -1211,6 +1221,25 @@ Options:
 - `--json` — emit one machine-readable credential plan
 - `--tfvars` — emit only Terraform auto-tfvars JSON for an external plan work directory
 
+#### `anvil deploy gateway`
+`anvil deploy gateway [options]`
+
+Write the Cloud Run Dockerfile and service for the fleet gateway.
+
+Writes deploy/gateway/Dockerfile and service.yaml for `anvil serve mcp <bundles> --fleet --http $PORT`: /readyz startup and /healthz liveness probes, the branchyard inbound-auth configuration (issuer, audience, JWKS), the Firestore idempotency ledger, and the SIGTERM drain window. Configuration only; it never applies anything.
+
+Options:
+- `--out <dir>` — directory to write deploy/gateway/ into
+- `--image <ref>` — container image reference built from the Dockerfile
+- `--project <id>` — GCP project id (the ledger's project)
+- `--public-url <url>` — the gateway's public https URL
+- `--branchyard-url <url>` — the Branchyard server's https URL (token issuer)
+- `--jwks-uri <url>` — JWKS URL (default: <branchyard-url>/.well-known/jwks.json)
+- `--service <name>` — Cloud Run service name
+- `--ledger-database <id>` — Firestore database for the ledger
+- `--ledger-namespace <name>` — ledger namespace
+- `--env <env>` — ANVIL_ENV
+
 #### `anvil deploy kubernetes`
 `anvil deploy kubernetes [options] <dir>`
 
@@ -1617,12 +1646,24 @@ Options:
 
 Package one connector for a Branchyard harness home (gateway mode).
 
-Writes <out>/SKILL.md, reference/, schemas/, examples/, python/, typescript/, bin/<connector>, and harness.json. The SDKs and CLI call the Anvil gateway named by ANVIL_GATEWAY_URL with the token in ANVIL_GATEWAY_TOKEN_FILE and never read an upstream credential. The CLI needs Node.js 18+, the Python SDK Python 3.9+, the TypeScript SDK a TypeScript build or a runtime that strips types.
+Writes <out>/SKILL.md, search.json, reference/, schemas/, examples/, python/, typescript/, bin/<connector>, and harness.json. search.json lists every approved operation (sorted by id, the same bytes for the same bundle) and points at one input schema file per operation under schemas/. The SDKs and CLI call the Anvil gateway named by ANVIL_GATEWAY_URL with the token in ANVIL_GATEWAY_TOKEN_FILE and never read an upstream credential. The CLI needs Node.js 18+, the Python SDK Python 3.9+, the TypeScript SDK a TypeScript build or a runtime that strips types.
 
 Options:
 - `--out <dir>` — the package directory to write (replaced if it holds a previous package)
 - `--connector <id>` — the connector id the gateway serves this bundle under (default: its fleet id under --workspace)
 - `--workspace <dir>` — the workspace the gateway serves (`anvil serve mcp <dir> --fleet`); the bundle's connector id is its path there, folded as the fleet folds it (default: the bundle served alone, named by its directory)
+- `--skill-mode <mode>` — full (default): SKILL.md lists every operation; lean: at most 4 KB, with one line per capability and a pointer to search.json
+
+#### `anvil package oci`  *(mutates)*
+`anvil package oci [options] <package-dir>`
+
+Write a harness package as an OCI image layout, and optionally push it.
+
+Writes <out>/oci-layout, index.json and blobs/sha256/<digest>: one blob per package file, a config blob, an image manifest, and an index annotated with dev.anvil.bundle-hash, dev.anvil.connector and dev.anvil.version. Running it again on the same package writes the same bytes. With --push <ref> it uploads the blobs the registry lacks and then the manifest through the registry's HTTP API; a manifest already there with the same digest is left alone. The token, when the registry needs one, is read from the file named by ANVIL_OCI_TOKEN_FILE.
+
+Options:
+- `--out <dir>` — the OCI layout directory to write
+- `--push <ref>` — push to <host>[:port]/<repository>[:<tag>] after writing (tag defaults to latest)
 
 ### `anvil connectors`  *(mutates)*
 `anvil connectors [options] [command]`
@@ -1656,6 +1697,18 @@ Options:
 - `--skills-root <dir>` — the directory holding the packaged connectors, one per connector id (default: the directory of --out)
 - `--workspace <dir>` — the workspace the gateway serves; each bundle's connector id is its path there, folded as the fleet folds it (default: each bundle served alone, named by its directory)
 - `--layout <layout>` — harness | bundle
+
+### `anvil install`  *(mutates)*
+`anvil install [options]`
+
+Install the Anvil toolchain once per host, under a prefix.
+
+Installs the CLI launcher, the Python SDK, the TypeScript SDK and the compose SDK into <prefix>/versions/<digest>/ and points <prefix>/current at it by an atomic rename. Without --from the toolchain is the one this Anvil carries (the launcher runs this installation's CLI). With --from <dir> it is the directory's manifest.json and the files it lists; every digest is checked before a file is written. Running the same digest again changes nothing. A registry reference for --from is not supported: pull the image first and pass the directory.
+
+Options:
+- `--prefix <dir>` — the host toolchain directory, such as /opt/anvil
+- `--from <dir>` — a toolchain directory (manifest.json plus the files it lists)
+- `--prune` — remove versions that `current` does not name
 
 ### `anvil skill`
 `anvil skill [options] [out-dir]`

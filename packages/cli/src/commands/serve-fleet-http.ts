@@ -18,10 +18,17 @@ import {
   verifiedPrincipalFingerprint,
   verifyInboundToken,
 } from "@anvil/mcp-runtime";
-import { type Principal, resolvePrincipalForBearer, withInboundIdentity } from "@anvil/runtime";
+import {
+  type AuditSink,
+  type Principal,
+  resolvePrincipalForBearer,
+  VaultUnavailableError,
+  withInboundIdentity,
+} from "@anvil/runtime";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { CliIO } from "../io.js";
+import { disconnectConnection } from "./fleet-disconnect.js";
 import {
   isLoopbackHost,
   isOwnLoopbackHost,
@@ -29,7 +36,12 @@ import {
   json,
   readSmallJson,
 } from "./fleet-http-io.js";
-import { auditSinkFromEnv, buildGatewayRuntime, type GatewayRuntime } from "./gateway.js";
+import {
+  auditSinkFromEnv,
+  buildGatewayRuntime,
+  type GatewayRuntime,
+  type VaultClients,
+} from "./gateway.js";
 import { prepareFleetForWorkspace } from "./serve.js";
 import { handleRestCall } from "./serve-fleet-rest.js";
 
@@ -58,7 +70,7 @@ import { handleRestCall } from "./serve-fleet-rest.js";
  * (ADR-0029, docs/branchyard.md): each session belongs to one turn's token,
  * its principal and grant come from that token's claims, every tool is
  * mounted under its connector id, credentials come from the vault
- * (`ANVIL_VAULT_KEY_FILE`, required), and the listener also serves the
+ * (`ANVIL_VAULT_KEY_FILE`, or Firestore + KMS with `ANVIL_VAULT_BACKEND=firestore`), and the listener also serves the
  * connect flow at `/connect/*`.
  */
 
@@ -68,7 +80,12 @@ export interface FleetHttpOptions {
   env?: NodeJS.ProcessEnv;
   io?: CliIO;
   /** Test seams for the connect flow and vault refreshes (the provider's token endpoint). */
-  gatewayDeps?: { fetchImpl?: typeof fetch; now?: () => number };
+  gatewayDeps?: {
+    fetchImpl?: typeof fetch;
+    now?: () => number;
+    /** In-memory Firestore and KMS for the `firestore` vault backend. */
+    vaultClients?: VaultClients;
+  };
 }
 
 export type FleetHttpHandle = {
@@ -86,6 +103,26 @@ const MCP_REQUEST_MAX_BYTES = 1024 * 1024;
 const SESSION_IDLE_TTL_MS = 15 * 60 * 1000;
 const SESSION_SWEEP_MS = 60 * 1000;
 const MAX_SESSIONS = 100;
+/** Under Cloud Run's 10-second SIGTERM window; `ANVIL_SHUTDOWN_GRACE_SECONDS` overrides it. */
+const DEFAULT_SHUTDOWN_GRACE_SECONDS = 8;
+const MAX_SHUTDOWN_GRACE_SECONDS = 3600;
+
+/** The drain window in milliseconds, or the reason the variable is unusable. */
+function shutdownGraceMs(
+  env: NodeJS.ProcessEnv,
+): { ok: true; ms: number } | { ok: false; message: string } {
+  const raw = env.ANVIL_SHUTDOWN_GRACE_SECONDS?.trim();
+  if (raw === undefined || raw === "")
+    return { ok: true, ms: DEFAULT_SHUTDOWN_GRACE_SECONDS * 1000 };
+  const seconds = Number(raw);
+  if (!/^[0-9]+$/.test(raw) || seconds > MAX_SHUTDOWN_GRACE_SECONDS) {
+    return {
+      ok: false,
+      message: `ANVIL_SHUTDOWN_GRACE_SECONDS must be an integer from 0 to ${MAX_SHUTDOWN_GRACE_SECONDS}`,
+    };
+  }
+  return { ok: true, ms: seconds * 1000 };
+}
 
 const JSON_REFUSAL = { "content-type": "application/json", "x-content-type-options": "nosniff" };
 
@@ -266,6 +303,8 @@ export async function startFleetHttp(
         "listener must self-enforce inbound auth (oidc, google_service_account, or branchyard), exactly as the deployed server does",
     };
   }
+  const grace = shutdownGraceMs(env);
+  if (!grace.ok) return { ok: false, message: grace.message };
   const audit = auditSinkFromEnv(env, log);
   const prepared = await prepareFleetForWorkspace(workspaceRoot, env, { audit });
   if (!prepared.ok) return { ok: false, message: prepared.message };
@@ -297,6 +336,11 @@ export async function startFleetHttp(
   const sessions = new Map<string, Session>();
   const live = new Set<Session>();
   let shuttingDown = false;
+  // Requests that can run a tool (POST /mcp, DELETE /mcp, /call/*) and have not
+  // finished: a SIGTERM drain waits for these. The standalone GET /mcp event
+  // stream is not one; it can stay open indefinitely and is closed at the end.
+  let inFlight = 0;
+  let drained: (() => void) | undefined;
 
   const forget = (session: Session) => {
     live.delete(session);
@@ -345,6 +389,13 @@ export async function startFleetHttp(
   // closed once a response has started) and logged; it never ends the process.
   const reportFailure = () => log("anvil: a fleet request failed unexpectedly; answered 500.");
   const server: Server = createGuardedServer(async (req, res) => {
+    if (req.method !== "GET" || (req.url ?? "").startsWith("/call/")) {
+      inFlight += 1;
+      res.once("close", () => {
+        inFlight = Math.max(0, inFlight - 1);
+        if (inFlight === 0) drained?.();
+      });
+    }
     // With no inbound auth the loopback bind is the only gate, and DNS rebinding
     // walks around it: a web page can re-point its own domain at 127.0.0.1 and
     // POST same-origin. So an unauthenticated listener answers only requests
@@ -383,6 +434,8 @@ export async function startFleetHttp(
       return json(res, 200, { status: "ok", fleet: true, bundles: bundleIds.length });
     }
     if (url.pathname === "/readyz") {
+      // A draining instance is not ready: a load balancer stops sending it work.
+      if (shuttingDown) return json(res, 503, { ready: false, draining: true });
       const body = probe.readyz();
       return json(res, body.ready ? 200 : 503, body);
     }
@@ -394,7 +447,7 @@ export async function startFleetHttp(
           });
     }
     if (gateway && url.pathname.startsWith("/connect/")) {
-      return handleConnect(req, res, url, inbound, gateway);
+      return handleConnect(req, res, url, inbound, gateway, audit);
     }
     if (url.pathname.startsWith("/call/")) {
       if (shuttingDown) return json(res, 503, { error: { code: "shutting_down" } });
@@ -528,21 +581,56 @@ export async function startFleetHttp(
       `(${bundleIds.join(", ")}); inbound auth ${inbound.mode}; /readyz and /healthz on the same listener`,
   );
 
-  const close = async () => {
-    if (shuttingDown) return;
-    shuttingDown = true;
-    clearInterval(sweep);
-    await Promise.allSettled([...live].map((session) => closeSession(session)));
-    await probe.close();
-    server.closeIdleConnections?.();
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    server.closeAllConnections?.();
+  // SIGTERM path (Cloud Run gives 10 seconds): stop accepting connections, refuse
+  // new work with 503, let the calls that started finish for up to the grace
+  // period, then close sessions and sockets. Calls still running at the end are
+  // cut; the idempotency ledger covers their retry.
+  let closing: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    closing ??= (async () => {
+      shuttingDown = true;
+      clearInterval(sweep);
+      const listenerClosed = new Promise<void>((resolve) => server.close(() => resolve()));
+      server.closeIdleConnections?.();
+      if (inFlight > 0) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, grace.ms);
+          timer.unref();
+          drained = () => {
+            clearTimeout(timer);
+            resolve();
+          };
+        });
+      }
+      // Whatever is still running is cut here: its socket first, so a handler
+      // stuck on an upstream cannot hold the close open past the window.
+      server.closeAllConnections?.();
+      await Promise.allSettled([...live].map((session) => closeSession(session)));
+      await probe.close();
+      await listenerClosed;
+    })();
+    return closing;
   };
   return { ok: true, handle: { host: options.host, port, bundleIds, close } };
 }
 
 function text(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+/** A vault failure as a response: 503 `vault_unavailable` when the backing service failed; other errors propagate. */
+function vaultFailure(res: ServerResponse, error: unknown): void {
+  if (error instanceof VaultUnavailableError) {
+    json(res, 503, {
+      error: {
+        code: "vault_unavailable",
+        message: "The credential vault is unavailable; try again shortly.",
+      },
+    });
+    return;
+  }
+  // Anything else reaches the listener's own handler, which answers 500.
+  throw error;
 }
 
 /**
@@ -555,6 +643,9 @@ function text(value: unknown): string | undefined {
  *   bearer (a browser follows it), bound to the person by `state`.
  * - `POST /connect/api-key` `{connector, account?, api_key}` with the token.
  * - `GET /connect/status` with the token → the person's connections, no secrets.
+ * - `POST /connect/disconnect` `{connector, account?}` with the token → removes
+ *   the person's own stored connection; `{connector, account, disconnected}`,
+ *   `disconnected: false` when nothing was stored (idempotent). One audit line.
  *
  * "The token" on every route but the callback is a connect token
  * (`by_purpose: "connect"`, at most ten minutes, minted by `by connect` for
@@ -568,6 +659,7 @@ async function handleConnect(
   url: URL,
   inbound: InboundAuthConfig,
   gateway: GatewayRuntime,
+  audit: AuditSink | undefined,
 ): Promise<void> {
   if (url.pathname === "/connect/callback") {
     if (req.method !== "GET") return json(res, 405, { error: { code: "method_not_allowed" } });
@@ -619,7 +711,11 @@ async function handleConnect(
       error: { code: "invalid_token", message: "Missing credential owner." },
     });
   if (url.pathname === "/connect/status" && req.method === "GET") {
-    return json(res, 200, { sub: claims.sub, connections: gateway.vault.list(sub) });
+    try {
+      return json(res, 200, { sub: claims.sub, connections: await gateway.vault.list(sub) });
+    } catch (error) {
+      return vaultFailure(res, error);
+    }
   }
   if (req.method !== "POST") {
     return json(res, 404, { error: { code: "not_found", message: "No such route." } });
@@ -652,14 +748,34 @@ async function handleConnect(
         : { kind: "static", connector, submit: started.submit },
     );
   }
+  if (url.pathname === "/connect/disconnect") {
+    try {
+      const done = await disconnectConnection({
+        vault: gateway.vault,
+        audit,
+        sub,
+        claims,
+        connector,
+        account,
+      });
+      return json(res, 200, done);
+    } catch (error) {
+      return vaultFailure(res, error);
+    }
+  }
   if (url.pathname === "/connect/api-key") {
     const secret = typeof body.api_key === "string" ? body.api_key : "";
-    const stored = gateway.connect.putStatic({
-      sub,
-      connector,
-      ...(account ? { account } : {}),
-      secret,
-    });
+    let stored: Awaited<ReturnType<typeof gateway.connect.putStatic>>;
+    try {
+      stored = await gateway.connect.putStatic({
+        sub,
+        connector,
+        ...(account ? { account } : {}),
+        secret,
+      });
+    } catch (error) {
+      return vaultFailure(res, error);
+    }
     if (!stored.ok) {
       return json(res, stored.status, { error: { code: stored.code, message: stored.message } });
     }

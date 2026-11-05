@@ -894,6 +894,8 @@ describe("anvil adopt speaks the operator envelope", () => {
  * offline" is a boundary. Only the second is a real exemption.
  */
 const UNEXERCISED: Record<string, string> = {
+  capabilities:
+    "prints the contract's own {features: [...]} document, not a report envelope; driven in capabilities.test.ts and commands/contract-v2.test.ts",
   // Driven end to end (success, manifest refusals, compile errors) in cmd-compile.test.ts.
   compile: "needs a source fixture; its --json envelopes are driven in cmd-compile.test.ts",
   // Need a compiled bundle plus lifecycle state to reach their refusal paths.

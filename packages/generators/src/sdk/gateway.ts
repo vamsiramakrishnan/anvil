@@ -10,6 +10,11 @@ import type { SdkOperation, SdkPlan } from "./plan.js";
  * client, and no upstream credential variable (`<SERVICE>_TOKEN` and the
  * rest) is ever read in that mode.
  *
+ * With `ANVIL_GATEWAY_AUTH=proxy` the client sends no `Authorization` header and
+ * reads no token file: a local proxy at `ANVIL_GATEWAY_URL` adds the token, so
+ * the process holds none. The URL must name a loopback host or the call is
+ * refused before any request. Unset (or `token_file`) is the token-file mode.
+ *
  * The wire is the same one the CLI's `--mcp <url>` path speaks (ADR-0023):
  * `initialize`, `notifications/initialized`, one `tools/call`, then the
  * session is closed. The safety controls ride as the tool's own reserved
@@ -59,11 +64,15 @@ export function pythonGatewayModule(plan: SdkPlan): string {
 Gateway mode. With ANVIL_GATEWAY_URL set, every call goes to the Anvil gateway
 over MCP Streamable HTTP. The bearer is read from the file
 ANVIL_GATEWAY_TOKEN_FILE names on every call (a token replaced each turn is
-picked up), and no upstream credential variable is read.
+picked up), and no upstream credential variable is read. With
+ANVIL_GATEWAY_AUTH=proxy no Authorization header is sent and no token file is
+read: a local proxy at ANVIL_GATEWAY_URL (loopback only) adds the token.
 """
 
+import ipaddress
 import json
 import os
+import urllib.parse
 import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
@@ -72,6 +81,7 @@ from .errors import ERROR_CODES, AnvilError
 
 GATEWAY_URL_ENV_VAR = "ANVIL_GATEWAY_URL"
 GATEWAY_TOKEN_FILE_ENV_VAR = "ANVIL_GATEWAY_TOKEN_FILE"
+GATEWAY_AUTH_ENV_VAR = "ANVIL_GATEWAY_AUTH"
 GATEWAY_CONNECTOR_ENV_VAR = "ANVIL_GATEWAY_CONNECTOR"
 #: The connector id the gateway mounts this service under.
 DEFAULT_CONNECTOR = ${j(plan.gateway.connector)}
@@ -82,6 +92,16 @@ DRY_RUN_ARG = ${j(GATEWAY_DRY_RUN_ARG)}
 TOOLS: Dict[str, Dict[str, Optional[str]]] = {
 ${rows}
 }
+
+
+def _is_loopback(url: str) -> bool:
+    host = urllib.parse.urlsplit(url).hostname or ""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _flag_to_argument(flag: str) -> str:
@@ -98,12 +118,32 @@ class GatewayTransport(object):
         connector: Optional[str] = None,
         opener: Any = None,
         user_agent: str = "anvil-sdk (python)",
+        auth: Optional[str] = None,
     ) -> None:
         self.url = url
+        self._auth = (auth or os.environ.get(GATEWAY_AUTH_ENV_VAR) or "token_file").strip()
         self._token_file = token_file
         self.connector = connector or os.environ.get(GATEWAY_CONNECTOR_ENV_VAR) or DEFAULT_CONNECTOR
         self._opener = opener
         self._user_agent = user_agent
+
+    def _authorization(self, operation: str) -> Dict[str, str]:
+        """The Authorization header for one call: empty in proxy mode."""
+        if self._auth == "proxy":
+            if not _is_loopback(self.url):
+                raise AnvilError(
+                    code="validation_error",
+                    operation=operation,
+                    message="ANVIL_GATEWAY_AUTH=proxy needs ANVIL_GATEWAY_URL to name a loopback host.",
+                )
+            return {}
+        if self._auth != "token_file":
+            raise AnvilError(
+                code="validation_error",
+                operation=operation,
+                message="ANVIL_GATEWAY_AUTH must be proxy or token_file.",
+            )
+        return {"Authorization": "Bearer " + self._token(operation)}
 
     def _token(self, operation: str) -> str:
         path = self._token_file or os.environ.get(GATEWAY_TOKEN_FILE_ENV_VAR)
@@ -255,9 +295,9 @@ class GatewayTransport(object):
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
-            "Authorization": "Bearer " + self._token(spec.id),
             "User-Agent": self._user_agent,
         }
+        headers.update(self._authorization(spec.id))
         init, init_headers = self._rpc(
             1,
             "initialize",
@@ -352,13 +392,16 @@ export function typescriptGatewayModule(plan: SdkPlan): string {
 // Gateway mode. With ANVIL_GATEWAY_URL set, every call goes to the Anvil
 // gateway over MCP Streamable HTTP. The bearer is read from the file
 // ANVIL_GATEWAY_TOKEN_FILE names on every call (a token replaced each turn is
-// picked up), and no upstream credential variable is read.
+// picked up), and no upstream credential variable is read. With
+// ANVIL_GATEWAY_AUTH=proxy no authorization header is sent and no token file is
+// read: a local proxy at ANVIL_GATEWAY_URL (loopback only) adds the token.
 import { AnvilError, type AnvilErrorCode } from "./errors.js";
 import type { FetchLike } from "./invoke.js";
 import type { CallOptions, OperationSpec } from "./spec.js";
 
 export const GATEWAY_URL_ENV_VAR = "ANVIL_GATEWAY_URL";
 export const GATEWAY_TOKEN_FILE_ENV_VAR = "ANVIL_GATEWAY_TOKEN_FILE";
+export const GATEWAY_AUTH_ENV_VAR = "ANVIL_GATEWAY_AUTH";
 export const GATEWAY_CONNECTOR_ENV_VAR = "ANVIL_GATEWAY_CONNECTOR";
 /** The connector id the gateway mounts this service under. */
 export const DEFAULT_CONNECTOR = ${j(plan.gateway.connector)};
@@ -392,6 +435,35 @@ function processEnv(): Env {
 
 function refuse(code: AnvilErrorCode, operation: string, message: string, retryable = false): AnvilError {
   return new AnvilError({ code, operation, traceId: "", message, retryable });
+}
+
+function isLoopbackUrl(url: string): boolean {
+  let host: string;
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return false;
+  }
+  return host === "localhost" || host === "[::1]" || /^127(\\.\\d{1,3}){3}$/.test(host);
+}
+
+/** The headers that carry authority for one call: none in proxy mode. */
+async function authorizationHeaders(options: GatewayOptions, operation: string): Promise<Record<string, string>> {
+  const mode = (processEnv()?.[GATEWAY_AUTH_ENV_VAR] ?? "").trim() || "token_file";
+  if (mode === "proxy") {
+    if (!isLoopbackUrl(options.url)) {
+      throw refuse(
+        "validation_error",
+        operation,
+        "ANVIL_GATEWAY_AUTH=proxy needs ANVIL_GATEWAY_URL to name a loopback host.",
+      );
+    }
+    return {};
+  }
+  if (mode !== "token_file") {
+    throw refuse("validation_error", operation, "ANVIL_GATEWAY_AUTH must be proxy or token_file.");
+  }
+  return { authorization: \`Bearer \${await readToken(options, operation)}\` };
 }
 
 async function readToken(options: GatewayOptions, operation: string): Promise<string> {
@@ -532,8 +604,8 @@ export async function gatewayCall(
   const headers: Record<string, string> = {
     "content-type": "application/json",
     accept: "application/json, text/event-stream",
-    authorization: \`Bearer \${await readToken(options, spec.id)}\`,
     "user-agent": options.userAgent,
+    ...(await authorizationHeaders(options, spec.id)),
   };
   const init = await rpc(
     options,

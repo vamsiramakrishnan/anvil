@@ -25,8 +25,8 @@
     "Out of scope: certification check ids (`static/*`, `exec/*`), AIR predicate names",
     "(`anvil/*`), and MIME types. Those are contracts too, but different ones."
   ],
-  "total": 488,
-  "asserted": 348,
+  "total": 489,
+  "asserted": 349,
   "unasserted": 140,
   "codes": {
     "air/incompatible_version": {
@@ -426,6 +426,12 @@
       "asserted": true
     },
     "connector/unsupported_auth": {
+      "packages": [
+        "runtime"
+      ],
+      "asserted": true
+    },
+    "connector/vault_unavailable": {
       "packages": [
         "runtime"
       ],

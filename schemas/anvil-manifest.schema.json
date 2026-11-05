@@ -17,6 +17,11 @@
         "display_name": {
           "type": "string"
         },
+        "icon": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+        },
         "owner": {
           "type": "string"
         },

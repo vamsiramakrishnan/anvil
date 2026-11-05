@@ -88,6 +88,11 @@ unconnected account is `auth_required` with `details.code:
 the message. An OAuth token close to expiry is refreshed under a per-connection
 lock; `invalid_grant` marks the connection `needs_reconnect`.
 
+`VaultBackend` is the interface behind that store. `ConnectionVault` (files) is
+the default implementation; `FirestoreVault` keeps each record in a Firestore
+document sealed under a per-write data key that Cloud KMS wraps, selected with
+`ANVIL_VAULT_BACKEND=firestore` (see `docs/branchyard.md`, "Vault backends").
+
 **6. The gateway owns the connect flow.** `ConnectFlow` (`connect.ts`) runs the
 OAuth authorization-code grant with PKCE (S256). `POST /connect/start` returns
 the authorization URL to the person who asked; `state` is single-use,
@@ -153,8 +158,8 @@ SDKs serve (`isDirectlyCallable`: never a `webhook_receiver`).
     `gatewayConnector` option) overrides it. Packaged SDKs and CLIs carry the
     bundle's own id, so a harness needs only the contract's two variables.
   - The gateway's connect routes (`/connect/start`, `/connect/callback`,
-    `/connect/api-key`, `/connect/status`) are this ADR's; the contract names
-    the flow, not the routes.
+    `/connect/api-key`, `/connect/status`, `/connect/disconnect`) are this
+    ADR's; the contract names the flow, not the routes.
 - **Deferred:**
   - Go and Java SDK gateway mode. Those clients still call upstreams directly.
   - Persisting in-flight connect `state` across a gateway restart (it is in

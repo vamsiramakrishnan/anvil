@@ -29,7 +29,7 @@ import {
 import { ErrorSpec } from "./error-spec.js";
 import { Pagination } from "./pagination.js";
 import { ExposureProfileRecord } from "./profile-record.js";
-import { ServiceId } from "./service-id.js";
+import { ServiceIcon, ServiceId } from "./service-id.js";
 
 /**
  * A JSON Schema fragment, carried through AIR verbatim. Anvil does not
@@ -933,9 +933,7 @@ export const WebhookSignatureVerificationSchema = z.discriminatedUnion("scheme",
   }),
 ]);
 
-/**
- * Zod mirror of `WebhookContract` in `async-contract.ts`.
- */
+/** Zod mirror of `WebhookContract` in `async-contract.ts`. */
 export const WebhookContractSchema = z.object({
   webhookOperationId: z.string(),
   webhookJobIdField: z.string(),
@@ -1473,6 +1471,8 @@ export const Service = z.object({
   id: ServiceId,
   version: z.string(),
   displayName: z.string().optional(),
+  /** A Simple Icons slug (`github`), copied into a harness package's `harness.json` and `search.json`. */
+  icon: ServiceIcon.optional(),
   owner: z.string().optional(),
   environment: z.string().optional(),
   source: z.object({

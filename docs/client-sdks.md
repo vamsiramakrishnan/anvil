@@ -258,6 +258,14 @@ is `<connector>__<tool>`; the connector id defaults to the folded service id
 and can be overridden with `ANVIL_GATEWAY_CONNECTOR` (`anvil package harness`
 bakes in the bundle's own id).
 
+With `ANVIL_GATEWAY_AUTH=proxy` the client sends no `Authorization` header and
+reads no token file. A proxy listening at `ANVIL_GATEWAY_URL` adds the token and
+renews it, so the harness process never holds one. The mode is refused before
+any request unless `ANVIL_GATEWAY_URL` names a loopback host, and an unknown
+value is refused. Unset, or `token_file`, keeps the behavior above unchanged.
+The generated CLI and the packaged `bin/<connector>` script follow the same
+variable.
+
 | Language | Gateway options |
 | --- | --- |
 | TypeScript | `{ gatewayUrl, gatewayTokenFile, gatewayTokenProvider, gatewayConnector }` |
@@ -269,7 +277,8 @@ reserved inputs; and the result is what a direct call returns or raises: data,
 the dry-run plan, or `AnvilError` carrying the gateway's code and details.
 `packages/generators/src/sdk-gateway.test.ts` drives both languages against a
 stub gateway and asserts the token is re-read per call and `GITHUB_TOKEN` is
-never read. Go and Java clients have no gateway mode yet. See
+never read; the same file drives both languages through a stand-in proxy that
+adds the token, and checks that the client sent none. Go and Java clients have no gateway mode yet. See
 [Serving Branchyard harnesses](branchyard.md).
 
 ## Safety rules

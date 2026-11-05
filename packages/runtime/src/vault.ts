@@ -82,6 +82,7 @@ export class CredentialUnavailableError extends Error {
         | "connector/refresh_failed"
         | "connector/unsupported_auth"
         | "connector/vault_unreadable"
+        | "connector/vault_unavailable"
         | "connector/unresolved";
       connector?: string;
       account?: string;
@@ -93,6 +94,17 @@ export class CredentialUnavailableError extends Error {
 
   /** The refusal a call gets: `auth_required`, naming the connector and account. */
   toAnvilError(operation: string, traceId: string): AnvilError {
+    if (this.details.code === "connector/vault_unavailable") {
+      // The vault's backing service failed: not a reason to reconnect.
+      return new AnvilError({
+        code: "upstream_unavailable",
+        message: this.message,
+        operation,
+        traceId,
+        retryable: true,
+        details: this.details,
+      });
+    }
     return new AnvilError({
       code: "auth_required",
       message: this.message,
@@ -130,12 +142,73 @@ export function readVaultKey(path: string): Buffer {
   throw new Error(`vault key file ${path} must hold 32 bytes (raw, 64 hex characters, or base64)`);
 }
 
-function coordinates(sub: string, connector: string, account: string): string {
+/** The JSON a record's id and additional authenticated data are made from. */
+export function coordinates(sub: string, connector: string, account: string): string {
   return JSON.stringify([sub, connector, account]);
 }
 
-export class ConnectionVault {
+/** The record id both backends use: the hex SHA-256 of the coordinates JSON. */
+export function vaultRecordId(sub: string, connector: string, account: string): string {
+  return createHash("sha256")
+    .update(coordinates(sub, connector, account))
+    .digest("hex");
+}
+
+type Awaitable<T> = T | Promise<T>;
+
+/**
+ * Where the gateway keeps its per-person upstream authorizations (ADR-0029).
+ * `ConnectionVault` (files, synchronous) and `FirestoreVault` (Firestore,
+ * envelope-encrypted with Cloud KMS, asynchronous) implement it; callers
+ * `await` every method so either works. `get` throws when a record exists but
+ * cannot be read: `VaultUnavailableError` when the backing service failed,
+ * any other error when the record will not decrypt.
+ */
+export interface VaultBackend {
+  get(sub: string, connector: string, account: string): Awaitable<StoredConnection | undefined>;
+  put(connection: StoredConnection): Awaitable<void>;
+  /** Remove one record; whether one existed. */
+  delete(sub: string, connector: string, account: string): Awaitable<boolean>;
+  /** Every connection `sub` holds, without secrets. */
+  list(sub: string): Awaitable<ConnectionSummary[]>;
+  withLock<T>(sub: string, connector: string, account: string, fn: () => Promise<T>): Promise<T>;
+}
+
+/**
+ * The vault's backing service (Firestore or KMS) failed or is unreachable.
+ * The call fails; a secret the service could not vouch for is never returned.
+ */
+export class VaultUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "VaultUnavailableError";
+  }
+}
+
+/** Per-key in-process lock: concurrent holders of one key queue behind each other. */
+export class KeyedLock {
   private readonly locks = new Map<string, Promise<unknown>>();
+
+  async run<T>(id: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.locks.get(id) ?? Promise.resolve();
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = previous.then(() => held);
+    this.locks.set(id, tail);
+    try {
+      await previous;
+      return await fn();
+    } finally {
+      release();
+      if (this.locks.get(id) === tail) this.locks.delete(id);
+    }
+  }
+}
+
+export class ConnectionVault implements VaultBackend {
+  private readonly lock = new KeyedLock();
 
   constructor(
     readonly dir: string,
@@ -146,10 +219,7 @@ export class ConnectionVault {
   }
 
   private fileFor(sub: string, connector: string, account: string): string {
-    const name = createHash("sha256")
-      .update(coordinates(sub, connector, account))
-      .digest("hex");
-    return join(this.dir, `${name}.json`);
+    return join(this.dir, `${vaultRecordId(sub, connector, account)}.json`);
   }
 
   private seal(connection: StoredConnection): string {
@@ -274,22 +344,8 @@ export class ConnectionVault {
    * connection queue behind each other instead of racing the provider with
    * the same refresh token (which rotating providers treat as reuse).
    */
-  async withLock<T>(sub: string, connector: string, account: string, fn: () => Promise<T>) {
-    const id = coordinates(sub, connector, account);
-    const previous = this.locks.get(id) ?? Promise.resolve();
-    let release: () => void = () => {};
-    const held = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const tail = previous.then(() => held);
-    this.locks.set(id, tail);
-    try {
-      await previous;
-      return await fn();
-    } finally {
-      release();
-      if (this.locks.get(id) === tail) this.locks.delete(id);
-    }
+  withLock<T>(sub: string, connector: string, account: string, fn: () => Promise<T>) {
+    return this.lock.run(coordinates(sub, connector, account), fn);
   }
 }
 
@@ -368,7 +424,7 @@ export class VaultCredentialResolver implements CredentialResolver {
   private readonly workload: GoogleWorkloadCredentials | undefined;
 
   constructor(
-    private readonly vault: ConnectionVault,
+    private readonly vault: VaultBackend,
     private readonly oauthClientFor: (connector: string) => OAuthClientConfig | undefined,
     opts: {
       fetchImpl?: typeof fetch;
@@ -411,8 +467,9 @@ export class VaultCredentialResolver implements CredentialResolver {
     }
     let connection: StoredConnection | undefined;
     try {
-      connection = this.vault.get(sub, connector, account);
-    } catch {
+      connection = await this.vault.get(sub, connector, account);
+    } catch (error) {
+      if (error instanceof VaultUnavailableError) throw vaultUnavailable(connector, account);
       throw new CredentialUnavailableError(
         `The stored connection for connector '${connector}' (account '${account}') could not be read; the person must reconnect it.`,
         { code: "connector/vault_unreadable", connector, account },
@@ -432,7 +489,10 @@ export class VaultCredentialResolver implements CredentialResolver {
     }
     const fresh =
       connection.expiresAt !== undefined && connection.expiresAt - this.now() < REFRESH_SKEW_MS
-        ? await this.refresh(sub, connector, account)
+        ? await this.refresh(sub, connector, account).catch((error) => {
+            if (error instanceof VaultUnavailableError) throw vaultUnavailable(connector, account);
+            throw error;
+          })
         : connection;
     if (!fresh.accessToken) throw needsReconnect(connector, account);
     return vaultMaterial(auth, fresh.accessToken);
@@ -441,7 +501,7 @@ export class VaultCredentialResolver implements CredentialResolver {
   private refresh(sub: string, connector: string, account: string): Promise<StoredConnection> {
     return this.vault.withLock(sub, connector, account, async () => {
       // Re-read under the lock: a concurrent call may already have refreshed.
-      const current = this.vault.get(sub, connector, account);
+      const current = await this.vault.get(sub, connector, account);
       if (!current) {
         throw new CredentialUnavailableError(
           `Connector '${connector}' has no connected account '${account}' for this person.`,
@@ -454,7 +514,7 @@ export class VaultCredentialResolver implements CredentialResolver {
       }
       const client = this.oauthClientFor(connector);
       if (!current.refreshToken || !client) {
-        this.vault.put({ ...current, status: "needs_reconnect", updatedAt: this.stamp() });
+        await this.vault.put({ ...current, status: "needs_reconnect", updatedAt: this.stamp() });
         throw needsReconnect(connector, account);
       }
       // The grant below carries the refresh token and client secret. An endpoint
@@ -481,7 +541,7 @@ export class VaultCredentialResolver implements CredentialResolver {
       const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       if (!res.ok) {
         if (body.error === "invalid_grant") {
-          this.vault.put({ ...current, status: "needs_reconnect", updatedAt: this.stamp() });
+          await this.vault.put({ ...current, status: "needs_reconnect", updatedAt: this.stamp() });
           throw needsReconnect(connector, account);
         }
         throw refreshFailed(connector, account);
@@ -502,7 +562,7 @@ export class VaultCredentialResolver implements CredentialResolver {
         status: "active",
         updatedAt: this.stamp(),
       };
-      this.vault.put(next);
+      await this.vault.put(next);
       return next;
     });
   }
@@ -516,6 +576,13 @@ function needsReconnect(connector: string, account: string): CredentialUnavailab
   return new CredentialUnavailableError(
     `Connector '${connector}' (account '${account}') needs to be reconnected by the person; its provider refused the stored authorization.`,
     { code: "connector/needs_reconnect", connector, account },
+  );
+}
+
+function vaultUnavailable(connector: string, account: string): CredentialUnavailableError {
+  return new CredentialUnavailableError(
+    `The credential vault is unavailable, so connector '${connector}' (account '${account}') cannot be used right now; try again shortly.`,
+    { code: "connector/vault_unavailable", connector, account },
   );
 }
 

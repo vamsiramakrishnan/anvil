@@ -172,10 +172,15 @@ from the Anvil checkout.
 | `ANVIL_INBOUND_ISSUER` | The yard's issuer: its server URL, or `branchyard:local:<yard id>`. |
 | `ANVIL_INBOUND_AUDIENCE` | The gateway's canonical `/mcp` URL: HTTPS, or HTTP on a loopback host. |
 | `ANVIL_INBOUND_JWKS_URI` | The yard's JWKS: `https://…/.well-known/jwks.json`, or `file://…/.branchyard/gateway/jwks.json` (read on every verification). |
-| `ANVIL_VAULT_KEY_FILE` | Required. A file only its owner can read holding a 32-byte key (raw, 64 hex characters, or base64). |
-| `ANVIL_VAULT_DIR` | Where encrypted connections live. Default `~/.anvil/gateway/vault`. |
+| `ANVIL_VAULT_BACKEND` | `file` (the default) or `firestore`. See [Vault backends](#vault-backends). |
+| `ANVIL_VAULT_KEY_FILE` | `file` backend. Required. A file only its owner can read holding a 32-byte key (raw, 64 hex characters, or base64). Refused with `firestore`. |
+| `ANVIL_VAULT_DIR` | `file` backend. Where encrypted connections live. Default `~/.anvil/gateway/vault`. Refused with `firestore`. |
+| `ANVIL_VAULT_KMS_KEY` | `firestore` backend. Required. The Cloud KMS crypto key, `projects/P/locations/L/keyRings/R/cryptoKeys/K` (not a key version). |
+| `ANVIL_VAULT_FIRESTORE_COLLECTION`, `ANVIL_VAULT_FIRESTORE_DATABASE`, `ANVIL_VAULT_FIRESTORE_PROJECT` | `firestore` backend, optional. Defaults: `anvil_vault`, `(default)`, and the KMS key's project. |
 | `ANVIL_AUDIT_FILE` | Append one JSON line per call here (created 0600). Unset: no audit log. |
 | `ANVIL_GATEWAY_PUBLIC_URL` | The base for `/connect/callback` when it differs from the audience's origin. |
+| `ANVIL_LEDGER` | The idempotency ledger. The fleet listener boots it through the same composition root as every other surface, so `firestore://PROJECT/DATABASE/NAMESPACE` selects the Firestore ledger and an unknown scheme or a malformed URI stops the start. Unset, the ledger is in memory, which is for `dev`. |
+| `ANVIL_SHUTDOWN_GRACE_SECONDS` | On `SIGTERM` the listener stops accepting connections, answers new work `503` (and `/readyz` not ready), lets calls already running finish for this many seconds, then closes and exits 0. Default 8, under Cloud Run's 10-second window. An integer from 0 to 3600; anything else stops the start. |
 | `ANVIL_CONNECT_<CONNECTOR>_CLIENT_ID`, `_CLIENT_SECRET` | The gateway's OAuth client for one connector. `_AUTHORIZATION_ENDPOINT`, `_TOKEN_ENDPOINT`, `_ISSUER`, `_SCOPES` override what AIR declares. Both endpoints, from either source, must be HTTPS (plain HTTP only to `127.0.0.1`): otherwise `/connect/start` answers `503 connector_not_configured`, a stored connection's refresh fails as `connector/refresh_failed`, and nothing is sent to the token endpoint. Neither request follows a redirect. |
 | `ANVIL_CONNECT_<CONNECTOR>_MCP_URL`, `_MCP_AUTH` | Reviewed upstream Streamable HTTP MCP endpoint and explicit auth mode: `oauth`, `workload`, `static`, or `none`. OAuth requires `_ISSUER` and `_CLIENT_ID`, with optional `_CLIENT_SECRET` and `_SCOPES`. |
 | `ANVIL_ALLOWED_HOSTS` | The upstream egress allowlist, as for every serving surface. |
@@ -185,8 +190,11 @@ from the Anvil checkout.
 A compact JWT, `alg: EdDSA`, with `kid` in the header. The gateway checks the
 signature, `iss`, `aud`, `exp` (and refuses one more than an hour away), `nbf`,
 `iat` (not in the future), and requires nonempty `sub` and `by_tenant` plus a
-well-formed `by_grants`. `by_branch` and `by_turn` are optional strings, recorded
-in the audit log. Any failure is a `401` with `WWW-Authenticate`. A session belongs to
+well-formed `by_grants`. `by_branch`, `by_turn` and `by_manifest` are optional
+strings of at most 256 characters, recorded in the audit log (`by_manifest` is
+the digest of the turn's manifest, `<algorithm>:<hex>`, and the gateway treats
+it as opaque text; a longer value is a `401`). It is recorded, never enforced:
+it changes neither the credential owner, nor the grant, nor the decision. Any failure is a `401` with `WWW-Authenticate`. A session belongs to
 one token: a different token presenting its session id gets `403`.
 
 There are two kinds of token, told apart by `by_purpose`:
@@ -340,6 +348,21 @@ person by the `state` a connect token's `/connect/start` made.
 | `GET /connect/callback?state&code[&iss]` | — | Plain text for the browser. `state` is single use and expires after ten minutes. |
 | `POST /connect/api-key` | `{"connector", "account", "api_key"}` | `{"connected": true, "connector", "account"}` |
 | `GET /connect/status` | — | `{"sub", "connections": [{connector, account, kind, status, …}]}`, no secrets |
+| `POST /connect/disconnect` | `{"connector": "github", "account": "work"}` | `{"connector", "account", "disconnected": true}`; `"disconnected": false` when nothing was stored |
+
+`/connect/disconnect` removes the stored connection of the person the connect
+token names, for the connector and account in the body (`account` defaults to
+`default`). The owner comes from the verified token, never from the body, so a
+person cannot remove another person's record. Repeating it is safe and answers
+`200` with `disconnected: false`. It writes one audit line with `operation`
+`connect.disconnect`, `decision` `allowed` and `disconnected`, and no secret. A
+later call to that connector fails with `connector/not_connected`. A turn token
+gets `403 connect_token_required`; no token gets `401`. The contract also asks
+for a best-effort upstream revocation when AIR declares a revocation endpoint;
+AIR declares none in this tree, so only the local record is removed.
+
+`anvil capabilities --json` prints `{"features": [...]}` for this build; it
+lists `vault.firestore` and `connect.disconnect`.
 
 `anvil connect <workspace> <connector> [--account <name>] [--gateway <url>]
 [--token-file <path>] [--open] [--api-key-stdin]` calls these for a person:
@@ -347,32 +370,125 @@ it prints the authorization URL (and opens it with `--open`), or submits a key
 read from stdin. OAuth connectors use the authorization-code grant with PKCE
 (S256); the redirect URI is `<gateway origin>/connect/callback`.
 
+### Vault backends
+
+The gateway keeps each person's upstream authorizations in a vault chosen by
+`ANVIL_VAULT_BACKEND`. The owner key is the same in both: the vault `sub` is
+`by:v1:sha256([iss, by_tenant, sub])`, and a record's id is the hex SHA-256 of
+the coordinates JSON `[sub, connector, account]`.
+
+- **`file`** (default, unchanged). One AES-256-GCM file per connection under
+  `ANVIL_VAULT_DIR`, sealed with the key in `ANVIL_VAULT_KEY_FILE`.
+- **`firestore`.** One Firestore document per connection, so several gateway
+  instances that share no disk share one vault. Each write seals the record with
+  AES-256-GCM under a fresh 32-byte data key; Cloud KMS wraps that key
+  (`ANVIL_VAULT_KMS_KEY`). The document holds `v` (2), `sub`, `connector`,
+  `account`, `kind`, `status`, `created_at`, `updated_at`, `wrapped_dek`,
+  `kms_key_version`, `iv`, `ciphertext` and `tag`; every token or key is inside
+  `ciphertext`. The coordinates JSON is the additional authenticated data for
+  both the record and the KMS wrap, so a document copied to other coordinates
+  does not decrypt. A document wrapped by a different KMS key is refused.
+  Reads call KMS `Decrypt` once per document and keep the unwrapped key in
+  process for at most 60 seconds. Writes run in a Firestore transaction. With
+  this backend the gateway starts without `ANVIL_VAULT_KEY_FILE`, and refuses to
+  start if `ANVIL_VAULT_KEY_FILE` or `ANVIL_VAULT_DIR` is set.
+
+  Refreshes and `POST /connect/disconnect` are serialized across instances by a
+  Firestore lease, so a rotating refresh token is spent once and a disconnect
+  cannot be undone by a refresh that already read the record. The lease is a
+  document in `<collection>_leases` (default `anvil_vault_leases`, id = the
+  record id) holding a random holder id and an expiry, no secret. It is taken
+  in a transaction before the read and released after the write; it lasts 60
+  seconds, so a crashed holder is taken over once it expires. A caller waits up
+  to 30 seconds for another instance's lease, then fails as `vault_unavailable`
+  (retryable). Tested with the in-memory Firestore fake and a scripted REST
+  client only; not run against real Firestore.
+
+A Firestore or KMS failure fails the call: a turn gets `upstream_unavailable`
+(retryable) with `details.code: "connector/vault_unavailable"`, and a connect
+route answers `503 vault_unavailable`. No stale secret is returned. A document
+that will not decrypt is `connector/vault_unreadable`, as for a file record.
+
+The Firestore and KMS clients call the REST APIs with `fetch` and an access
+token from the metadata server (Cloud Run, GCE). Other Application Default
+Credentials sources, such as a key file or `gcloud` user credentials, are not
+read. No Google client library is used.
+
+Qualification, 5 November 2026: hermetic. The tests use in-memory fakes of
+Firestore and KMS (`packages/runtime/src/vault-fakes.ts`) and a scripted
+`fetch` for the REST clients. They cover a round trip across two instances,
+ciphertext only in the fake Firestore, a wrong KMS key, tampered fields, a
+document moved to other coordinates, KMS and Firestore outages and the 60
+second key cache, and the connect routes over a real socket with the Firestore
+backend. Not done: a run against real Firestore or Cloud KMS, the Firestore
+emulator, key rotation, the `anvil vault migrate` command, and a transaction
+conflict between two real instances (the fake serializes writes).
+
 ### Harness environment
 
 | Variable | Meaning |
 | --- | --- |
 | `ANVIL_GATEWAY_URL` | The gateway's `/mcp` URL. When set, the generated CLI and the Python and TypeScript SDKs send every call there and read no upstream credential variable. |
 | `ANVIL_GATEWAY_TOKEN_FILE` | This turn's token. Read on every call, so a replaced file takes effect at once. |
+| `ANVIL_GATEWAY_AUTH` | `token_file` (the default) reads the token file as above. `proxy` sends no `Authorization` header and reads no token file: a proxy at `ANVIL_GATEWAY_URL` adds the token, so the process holds none. `proxy` is refused, before any request, unless `ANVIL_GATEWAY_URL` names a loopback host (`localhost`, `127.x.x.x`, `::1`). Any other value is refused. The generated CLI, the packaged `bin/<connector>` script and the Python and TypeScript SDKs all follow it. |
 | `ANVIL_GATEWAY_CONNECTOR` | Optional. Overrides the connector id a client was built with. |
 
 Local confirmation and idempotency checks still run before a call leaves the
 client. `--dry-run` / `dry_run=True` / `{ dryRun: true }` returns the gateway's
 plan. Go and Java clients do not have a gateway mode yet.
 
+### Cloud Run
+
+`anvil deploy gateway --out <dir> --image <ref> --project <id> --public-url <url> --branchyard-url <url>`
+writes `deploy/gateway/Dockerfile` and `deploy/gateway/service.yaml`. It writes
+files and calls nothing. The Dockerfile's command is
+`anvil serve mcp /srv/bundles --fleet --http "$PORT" --host 0.0.0.0` run with
+`exec`, so Node receives Cloud Run's `SIGTERM`. The service definition carries:
+
+- a startup probe on `/readyz` and a liveness probe on `/healthz`;
+- `ANVIL_INBOUND_AUTH_MODE=branchyard`, `ANVIL_INBOUND_ISSUER` (the Branchyard URL),
+  `ANVIL_INBOUND_AUDIENCE` (`<public url>/mcp`) and `ANVIL_INBOUND_JWKS_URI`
+  (`<Branchyard URL>/.well-known/jwks.json`, or `--jwks-uri`). The JWKS cache lasts
+  five minutes, so after a key rotation keep the old key published for that long;
+- `ANVIL_GATEWAY_PUBLIC_URL`, `ANVIL_LEDGER=firestore://<project>/<database>/<namespace>`
+  and `ANVIL_SHUTDOWN_GRACE_SECONDS=8`;
+- `ANVIL_VAULT_KEY_FILE`, read from a mounted Secret Manager secret.
+
+The image expects a prebuilt Anvil tree in `anvil/` and the reviewed bundles in
+`bundles/` of the build context; it resolves nothing from a registry. The
+per-bundle `deploy/` output of `anvil compile` is unchanged, and its server still
+refuses `branchyard` mode.
+
+`anvil capabilities --json` prints `{"features": [...]}` for this build:
+`token.proxy` and `manifest.claim`. A caller reads it to tell what the Anvil in
+use supports.
+
+What ran: the listener's drain (a running call finishes, a new connection is
+refused, a call past the grace period is cut, `SIGTERM` through `anvil serve mcp
+--fleet --http` exits 0), the `ANVIL_LEDGER` selection (the Firestore class is
+chosen from the URI; a bad URI stops the start), the generated files' contents,
+and `by_manifest` in the audit line, all hermetic on loopback sockets. Not
+done: a deployment on Cloud Run, a call against a real Firestore, building the
+image, and a run of two gateway instances sharing one ledger (the ledger's
+cross-instance rules are covered with a fake Firestore in
+`packages/runtime/src/firestore-ledger.test.ts`).
+
 ### Harness package
 
-`anvil package harness <bundle> --out <dir> [--workspace <dir>] [--connector <id>]` writes:
+`anvil package harness <bundle> --out <dir> [--workspace <dir>] [--connector <id>] [--skill-mode full|lean]` writes:
 
 ```text
 <dir>/
   SKILL.md        routing, safety, and refusals; under 80 lines
   reference/      operations.md, errors.md (gateway mode), idempotency.md, workflows.md, capabilities.md
-  schemas/        one input schema per operation
+  search.json     the operation search index (below)
+  schemas/        one input schema per operation, plus <connector>.<operation>.input.json
+                  for each one in search.json and anvil-search-v1.json, the schema of search.json
   examples/       one example input per operation
   python/         the Python SDK (standard library only; Python 3.9+)
   typescript/     the TypeScript SDK source (build with tsc, or a runtime that strips types)
   bin/<connector> the CLI: one dependency-free script, Node.js 18+
-  harness.json    connector, service, bundle hash, entry points, operations
+  harness.json    connector, service, bundle hash, icon, entry points, operations
 ```
 
 The connector id is the one the gateway serves the bundle under: its path in
@@ -382,6 +498,105 @@ fleet folds it, so `<workspace>/team/github` is `team_github`. Without
 `--connector` overrides both. Only operations the gateway serves are packaged:
 approved, and never a `webhook_receiver` (the same rule as the MCP server and
 the SDKs).
+
+#### Search index and lean skill
+
+`search.json` lists every operation the gateway serves, and only those, so a
+ranker need not read `reference/operations.md`. It is sorted by operation id
+and holds no time or path from the machine that wrote it, so one bundle gives
+the same bytes every time.
+
+```json
+{
+  "schema": "anvil.search/v1",
+  "connector": "github",
+  "bundle_hash": "sha256:…",
+  "icon": null,
+  "operations": [
+    {
+      "id": "github.issues.list", "title": "List issues",
+      "summary": "List issues in a repository, filtered by state.",
+      "effect": "read", "risk": null, "confirm": false, "idempotency": "safe",
+      "resource": "github.issue", "tags": [], "terms": ["issues", "list", "owner", "repo"],
+      "schema": "schemas/github.issues.list.input.json",
+      "cli": "bin/github issues list"
+    }
+  ]
+}
+```
+
+- `id` is the connector id and the operation's dotted name. `effect` is the
+  effect class (ADR-0030). `risk` is the operation's risk, or `null` for none.
+  `confirm` is whether the call needs `--confirm`. `idempotency` is `safe` when
+  repeating is harmless, `keyed` when the operation takes an idempotency key,
+  else `none`.
+- `summary` is the first sentence of the description, on one line, at most 160
+  characters. `resource` is the id of the capability that owns the operation.
+  `terms` are the lower-case tokens of the id, title, tags and parameter names.
+- `bundle_hash` is `sha256:` and the hex digest that `harness.json` keeps as
+  `bundleHash`.
+
+`--skill-mode lean` writes a `SKILL.md` of at most 4 KB: the safety rules, one
+line per capability with its operation count, and pointers to `search.json` and
+`reference/`. When a bundle has too many capabilities for 4 KB, the last line
+says how many were left out. The default, `full`, is unchanged.
+
+#### Connector icon
+
+`service.icon` in the manifest is a Simple Icons slug (`github`): lower-case
+letters and digits, words joined by single hyphens, at most 64 characters. A
+slug that breaks this is refused at compile time, and the error names
+`service.icon`. Anvil ships no image and fetches none. The slug is copied to
+`harness.json`, `search.json` (`"icon": null` when the bundle has none) and to
+the `- **Icon:**` line of each `INDEX.md` entry (`none` when absent).
+
+#### Host toolchain and OCI packages
+
+`anvil install --prefix <dir> [--from <dir>] [--prune]` installs the toolchain
+once per host:
+
+```text
+<prefix>/
+  current -> versions/<digest>   switched last, by renaming a new link over it
+  versions/<digest>/             manifest.json, bin/anvil, python/, typescript/, compose/, env.sh
+```
+
+`--from` names a directory with a `manifest.json` (`{"files": {path: sha256}}`)
+and the files it lists. Every file is hashed before anything is written, so a
+tampered file stops the install with `digest mismatch for <path>` and leaves
+the prefix as it was. The version directory is named by the SHA-256 of the file
+map (as `json.dumps(files, sort_keys=True)` writes it), so the same toolchain is
+the same directory: a second run changes nothing, and `--prune` removes the
+versions `current` does not name. Without `--from` the toolchain is the one
+this Anvil carries: `bin/anvil` is a launcher that runs this installation's CLI
+(`--version` prints `anvil <digest>`), `python/anvil_sdk` and `typescript/` hold
+the gateway settings the clients share, and `compose/` holds the composite
+runtime. `source env.sh` puts `bin` on `PATH` and the Python directories on
+`PYTHONPATH`. A registry reference for `--from` is not supported; pull the
+image and pass the directory.
+
+`anvil package oci <package-dir> --out <dir> [--push <ref>]` writes a harness
+package as an OCI image layout: `oci-layout`, `index.json` and
+`blobs/sha256/<digest>`, with one blob per file (its path in
+`org.opencontainers.image.title`), a config blob and an image manifest. The
+index and the manifest carry `dev.anvil.bundle-hash`, `dev.anvil.connector` and
+`dev.anvil.version`. One package gives one layout, byte for byte. `--push
+<host>[:port]/<repository>[:<tag>]` checks the manifest by tag, uploads the
+blobs the registry lacks, and puts the manifest; when the registry already
+holds the same digest it sends nothing more. A bearer token is read from the
+file named by `ANVIL_OCI_TOKEN_FILE`. Loopback hosts use `http`, all others
+`https`.
+
+`anvil capabilities --json` prints `{"features": [...]}`: the optional features
+of this build (`package.search`, `skill.lean`, `install.prefix`, `package.oci`,
+`bundle.icon`).
+
+Tested here with fakes only: the search index against the field rules Branchyard
+pins and, when a Branchyard checkout is present, against its `tools.py`; the
+install against directories on disk; the OCI layout against a check that
+re-hashes every blob and a registry that is an in-process loopback server. Not
+tested: a pull or push against a real registry such as Artifact Registry, and a
+registry that demands a token exchange rather than a bearer token.
 
 Branchyard can cache a package by `harness.json`'s `bundleHash`. `anvil
 connectors index --grants <file> --out INDEX.md [--workspace <dir>]
