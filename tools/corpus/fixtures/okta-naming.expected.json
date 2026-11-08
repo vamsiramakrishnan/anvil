@@ -1,0 +1,24 @@
+{
+  "operations": {
+    "getApplicationsCsvExport": {
+      "toolName": "okta_export_csv_application",
+      "effect": "read",
+      "risk": "none"
+    },
+    "listApplicationsBySearch": {
+      "toolName": "okta_search_application",
+      "effect": "read",
+      "risk": "none"
+    },
+    "previewPolicyBranchPromotion": {
+      "toolName": "okta_preview_policy_branch_promotion",
+      "effect": "read",
+      "risk": "none"
+    },
+    "restoreFromHistory": {
+      "toolName": "okta_restore_policy_branch",
+      "effect": "mutation",
+      "risk": "medium"
+    }
+  }
+}

@@ -180,3 +180,7 @@ unfinished files were checked in bounded batches. No tests or quality checks
 are disabled. Results account for all 478 package test files; the two module-load
 failures above are the remaining environment limits. The separate seven-file
 corpus suite passes all 51 tests.
+
+CI follow-up: the independent Okta failure above is repaired by retiring the
+four overrides withdrawn in Okta 2026.44.0, while preserving their historical
+fixtures and tests. See [the Okta source-withdrawal evidence](OKTA_NAMING_REGRESSION.md#november-source-withdrawal-and-ci-follow-up).
