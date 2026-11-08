@@ -11,27 +11,27 @@ const NOW = 1800000000;
 function profile() {
   return {
     version: 1,
-    id: "ultimatix",
+    id: "enterprise",
     authentication: {
       provider: "oauth2_introspection",
-      issuer: "https://siteminder.example.com/oidc/ultimatix",
-      audience: "https://ultimatix-mcp.run.app",
-      requiredScopes: ["ultimatix.tools"],
+      issuer: "https://siteminder.example.com/oidc/enterprise",
+      audience: "https://enterprise-mcp.run.app",
+      requiredScopes: ["enterprise.tools"],
       introspection: {
         endpoint: "https://siteminder.example.com/oidc/introspect",
-        clientIdEnv: "ULTIMATIX_CLIENT_ID",
-        clientSecretEnv: "ULTIMATIX_CLIENT_SECRET",
+        clientIdEnv: "ENTERPRISE_CLIENT_ID",
+        clientSecretEnv: "ENTERPRISE_CLIENT_SECRET",
       },
     },
-    mapping: { tenant: { source: "claim", claim: "org", allowed: ["tcs", "other"] } },
+    mapping: { tenant: { source: "claim", claim: "org", allowed: ["example-org", "other"] } },
     authorization: { rules: [] },
   };
 }
 function env(raw: unknown = profile()) {
   return {
     ANVIL_IDENTITY_PROFILE_JSON: JSON.stringify(raw),
-    ULTIMATIX_CLIENT_ID: "gemini-connector",
-    ULTIMATIX_CLIENT_SECRET: "deployment-secret",
+    ENTERPRISE_CLIENT_ID: "gemini-connector",
+    ENTERPRISE_CLIENT_SECRET: "deployment-secret",
   };
 }
 function active(overrides: Record<string, unknown> = {}) {
@@ -40,8 +40,8 @@ function active(overrides: Record<string, unknown> = {}) {
     iss: profile().authentication.issuer,
     aud: profile().authentication.audience,
     sub: "employee-1",
-    org: "tcs",
-    scope: "ultimatix.tools",
+    org: "example-org",
+    scope: "enterprise.tools",
     token_type: "access_token",
     exp: String(NOW + 60),
     ...overrides,
@@ -73,7 +73,7 @@ describe("independent connector OAuth introspection", () => {
     const serialized = JSON.stringify(cfg);
     expect(serialized).not.toContain("deployment-secret");
     expect(serialized).not.toContain("gemini-connector");
-    expect(serialized).toContain("ULTIMATIX_CLIENT_SECRET");
+    expect(serialized).toContain("ENTERPRISE_CLIENT_SECRET");
     expect(
       IdentityProfile.safeParse({
         ...p,
@@ -183,7 +183,7 @@ describe("independent connector OAuth introspection", () => {
       { exp: "Infinity" },
       { nbf: NOW + 10 },
       { scope: "other.tools" },
-      { scope: ["ultimatix.tools"] },
+      { scope: ["enterprise.tools"] },
     ])
       expect((await verify(active(overrides))).ok, JSON.stringify(overrides)).toBe(false);
     expect(

@@ -18,10 +18,10 @@ import {
 } from "./inbound-auth.js";
 
 // These are independent authorities even when they name the same employee.
-// The cryptographic issuer is local; no TCS or Microsoft system is contacted.
+// The cryptographic issuer is local; no customer or Microsoft system is contacted.
 const SITEMINDER = "https://siteminder.example.com/connector-issuer";
 const ENTRA = "https://login.microsoftonline.com/example-tenant/v2.0";
-const MCP = "https://ultimatix-mcp.example.com";
+const MCP = "https://enterprise-mcp.example.com";
 const key = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
 const jwk = { ...key.publicKey.export({ format: "jwk" }), kid: "qualification", alg: "ES256" };
 const fetchJwks = async () => ({ keys: [jwk] });
@@ -30,7 +30,7 @@ const claims = (sub = "employee-a") => ({
   aud: MCP,
   sub,
   exp: Math.floor(Date.now() / 1000) + 300,
-  scope: "ultimatix.mcp",
+  scope: "enterprise.mcp",
   tenant_id: "enterprise",
   groups: ["employee"],
 });
@@ -45,19 +45,19 @@ function jwt(value: object): string {
 function profile(opaque = false): IdentityProfile {
   return IdentityProfile.parse({
     version: 1,
-    id: "ultimatix-connector",
+    id: "enterprise-connector",
     authentication: {
       provider: opaque ? "oauth2_introspection" : "oidc",
       issuer: SITEMINDER,
       audience: MCP,
       resource: MCP,
-      requiredScopes: ["ultimatix.mcp"],
+      requiredScopes: ["enterprise.mcp"],
       ...(opaque
         ? {
             introspection: {
               endpoint: "https://siteminder.example.com/reviewed-introspection-endpoint",
-              clientIdEnv: "ULTIMATIX_CONNECTOR_CLIENT_ID",
-              clientSecretEnv: "ULTIMATIX_CONNECTOR_CLIENT_SECRET",
+              clientIdEnv: "ENTERPRISE_CONNECTOR_CLIENT_ID",
+              clientSecretEnv: "ENTERPRISE_CONNECTOR_CLIENT_SECRET",
             },
           }
         : {
@@ -74,7 +74,7 @@ function profile(opaque = false): IdentityProfile {
   });
 }
 const operation = Operation.parse({
-  id: "ultimatix.leave.get",
+  id: "enterprise.leave.get",
   canonicalName: "get_leave_balance",
   displayName: "Get leave balance",
   sourceRef: { kind: "openapi", path: "/leave", method: "get" },
@@ -95,8 +95,8 @@ function harness(opaque = false) {
   const p = profile(opaque);
   const config = loadInboundAuthConfig({
     ANVIL_IDENTITY_PROFILE_JSON: JSON.stringify(p),
-    ULTIMATIX_CONNECTOR_CLIENT_ID: "connector-client",
-    ULTIMATIX_CONNECTOR_CLIENT_SECRET: "test-client-secret",
+    ENTERPRISE_CONNECTOR_CLIENT_ID: "connector-client",
+    ENTERPRISE_CONNECTOR_CLIENT_SECRET: "test-client-secret",
   });
   const principals: EnterprisePrincipal[] = [];
   const identity = createIdentityRuntime(p, {
@@ -135,9 +135,9 @@ function harness(opaque = false) {
         operation,
         { input: { employee_id: employeeId } },
         {
-          serviceId: "ultimatix",
-          baseUrl: "https://ultimatix-api.example.com",
-          allowedHosts: ["ultimatix-api.example.com"],
+          serviceId: "enterprise",
+          baseUrl: "https://enterprise-api.example.com",
+          allowedHosts: ["enterprise-api.example.com"],
           env: "dev",
           transport,
           credentials: { resolve },

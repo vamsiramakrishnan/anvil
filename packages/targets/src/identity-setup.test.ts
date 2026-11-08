@@ -53,7 +53,7 @@ paths:
     surface: "custom-mcp",
     serverAuth: "oauth",
     endpoint,
-    project: "tcs-demo",
+    project: "example-org-demo",
     projectNumber: "123456789",
     appLocation: "global",
     engine: "test-records",

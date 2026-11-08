@@ -25,12 +25,12 @@ test("identity configuration validates, applies exactly the CLI kit, and refuses
     if (!operation) throw new Error("The compiled fixture needs a read operation");
     const profile = {
       version: 1,
-      id: "ultimatix-siteminder",
+      id: "enterprise-siteminder",
       authentication: {
         provider: "oauth2_introspection",
         issuer: "https://siteminder.example.com",
-        audience: "https://ultimatix-mcp.example.com",
-        requiredScopes: ["ultimatix.mcp"],
+        audience: "https://enterprise-mcp.example.com",
+        requiredScopes: ["enterprise.mcp"],
         introspection: {
           endpoint: "https://siteminder.example.com/introspect",
           clientIdEnv: "SITEMINDER_CLIENT_ID",
@@ -38,7 +38,10 @@ test("identity configuration validates, applies exactly the CLI kit, and refuses
           audienceSource: "dedicated_client",
         },
       },
-      mapping: { tenant: { source: "fixed", value: "tcs" }, upstreamScopes: operation.auth.scopes },
+      mapping: {
+        tenant: { source: "fixed", value: "example-org" },
+        upstreamScopes: operation.auth.scopes,
+      },
       authorization: {
         rules: [
           {
@@ -62,7 +65,7 @@ test("identity configuration validates, applies exactly the CLI kit, and refuses
     await expect(apply).toBeDisabled();
     await page.getByLabel("Import profile JSON").setInputFiles(profilePath);
     await expect(page.getByRole("textbox", { name: "Identity profile JSON" })).toHaveValue(
-      /ultimatix-siteminder/,
+      /enterprise-siteminder/,
     );
     await page.getByRole("button", { name: "Validate profile", exact: true }).click();
     await expect(page.getByText("valid preview", { exact: true })).toBeVisible();
