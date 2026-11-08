@@ -6,3 +6,8 @@ service:
 operations:
   UpdateTemporaryGrantRequest:
     name: { resource: temporary_grant_request, verb: decide }
+  # November 6 RUM Recovery addition: POST estimates a session count; `recover`
+  # is a path namespace, not the resource. Keep the existing canonical/MCP name
+  # and stable ID. Naming alone must not change effects or the AND-auth block.
+  GetRUMRecoverySessionCount:
+    name: { resource: rum_recovery_session_count, verb: get }

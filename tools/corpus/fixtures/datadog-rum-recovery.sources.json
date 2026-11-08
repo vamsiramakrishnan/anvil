@@ -1,0 +1,497 @@
+{
+  "repository": "DataDog/datadog-api-client-go",
+  "path": ".generator/schemas/v2/openapi.yaml",
+  "lastPassing": {
+    "run": 41818610849,
+    "revision": "9bd636d3a72ecbaac7dcdc7c8fc68e523a198b0c",
+    "sha256": "8cba49be1f1dbf93b88340c6bd4e92e93d8dd09d69cfb36ab3894492509f393f",
+    "operations": 1712
+  },
+  "preIntroduction": {
+    "revision": "5fd312c98640d29033b76cc5ad5ee6ab700b174f",
+    "sha256": "702cb6bda56c128f8a99bce24f337fb319ec702b2ce0d62a6337677ac0f3b2ff",
+    "operations": 1774
+  },
+  "failing": {
+    "run": 42471774489,
+    "revision": "b3efbc77fc7ff765a88e87b5906c47dcf4f3bdba",
+    "sha256": "3f70db62432916ca59e0f17c27997eef477cd7e2c2d185ed22c9abc1ac6f9f62",
+    "operations": 1784
+  },
+  "introduced": [
+    {
+      "operationId": "ListRUMArchiveConfigs",
+      "method": "get",
+      "path": "/api/v2/rum/config/archive"
+    },
+    {
+      "operationId": "DeleteRUMArchiveConfig",
+      "method": "delete",
+      "path": "/api/v2/rum/config/archive/{app_id}"
+    },
+    {
+      "operationId": "GetRUMArchiveConfig",
+      "method": "get",
+      "path": "/api/v2/rum/config/archive/{app_id}"
+    },
+    {
+      "operationId": "UpdateRUMArchiveConfig",
+      "method": "put",
+      "path": "/api/v2/rum/config/archive/{app_id}"
+    },
+    {
+      "operationId": "GetRUMRecoverySessionCount",
+      "method": "post",
+      "path": "/api/v2/rum/recover/count"
+    },
+    {
+      "operationId": "ListRUMRecoveryBatchRequests",
+      "method": "get",
+      "path": "/api/v2/rum/recover/requests"
+    },
+    {
+      "operationId": "CreateRUMRecoveryRequest",
+      "method": "post",
+      "path": "/api/v2/rum/recover/requests"
+    },
+    {
+      "operationId": "GetRUMRecoveryRequest",
+      "method": "get",
+      "path": "/api/v2/rum/recover/requests/{request_id}"
+    },
+    {
+      "operationId": "UpdateRUMRecoveryBatchRequest",
+      "method": "patch",
+      "path": "/api/v2/rum/recover/requests/{request_id}"
+    },
+    {
+      "operationId": "SearchRUMArchiveSessions",
+      "method": "post",
+      "path": "/api/v2/rum/recover/sessions"
+    }
+  ],
+  "added": [
+    {
+      "operationId": "ListAiGatewayBudgets",
+      "method": "get",
+      "path": "/api/v2/budgets"
+    },
+    {
+      "operationId": "CreateAiGatewayBudget",
+      "method": "post",
+      "path": "/api/v2/budgets"
+    },
+    {
+      "operationId": "DeleteAiGatewayBudget",
+      "method": "delete",
+      "path": "/api/v2/budgets/{id}"
+    },
+    {
+      "operationId": "GetAiGatewayBudget",
+      "method": "get",
+      "path": "/api/v2/budgets/{id}"
+    },
+    {
+      "operationId": "UpdateAiGatewayBudget",
+      "method": "patch",
+      "path": "/api/v2/budgets/{id}"
+    },
+    {
+      "operationId": "GetAiGatewayBudgetCurrentPeriod",
+      "method": "get",
+      "path": "/api/v2/budgets/{id}/current-period"
+    },
+    {
+      "operationId": "ListAiGatewayBudgetInstances",
+      "method": "get",
+      "path": "/api/v2/budgets/{id}/instances"
+    },
+    {
+      "operationId": "OverrideAiGatewayBudgetInstanceCapacity",
+      "method": "post",
+      "path": "/api/v2/budgets/{id}/instances/capacity"
+    },
+    {
+      "operationId": "ListAiGatewayBudgetInstanceDimensions",
+      "method": "get",
+      "path": "/api/v2/budgets/{id}/instances/dimensions"
+    },
+    {
+      "operationId": "ResetAiGatewayBudgetInstanceSpend",
+      "method": "post",
+      "path": "/api/v2/budgets/{id}/instances/reset"
+    },
+    {
+      "operationId": "GetAiGatewayBudgetInstancesSummary",
+      "method": "get",
+      "path": "/api/v2/budgets/{id}/instances/summary"
+    },
+    {
+      "operationId": "GetAiGatewayDataCaptureConfiguration",
+      "method": "get",
+      "path": "/api/v2/data-capture/configuration"
+    },
+    {
+      "operationId": "CreateAiGatewayDataCaptureOverride",
+      "method": "post",
+      "path": "/api/v2/data-capture/overrides"
+    },
+    {
+      "operationId": "DeleteAiGatewayDataCaptureOverride",
+      "method": "delete",
+      "path": "/api/v2/data-capture/overrides/{id}"
+    },
+    {
+      "operationId": "UpdateAiGatewayDataCaptureOverride",
+      "method": "put",
+      "path": "/api/v2/data-capture/overrides/{id}"
+    },
+    {
+      "operationId": "GetAiGatewayGovernance",
+      "method": "get",
+      "path": "/api/v2/governance"
+    },
+    {
+      "operationId": "UpdateAiGatewayGovernance",
+      "method": "put",
+      "path": "/api/v2/governance"
+    },
+    {
+      "operationId": "ListTemporalCloudOpenMetricsIntegrationAccounts",
+      "method": "get",
+      "path": "/api/v2/integration-interfaces/temporal-cloud-openmetrics/accounts"
+    },
+    {
+      "operationId": "CreateTemporalCloudOpenMetricsIntegrationAccount",
+      "method": "post",
+      "path": "/api/v2/integration-interfaces/temporal-cloud-openmetrics/accounts"
+    },
+    {
+      "operationId": "DeleteTemporalCloudOpenMetricsIntegrationAccount",
+      "method": "delete",
+      "path": "/api/v2/integration-interfaces/temporal-cloud-openmetrics/accounts/{account_id}"
+    },
+    {
+      "operationId": "GetTemporalCloudOpenMetricsIntegrationAccount",
+      "method": "get",
+      "path": "/api/v2/integration-interfaces/temporal-cloud-openmetrics/accounts/{account_id}"
+    },
+    {
+      "operationId": "UpdateTemporalCloudOpenMetricsIntegrationAccount",
+      "method": "patch",
+      "path": "/api/v2/integration-interfaces/temporal-cloud-openmetrics/accounts/{account_id}"
+    },
+    {
+      "operationId": "ListAiGatewayModelGroups",
+      "method": "get",
+      "path": "/api/v2/model-groups"
+    },
+    {
+      "operationId": "CreateAiGatewayModelGroup",
+      "method": "post",
+      "path": "/api/v2/model-groups"
+    },
+    {
+      "operationId": "DeleteAiGatewayModelGroup",
+      "method": "delete",
+      "path": "/api/v2/model-groups/{id}"
+    },
+    {
+      "operationId": "GetAiGatewayModelGroup",
+      "method": "get",
+      "path": "/api/v2/model-groups/{id}"
+    },
+    {
+      "operationId": "UpdateAiGatewayModelGroup",
+      "method": "patch",
+      "path": "/api/v2/model-groups/{id}"
+    },
+    {
+      "operationId": "ListAiGatewayModelsByCanonical",
+      "method": "get",
+      "path": "/api/v2/models"
+    },
+    {
+      "operationId": "ListAiGatewayPolicies",
+      "method": "get",
+      "path": "/api/v2/policies"
+    },
+    {
+      "operationId": "UpsertAiGatewayPolicy",
+      "method": "post",
+      "path": "/api/v2/policies"
+    },
+    {
+      "operationId": "DeleteAiGatewayPolicy",
+      "method": "delete",
+      "path": "/api/v2/policies/{inbound}"
+    },
+    {
+      "operationId": "GetAiGatewayPolicy",
+      "method": "get",
+      "path": "/api/v2/policies/{inbound}"
+    },
+    {
+      "operationId": "ListAiGatewayProviderModels",
+      "method": "get",
+      "path": "/api/v2/provider-models"
+    },
+    {
+      "operationId": "ListAiGatewayProviders",
+      "method": "get",
+      "path": "/api/v2/providers"
+    },
+    {
+      "operationId": "CreateAiGatewayProvider",
+      "method": "post",
+      "path": "/api/v2/providers"
+    },
+    {
+      "operationId": "DeleteAiGatewayProvider",
+      "method": "delete",
+      "path": "/api/v2/providers/{id}"
+    },
+    {
+      "operationId": "GetAiGatewayProvider",
+      "method": "get",
+      "path": "/api/v2/providers/{id}"
+    },
+    {
+      "operationId": "UpdateAiGatewayProvider",
+      "method": "patch",
+      "path": "/api/v2/providers/{id}"
+    },
+    {
+      "operationId": "ListAiGatewayModels",
+      "method": "get",
+      "path": "/api/v2/providers/{provider_id}/models"
+    },
+    {
+      "operationId": "CreateAiGatewayModel",
+      "method": "post",
+      "path": "/api/v2/providers/{provider_id}/models"
+    },
+    {
+      "operationId": "BulkCreateAiGatewayModels",
+      "method": "post",
+      "path": "/api/v2/providers/{provider_id}/models/bulk"
+    },
+    {
+      "operationId": "DeleteAiGatewayModel",
+      "method": "delete",
+      "path": "/api/v2/providers/{provider_id}/models/{canonical}"
+    },
+    {
+      "operationId": "UpdateAiGatewayModel",
+      "method": "patch",
+      "path": "/api/v2/providers/{provider_id}/models/{canonical}"
+    },
+    {
+      "operationId": "DeleteAiGatewayModelPricing",
+      "method": "delete",
+      "path": "/api/v2/providers/{provider_id}/models/{canonical}/pricing"
+    },
+    {
+      "operationId": "GetAiGatewayModelPricing",
+      "method": "get",
+      "path": "/api/v2/providers/{provider_id}/models/{canonical}/pricing"
+    },
+    {
+      "operationId": "UpdateAiGatewayModelPricing",
+      "method": "put",
+      "path": "/api/v2/providers/{provider_id}/models/{canonical}/pricing"
+    },
+    {
+      "operationId": "ListAiGatewayRateLimits",
+      "method": "get",
+      "path": "/api/v2/rate-limits"
+    },
+    {
+      "operationId": "CreateAiGatewayRateLimit",
+      "method": "post",
+      "path": "/api/v2/rate-limits"
+    },
+    {
+      "operationId": "GetAiGatewayRateLimitUsage",
+      "method": "get",
+      "path": "/api/v2/rate-limits/usage"
+    },
+    {
+      "operationId": "DeleteAiGatewayRateLimit",
+      "method": "delete",
+      "path": "/api/v2/rate-limits/{id}"
+    },
+    {
+      "operationId": "GetAiGatewayRateLimit",
+      "method": "get",
+      "path": "/api/v2/rate-limits/{id}"
+    },
+    {
+      "operationId": "UpdateAiGatewayRateLimit",
+      "method": "patch",
+      "path": "/api/v2/rate-limits/{id}"
+    },
+    {
+      "operationId": "DeleteAiGatewayRoutingRule",
+      "method": "delete",
+      "path": "/api/v2/routing-rules"
+    },
+    {
+      "operationId": "ListAiGatewayRoutingRules",
+      "method": "get",
+      "path": "/api/v2/routing-rules"
+    },
+    {
+      "operationId": "CreateAiGatewayRoutingRule",
+      "method": "post",
+      "path": "/api/v2/routing-rules"
+    },
+    {
+      "operationId": "UpdateAiGatewayRoutingRule",
+      "method": "put",
+      "path": "/api/v2/routing-rules"
+    },
+    {
+      "operationId": "GetAiGatewayRoutingRule",
+      "method": "get",
+      "path": "/api/v2/routing-rules/get"
+    },
+    {
+      "operationId": "ListRUMArchiveConfigs",
+      "method": "get",
+      "path": "/api/v2/rum/config/archive"
+    },
+    {
+      "operationId": "DeleteRUMArchiveConfig",
+      "method": "delete",
+      "path": "/api/v2/rum/config/archive/{app_id}"
+    },
+    {
+      "operationId": "GetRUMArchiveConfig",
+      "method": "get",
+      "path": "/api/v2/rum/config/archive/{app_id}"
+    },
+    {
+      "operationId": "UpdateRUMArchiveConfig",
+      "method": "put",
+      "path": "/api/v2/rum/config/archive/{app_id}"
+    },
+    {
+      "operationId": "GetRUMRecoverySessionCount",
+      "method": "post",
+      "path": "/api/v2/rum/recover/count"
+    },
+    {
+      "operationId": "ListRUMRecoveryBatchRequests",
+      "method": "get",
+      "path": "/api/v2/rum/recover/requests"
+    },
+    {
+      "operationId": "CreateRUMRecoveryRequest",
+      "method": "post",
+      "path": "/api/v2/rum/recover/requests"
+    },
+    {
+      "operationId": "GetRUMRecoveryRequest",
+      "method": "get",
+      "path": "/api/v2/rum/recover/requests/{request_id}"
+    },
+    {
+      "operationId": "UpdateRUMRecoveryBatchRequest",
+      "method": "patch",
+      "path": "/api/v2/rum/recover/requests/{request_id}"
+    },
+    {
+      "operationId": "SearchRUMArchiveSessions",
+      "method": "post",
+      "path": "/api/v2/rum/recover/sessions"
+    },
+    {
+      "operationId": "ListSecurityAgentInvestigations",
+      "method": "get",
+      "path": "/api/v2/security_monitoring/security_agent/investigations"
+    },
+    {
+      "operationId": "CountSecurityAgentInvestigations",
+      "method": "get",
+      "path": "/api/v2/security_monitoring/security_agent/investigations/count"
+    },
+    {
+      "operationId": "GetSecurityAgentInvestigation",
+      "method": "get",
+      "path": "/api/v2/security_monitoring/security_agent/investigations/{investigation_id}"
+    },
+    {
+      "operationId": "ListOIDCCloudAuthPersonaMappings",
+      "method": "get",
+      "path": "/api/v2/wif/oidc/persona_mapping"
+    },
+    {
+      "operationId": "CreateOIDCCloudAuthPersonaMapping",
+      "method": "post",
+      "path": "/api/v2/wif/oidc/persona_mapping"
+    },
+    {
+      "operationId": "DeleteOIDCCloudAuthPersonaMapping",
+      "method": "delete",
+      "path": "/api/v2/wif/oidc/persona_mapping/{persona_mapping_id}"
+    },
+    {
+      "operationId": "GetOIDCCloudAuthPersonaMapping",
+      "method": "get",
+      "path": "/api/v2/wif/oidc/persona_mapping/{persona_mapping_id}"
+    },
+    {
+      "operationId": "ListOIDCCloudAuthProviders",
+      "method": "get",
+      "path": "/api/v2/wif/oidc/provider"
+    },
+    {
+      "operationId": "CreateOIDCCloudAuthProvider",
+      "method": "post",
+      "path": "/api/v2/wif/oidc/provider"
+    },
+    {
+      "operationId": "DeleteOIDCCloudAuthProvider",
+      "method": "delete",
+      "path": "/api/v2/wif/oidc/provider/{provider_id}"
+    },
+    {
+      "operationId": "GetOIDCCloudAuthProvider",
+      "method": "get",
+      "path": "/api/v2/wif/oidc/provider/{provider_id}"
+    }
+  ],
+  "removed": [
+    {
+      "operationId": "GetIncidentTemplates",
+      "method": "get",
+      "path": "/api/v2/integration/salesforce-incidents/incident-templates"
+    },
+    {
+      "operationId": "CreateIncidentTemplate",
+      "method": "post",
+      "path": "/api/v2/integration/salesforce-incidents/incident-templates"
+    },
+    {
+      "operationId": "DeleteIncidentTemplate",
+      "method": "delete",
+      "path": "/api/v2/integration/salesforce-incidents/incident-templates/{incident_template_id}"
+    },
+    {
+      "operationId": "UpdateIncidentTemplate",
+      "method": "patch",
+      "path": "/api/v2/integration/salesforce-incidents/incident-templates/{incident_template_id}"
+    },
+    {
+      "operationId": "GetSalesforceOrganizations",
+      "method": "get",
+      "path": "/api/v2/integration/salesforce-incidents/organizations"
+    },
+    {
+      "operationId": "DeleteSalesforceOrganization",
+      "method": "delete",
+      "path": "/api/v2/integration/salesforce-incidents/organizations/{salesforce_org_id}"
+    }
+  ]
+}
