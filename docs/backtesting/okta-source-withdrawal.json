@@ -1,0 +1,404 @@
+{
+  "failingRun": 42530995148,
+  "failingJob": 128884923576,
+  "previous": {
+    "revision": "5cf2dc4d2e288c1b9c33a8f6f53c94d6ea70e679",
+    "version": "2026.42.1",
+    "operations": 782,
+    "sha256": "074366b36fe33ecbaba0e35def4b0665104dd29b528939399fab7851e10fc4c2"
+  },
+  "current": {
+    "revision": "68eed9d2039a59b5c7cf045ba1993a6cac7e0ec5",
+    "version": "2026.44.0",
+    "operations": 726,
+    "sha256": "0e1ccf7a1c12f4e77e2e5cebf2d625f8869f7603746360a54e0360673644049f"
+  },
+  "delta": {
+    "added": [],
+    "removed": [
+      {
+        "path": "/api/v1/apps/export",
+        "method": "get",
+        "id": "getApplicationsCsvExport"
+      },
+      {
+        "path": "/api/v1/apps/search",
+        "method": "get",
+        "id": "listApplicationsBySearch"
+      },
+      {
+        "path": "/api/v1/apps/types",
+        "method": "get",
+        "id": "listAppTypeUsage"
+      },
+      {
+        "path": "/api/v1/apps/{appId}/cwo/connections",
+        "method": "get",
+        "id": "getAllCrossAppAccessConnections"
+      },
+      {
+        "path": "/api/v1/apps/{appId}/cwo/connections",
+        "method": "post",
+        "id": "createCrossAppAccessConnection"
+      },
+      {
+        "path": "/api/v1/apps/{appId}/cwo/connections/{connectionId}",
+        "method": "get",
+        "id": "getCrossAppAccessConnection"
+      },
+      {
+        "path": "/api/v1/apps/{appId}/cwo/connections/{connectionId}",
+        "method": "patch",
+        "id": "updateCrossAppAccessConnection"
+      },
+      {
+        "path": "/api/v1/apps/{appId}/cwo/connections/{connectionId}",
+        "method": "delete",
+        "id": "deleteCrossAppAccessConnection"
+      },
+      {
+        "path": "/api/v1/apps/{appId}/xaa/resource-server",
+        "method": "get",
+        "id": "getXAAResourceServer"
+      },
+      {
+        "path": "/api/v1/authenticator-groups",
+        "method": "get",
+        "id": "listAuthenticatorGroups"
+      },
+      {
+        "path": "/api/v1/authenticator-groups",
+        "method": "post",
+        "id": "createAuthenticatorGroup"
+      },
+      {
+        "path": "/api/v1/authenticator-groups/{groupId}",
+        "method": "get",
+        "id": "getAuthenticatorGroup"
+      },
+      {
+        "path": "/api/v1/authenticator-groups/{groupId}",
+        "method": "put",
+        "id": "replaceAuthenticatorGroup"
+      },
+      {
+        "path": "/api/v1/authenticator-groups/{groupId}",
+        "method": "delete",
+        "id": "deleteAuthenticatorGroup"
+      },
+      {
+        "path": "/api/v1/breached-credential-protection/configuration",
+        "method": "get",
+        "id": "getBreachedCredentialProtectionConfiguration"
+      },
+      {
+        "path": "/api/v1/breached-credential-protection/configuration",
+        "method": "put",
+        "id": "replaceBreachedCredentialProtectionConfiguration"
+      },
+      {
+        "path": "/api/v1/devices/{deviceId}/authenticator-enrollments",
+        "method": "get",
+        "id": "listDeviceEnrollmentAuthenticators"
+      },
+      {
+        "path": "/api/v1/devices/{deviceId}/capabilities",
+        "method": "get",
+        "id": "getDeviceCapabilities"
+      },
+      {
+        "path": "/api/v1/devices/{deviceId}/device-sessions",
+        "method": "get",
+        "id": "listDeviceSessions"
+      },
+      {
+        "path": "/api/v1/devices/{deviceId}/os-accounts/{osAccountId}/capabilities",
+        "method": "get",
+        "id": "getDeviceOSAccountCapabilities"
+      },
+      {
+        "path": "/api/v1/directories/{appInstanceId}/invoke-remote-script",
+        "method": "post",
+        "id": "invokeRemoteScript"
+      },
+      {
+        "path": "/api/v1/groups/{groupId}/users/{userId}/group-rules",
+        "method": "get",
+        "id": "listGroupRulesForUserInGroup"
+      },
+      {
+        "path": "/api/v1/identity-sources/{identitySourceId}/sessions/{sessionId}/bulk-devices-delete",
+        "method": "post",
+        "id": "uploadIdentitySourceDevicesForDelete"
+      },
+      {
+        "path": "/api/v1/identity-sources/{identitySourceId}/sessions/{sessionId}/bulk-devices-upsert",
+        "method": "post",
+        "id": "uploadIdentitySourceDevicesForUpsert"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/branches",
+        "method": "get",
+        "id": "listPolicyBranches"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/branches",
+        "method": "post",
+        "id": "createPolicyBranch"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/branches/{branchId}",
+        "method": "get",
+        "id": "getPolicyBranch"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/branches/{branchId}",
+        "method": "put",
+        "id": "replacePolicyBranch"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/branches/{branchId}",
+        "method": "delete",
+        "id": "deletePolicyBranch"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/branches/{branchId}/lifecycle/promote",
+        "method": "post",
+        "id": "promotePolicyBranch"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/branches/{branchId}/lifecycle/promote/preview",
+        "method": "get",
+        "id": "previewPolicyBranchPromotion"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/branches/{branchId}/lifecycle/stage",
+        "method": "post",
+        "id": "stagePolicyBranch"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/branches/{branchId}/rules",
+        "method": "get",
+        "id": "listPolicyBranchRules"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/branches/{branchId}/rules",
+        "method": "post",
+        "id": "createPolicyBranchRule"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/branches/{branchId}/rules/{ruleId}",
+        "method": "get",
+        "id": "getPolicyBranchRule"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/branches/{branchId}/rules/{ruleId}",
+        "method": "put",
+        "id": "replacePolicyBranchRule"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/branches/{branchId}/rules/{ruleId}",
+        "method": "delete",
+        "id": "deletePolicyBranchRule"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/branches/{branchId}/rules/{ruleId}/lifecycle/activate",
+        "method": "post",
+        "id": "activatePolicyBranchRule"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/branches/{branchId}/rules/{ruleId}/lifecycle/deactivate",
+        "method": "post",
+        "id": "deactivatePolicyBranchRule"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/history",
+        "method": "get",
+        "id": "listPolicyHistory"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/history/{branchId}",
+        "method": "get",
+        "id": "getPolicyHistoryEntry"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/history/{branchId}/lifecycle/rollback",
+        "method": "post",
+        "id": "restoreFromHistory"
+      },
+      {
+        "path": "/api/v1/policies/{policyId}/history/{branchId}/rules",
+        "method": "get",
+        "id": "listPolicyHistoryBranchRules"
+      },
+      {
+        "path": "/api/v1/proximity-providers",
+        "method": "get",
+        "id": "listProximityProviderTypes"
+      },
+      {
+        "path": "/api/v1/proximity-providers/{proximityProviderType}",
+        "method": "get",
+        "id": "getByProximityProviderType"
+      },
+      {
+        "path": "/api/v1/users/{id}/clear-chrome-data",
+        "method": "post",
+        "id": "clearChromeData"
+      },
+      {
+        "path": "/device-identity/api/v1/certificate-authority-mappings",
+        "method": "put",
+        "id": "replaceCertificateAuthorityMappings"
+      },
+      {
+        "path": "/device-identity/api/v1/certificate-authority-mappings/certificate-authorities",
+        "method": "get",
+        "id": "listCertificateAuthoritiesForScope"
+      },
+      {
+        "path": "/pki/api/v2/certificate-authorities",
+        "method": "get",
+        "id": "listCertificateAuthorities"
+      },
+      {
+        "path": "/pki/api/v2/certificate-authorities/{authorityInstanceId}",
+        "method": "get",
+        "id": "getCertificateAuthority"
+      },
+      {
+        "path": "/pki/api/v2/certificate-authorities/{authorityInstanceId}/certificates",
+        "method": "get",
+        "id": "listCertificateAuthorityCertificates"
+      },
+      {
+        "path": "/pki/api/v2/certificate-authorities/{authorityInstanceId}/certificates/{ski}",
+        "method": "get",
+        "id": "getCertificateAuthorityCertificate"
+      },
+      {
+        "path": "/pki/api/v2/certificate-authorities/{authorityInstanceId}/certificates/{ski}/download",
+        "method": "get",
+        "id": "getCertificateAuthorityCertificateFile"
+      },
+      {
+        "path": "/pki/api/v2/certificate-authorities/{authorityInstanceId}/registration-authorities",
+        "method": "get",
+        "id": "listRegistrationAuthorities"
+      },
+      {
+        "path": "/pki/api/v2/certificate-authorities/{authorityInstanceId}/registration-authorities/{raId}",
+        "method": "get",
+        "id": "getRegistrationAuthority"
+      },
+      {
+        "path": "/pki/api/v2/certificate-authorities/{authorityInstanceId}/renew",
+        "method": "post",
+        "id": "renewCertificateAuthority"
+      }
+    ]
+  },
+  "comparison": {
+    "identicalOperations": 726,
+    "onlyChange": "Removal of four manifest_operation_unresolved error diagnostics",
+    "serviceUnchanged": true,
+    "capabilitiesUnchanged": true
+  },
+  "naming": {
+    "operations": 726,
+    "zeroOverlapResource": 32,
+    "stutters": {
+      "spec_authored": 0,
+      "service_prefix_join": 0,
+      "disambiguation_suffix": 0
+    },
+    "overStrippedResources": 5
+  },
+  "liveOracles": {
+    "mode": "quick",
+    "system": "okta",
+    "format": "openapi3",
+    "at": "2026-11-08T22:51:11.995Z",
+    "fetchMs": 8649,
+    "classification": "ok",
+    "compileMs": 4633,
+    "airBytes": 8821811,
+    "opCount": 726,
+    "naming": {
+      "operations": 726,
+      "zeroOverlapResource": 32,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 0
+      },
+      "overStrippedResources": 5
+    },
+    "warn": "op count fell 731 -> 726, matching the source's own 726 (vendor drift; refresh baseline when intentional)",
+    "oracles": [
+      {
+        "name": "compile-completes",
+        "ok": true,
+        "detail": "exit 0 in 4633ms"
+      },
+      {
+        "name": "determinism",
+        "ok": true,
+        "detail": "byte-identical (8821811B)"
+      },
+      {
+        "name": "round-trip",
+        "ok": true,
+        "detail": "contractHash stable (e2adbc09d1c8)"
+      },
+      {
+        "name": "lint",
+        "ok": true,
+        "detail": "exit 0 in 2641ms"
+      },
+      {
+        "name": "time-budget",
+        "ok": true,
+        "detail": "4633ms vs baseline 4845ms (limit 9690ms)"
+      },
+      {
+        "name": "size-budget",
+        "ok": true,
+        "detail": "8821811B vs baseline 8186846B (limit 12280269B)"
+      },
+      {
+        "name": "naming-differential",
+        "ok": true,
+        "detail": "4 expectations hold"
+      },
+      {
+        "name": "naming-conformance",
+        "ok": true,
+        "detail": "counters hold (zeroOverlapResource=32 stutters.spec_authored=0 stutters.service_prefix_join=0 stutters.disambiguation_suffix=0 overStrippedResources=5)",
+        "improvements": []
+      },
+      {
+        "name": "selftest",
+        "ok": true,
+        "detail": "skipped: no approved operations in the reproduce manifest"
+      },
+      {
+        "name": "op-count",
+        "ok": true,
+        "detail": "op count fell 731 -> 726, matching the source's own 726 (vendor drift; refresh baseline when intentional)"
+      }
+    ],
+    "status": "green"
+  },
+  "validation": {
+    "unchangedBaselineFiles": [
+      "tools/corpus/baseline.json",
+      "tools/corpus/estates-baseline.json",
+      "tools/corpus/estates-naming-baseline.json",
+      "tools/corpus/naming-baseline.json",
+      "tools/corpus/routing-baseline.json"
+    ],
+    "liveUserExpectationsUnchanged": true,
+    "historicalNamingExpectationsPreserved": true
+  }
+}

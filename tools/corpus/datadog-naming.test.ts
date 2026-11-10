@@ -4,11 +4,24 @@ import { compile, parseManifest, singularize } from "@anvil/compiler";
 import { describe, expect, it } from "vitest";
 import { measureNamingConformance, namingConformanceOracle } from "./naming-conformance.mjs";
 
-const spec = readFileSync(new URL("./fixtures/datadog-naming.openapi.json", import.meta.url), "utf8");
-const manifest = readFileSync(
-  new URL("../../docs/backtesting/reproduce/manifests/datadog.anvil.yaml", import.meta.url),
+const spec = readFileSync(
+  new URL("./fixtures/datadog-naming.openapi.json", import.meta.url),
   "utf8",
 );
+const shippedManifest = parseManifest(
+  readFileSync(
+    new URL("../../docs/backtesting/reproduce/manifests/datadog.anvil.yaml", import.meta.url),
+    "utf8",
+  ),
+);
+// This immutable October fixture predates the independent RUM Recovery endpoint.
+// Apply its reviewed mapping only; absent-operation diagnostics remain strict.
+const manifest = JSON.stringify({
+  ...shippedManifest,
+  operations: {
+    UpdateTemporaryGrantRequest: shippedManifest.operations.UpdateTemporaryGrantRequest,
+  },
+});
 const expected = JSON.parse(
   readFileSync(new URL("./expected/datadog.json", import.meta.url), "utf8"),
 ).operations.UpdateTemporaryGrantRequest;

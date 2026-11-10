@@ -1,0 +1,387 @@
+{
+  "repositoryBase": "c2d31108e2b02d8a543a7c1b01e8246f546bd6c9",
+  "operationsCompared": 1784,
+  "unchangedOperations": 1783,
+  "serviceUnchanged": true,
+  "changedOperations": [
+    {
+      "operationId": "GetRUMRecoverySessionCount",
+      "id": "datadog.recover.create",
+      "differences": [
+        {
+          "path": "effect.resource",
+          "before": "recover",
+          "after": "rum_recovery_session_count"
+        },
+        {
+          "path": "cli.command",
+          "before": "datadog recover create",
+          "after": "datadog rum_recovery_session_count get"
+        },
+        {
+          "path": "reviewNotes.1",
+          "before": "Source requires multiple security schemes together; a single-credential manifest override cannot remove a required factor.",
+          "after": "Auth contract blocked: custom_header auth must name its credential carrier."
+        },
+        {
+          "path": "reviewNotes.2",
+          "before": "Idempotency could not be proven from the source spec; supply a manifest policy to approve retries.",
+          "after": "Source requires multiple security schemes together; a single-credential manifest override cannot remove a required factor."
+        },
+        {
+          "path": "reviewNotes.3",
+          "before": "Marked confirmation-required; consider requiring an idempotency key for replay protection.",
+          "after": "Idempotency could not be proven from the source spec; supply a manifest policy to approve retries."
+        },
+        {
+          "path": "reviewNotes.4",
+          "after": "Marked confirmation-required; consider requiring an idempotency key for replay protection."
+        },
+        {
+          "path": "evidence.claims.2.note",
+          "before": "name derived from a declared operationId; coherent whole-spec dialect \"verb_first\"",
+          "after": "name re-homed by manifest"
+        },
+        {
+          "path": "evidence.claims.3",
+          "after": {
+            "subject": "datadog.recover.create",
+            "predicate": "enriched",
+            "value": true,
+            "source": "spec",
+            "sourceRef": "anvil-manifest",
+            "method": "manifest",
+            "confidence": 0.95,
+            "review": "accepted",
+            "note": "enriched by supplemental Anvil manifest"
+          }
+        }
+      ]
+    }
+  ],
+  "changedCapabilities": [
+    {
+      "id": "datadog.rum_recovery",
+      "resourcesBefore": ["recover", "request", "session"],
+      "resourcesAfter": ["request", "rum_recovery_session_count", "session"]
+    }
+  ],
+  "metrics": {
+    "november4": {
+      "operations": 1712,
+      "zeroOverlapResource": 57,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 1
+      },
+      "overStrippedResources": 29
+    },
+    "preIntroduction": {
+      "operations": 1774,
+      "zeroOverlapResource": 57,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 1
+      },
+      "overStrippedResources": 29
+    },
+    "november8Before": {
+      "operations": 1784,
+      "zeroOverlapResource": 58,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 1
+      },
+      "overStrippedResources": 30
+    },
+    "november8After": {
+      "operations": 1784,
+      "zeroOverlapResource": 57,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 1
+      },
+      "overStrippedResources": 29
+    }
+  },
+  "liveDatadog": {
+    "mode": "quick",
+    "system": "datadog",
+    "format": "openapi3",
+    "at": "2026-11-08T22:13:53.928Z",
+    "fetchMs": 11688,
+    "classification": "ok",
+    "compileMs": 10861,
+    "airBytes": 20985621,
+    "opCount": 1784,
+    "naming": {
+      "operations": 1784,
+      "zeroOverlapResource": 57,
+      "stutters": {
+        "spec_authored": 0,
+        "service_prefix_join": 0,
+        "disambiguation_suffix": 1
+      },
+      "overStrippedResources": 29
+    },
+    "warn": "op count grew 1687 -> 1784 (vendor drift; refresh baseline when intentional)",
+    "oracles": [
+      {
+        "name": "compile-completes",
+        "ok": true,
+        "detail": "exit 0 in 10861ms"
+      },
+      {
+        "name": "determinism",
+        "ok": true,
+        "detail": "byte-identical (20985621B)"
+      },
+      {
+        "name": "round-trip",
+        "ok": true,
+        "detail": "contractHash stable (4facc8746044)"
+      },
+      {
+        "name": "lint",
+        "ok": true,
+        "detail": "exit 0 in 6806ms"
+      },
+      {
+        "name": "time-budget",
+        "ok": true,
+        "detail": "10861ms vs baseline 10859ms (limit 21718ms)"
+      },
+      {
+        "name": "size-budget",
+        "ok": true,
+        "detail": "20985621B vs baseline 14658180B (limit 21987270B)"
+      },
+      {
+        "name": "naming-differential",
+        "ok": true,
+        "detail": "4 expectations hold"
+      },
+      {
+        "name": "naming-conformance",
+        "ok": true,
+        "detail": "counters hold (zeroOverlapResource=57 stutters.spec_authored=0 stutters.service_prefix_join=0 stutters.disambiguation_suffix=1 overStrippedResources=29)",
+        "improvements": []
+      },
+      {
+        "name": "selftest",
+        "ok": true,
+        "detail": "skipped: no approved operations in the reproduce manifest"
+      },
+      {
+        "name": "op-count",
+        "ok": true,
+        "detail": "op count grew 1687 -> 1784 (vendor drift; refresh baseline when intentional)"
+      }
+    ],
+    "status": "green"
+  },
+  "unchangedBaselines": {
+    "tools/corpus/baseline.json": "5c116996b253396dbdab3555b770c8a9ee7117170c81a7261079b8ba0ba5f5af",
+    "tools/corpus/estates-baseline.json": "0262cbcf4d49f09652f0305733d431d0f0ef11ed53e9132d7d80b3ab56517819",
+    "tools/corpus/estates-naming-baseline.json": "c1930769785dc5ebe094bdaadd544205ad26967510654c130cff4aaf2fb46915",
+    "tools/corpus/naming-baseline.json": "62ad7322f734942746d21d6ef5f6e34f3d81dd13a25b92180379e4fb6b5d5328",
+    "tools/corpus/routing-baseline.json": "b8bdf2c69c188654707cac9b029bad843bd833777dc2d2c7d8f2927b3a888570"
+  },
+  "fullQuick": {
+    "systems": 34,
+    "initialGreen": 32,
+    "initialFailures": [
+      {
+        "system": "confluence",
+        "oracle": "time-budget",
+        "detail": "3985ms vs baseline 1353ms (limit 2706ms)"
+      },
+      {
+        "system": "okta",
+        "stage": "compile",
+        "diagnostic": "manifest_operation_unresolved"
+      }
+    ],
+    "compiledSystemsWithPassingNamingConformance": 33,
+    "confluenceRecheck": {
+      "mode": "quick",
+      "system": "confluence",
+      "format": "openapi3",
+      "at": "2026-11-08T22:17:03.268Z",
+      "fetchMs": 6388,
+      "classification": "ok",
+      "compileMs": 1177,
+      "airBytes": 408785,
+      "opCount": 18,
+      "naming": {
+        "operations": 18,
+        "zeroOverlapResource": 0,
+        "stutters": {
+          "spec_authored": 0,
+          "service_prefix_join": 0,
+          "disambiguation_suffix": 0
+        },
+        "overStrippedResources": 4
+      },
+      "oracles": [
+        {
+          "name": "compile-completes",
+          "ok": true,
+          "detail": "exit 0 in 1177ms"
+        },
+        {
+          "name": "determinism",
+          "ok": true,
+          "detail": "byte-identical (408785B)"
+        },
+        {
+          "name": "round-trip",
+          "ok": true,
+          "detail": "contractHash stable (6d2ea20f8744)"
+        },
+        {
+          "name": "lint",
+          "ok": true,
+          "detail": "exit 0 in 844ms"
+        },
+        {
+          "name": "time-budget",
+          "ok": true,
+          "detail": "1177ms vs baseline 1353ms (limit 2706ms)"
+        },
+        {
+          "name": "size-budget",
+          "ok": true,
+          "detail": "408785B vs baseline 375259B (limit 562889B)"
+        },
+        {
+          "name": "naming-differential",
+          "ok": true,
+          "detail": "no fixture for this system"
+        },
+        {
+          "name": "naming-conformance",
+          "ok": true,
+          "detail": "counters hold (zeroOverlapResource=0 stutters.spec_authored=0 stutters.service_prefix_join=0 stutters.disambiguation_suffix=0 overStrippedResources=4)",
+          "improvements": []
+        },
+        {
+          "name": "selftest",
+          "ok": true,
+          "detail": "exit 0 in 1425ms"
+        },
+        {
+          "name": "op-count",
+          "ok": true,
+          "detail": "18 ops (matches baseline)"
+        }
+      ],
+      "status": "green"
+    }
+  },
+  "checks": {
+    "build": {
+      "passed": true
+    },
+    "typecheck": {
+      "passed": true
+    },
+    "lint": {
+      "passed": true,
+      "warnings": 28,
+      "infos": 3
+    },
+    "corpusTests": {
+      "passed": true,
+      "files": 7,
+      "tests": 51
+    },
+    "docsCheck": {
+      "passed": true,
+      "pages": 94
+    },
+    "docsBuild": {
+      "passed": true,
+      "pages": 96
+    },
+    "workspaceTests": {
+      "passed": false,
+      "command": "pnpm test --concurrency=2 --continue=always -- --maxWorkers=2",
+      "failures": [
+        {
+          "file": "packages/generators/src/mock-server.test.ts",
+          "line": 27,
+          "error": "uv_interface_addresses returned Unknown system error 1",
+          "sourceUnchanged": true
+        },
+        {
+          "file": "packages/harness/src/served-loopback-guard.test.ts",
+          "line": 164,
+          "error": "uv_interface_addresses returned Unknown system error 1",
+          "sourceUnchanged": true
+        }
+      ],
+      "continuationRun": "Stopped before final CLI/harness summaries; unfinished files checked in bounded batches.",
+      "coverage": {
+        "sourceTestFiles": 478,
+        "filesWithResults": 478,
+        "environmentBlockedSuites": 2,
+        "remainingBatches": [
+          {
+            "batch": "cli-0",
+            "files": 30,
+            "status": 0,
+            "passed": 179,
+            "skipped": 0,
+            "ms": 77807
+          },
+          {
+            "batch": "cli-1",
+            "files": 30,
+            "status": 0,
+            "passed": 245,
+            "skipped": 0,
+            "ms": 110978
+          },
+          {
+            "batch": "cli-2",
+            "files": 29,
+            "status": 0,
+            "passed": 213,
+            "skipped": 0,
+            "ms": 61628
+          },
+          {
+            "batch": "harness-0",
+            "files": 14,
+            "status": 1,
+            "passed": 56,
+            "skipped": 0,
+            "ms": 19718
+          },
+          {
+            "batch": "harness-1",
+            "files": 13,
+            "status": 0,
+            "passed": 53,
+            "skipped": 11,
+            "ms": 55743
+          }
+        ]
+      }
+    }
+  },
+  "introducedViolations": {
+    "zeroOverlapOperations": [
+      {
+        "operationId": "GetRUMRecoverySessionCount",
+        "resource": "recover"
+      }
+    ],
+    "overStrippedResources": ["recover"]
+  }
+}

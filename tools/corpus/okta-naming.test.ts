@@ -6,11 +6,11 @@ import { measureNamingConformance, namingConformanceOracle } from "./naming-conf
 
 const spec = readFileSync(new URL("./fixtures/okta-naming.openapi.yaml", import.meta.url), "utf8");
 const manifest = readFileSync(
-  new URL("../../docs/backtesting/reproduce/manifests/okta.anvil.yaml", import.meta.url),
+  new URL("./fixtures/okta-naming.manifest.yaml", import.meta.url),
   "utf8",
 );
 const expected = JSON.parse(
-  readFileSync(new URL("./expected/okta.json", import.meta.url), "utf8"),
+  readFileSync(new URL("./fixtures/okta-naming.expected.json", import.meta.url), "utf8"),
 ).operations;
 const deps = { singularize, snakeCase };
 const cases = [
@@ -21,7 +21,7 @@ const cases = [
 ] as const;
 
 describe("Okta October 27 naming drift", () => {
-  it("reproduces all four new zero-overlap cases and repairs them with the shipped manifest", async () => {
+  it("reproduces all four zero-overlap cases and repairs them with the pinned historical manifest", async () => {
     const raw = await compile({ spec, serviceId: "okta" });
     const repaired = await compile({ spec, manifest, serviceId: "okta" });
     expect(raw.operations).toHaveLength(6);
