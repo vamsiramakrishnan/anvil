@@ -2330,6 +2330,26 @@
       "tests": [
         "packages/generators/src/mock-server.test.ts"
       ]
+    },
+    {
+      "id": "vendor/constant-time-equal-checks-length",
+      "file": "vendor/buffer-equal-constant-time/index.js",
+      "control": "The buffer-equal-constant-time stand-in returns false for Buffers of different lengths. Drop the length check and timingSafeEqual throws instead, so a signature of the wrong length crashes the caller rather than failing verification.",
+      "find": "Buffer.isBuffer(b) && a.length === b.length && timingSafeEqual(a, b);",
+      "replace": "Buffer.isBuffer(b) && timingSafeEqual(a, b);",
+      "tests": [
+        "packages/runtime/src/vendor-stand-ins.test.ts"
+      ]
+    },
+    {
+      "id": "vendor/domexception-is-native",
+      "file": "vendor/node-domexception/index.js",
+      "control": "The node-domexception stand-in exports Node's own DOMException. Export anything else and fetch-blob throws errors that are not DOMExceptions, which callers matching on the type would miss.",
+      "find": "module.exports = globalThis.DOMException;",
+      "replace": "module.exports = Error;",
+      "tests": [
+        "packages/runtime/src/vendor-stand-ins.test.ts"
+      ]
     }
   ]
 }
