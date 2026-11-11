@@ -1,0 +1,8 @@
+{
+  "name": "node-domexception",
+  "version": "0.0.0-anvil",
+  "private": true,
+  "description": "Stand-in for the deprecated node-domexception: every supported Node has DOMException built in. fetch-blob (via node-fetch and gaxios) is its only user.",
+  "main": "./index.js",
+  "exports": { ".": "./index.js" }
+}

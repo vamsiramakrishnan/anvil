@@ -49,7 +49,9 @@
       "undici@>=8.0.0 <8.12.3": "^8.12.3",
       "jsdom": "-",
       "require-from-string": "-",
-      "zod-to-json-schema": "link:./vendor/zod-to-json-schema"
+      "zod-to-json-schema": "link:./vendor/zod-to-json-schema",
+      "buffer-equal-constant-time": "link:./vendor/buffer-equal-constant-time",
+      "node-domexception": "link:./vendor/node-domexception"
     }
   }
 }
