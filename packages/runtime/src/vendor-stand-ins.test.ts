@@ -34,6 +34,17 @@ describe("vendor stand-ins", () => {
     const signature = hs256.sign("payload", "k1");
     expect(hs256.verify("payload", signature, "k1")).toBe(true);
     expect(hs256.verify("payload", signature, "k2")).toBe(false);
+
+    const signatureBytes = Buffer.from(signature, "base64url");
+    const malformedSignatures = {
+      empty: "",
+      truncated: signatureBytes.subarray(0, -1).toString("base64url"),
+      oversized: Buffer.concat([signatureBytes, Buffer.from([0])]).toString("base64url"),
+    };
+    for (const [kind, malformed] of Object.entries(malformedSignatures)) {
+      // Calling verify directly also fails the test if a length mismatch throws.
+      expect(hs256.verify("payload", malformed, "k1"), `${kind} signature`).toBe(false);
+    }
   });
 
   it("fetch-blob gets Node's own DOMException from the stand-in", () => {
