@@ -1,0 +1,19 @@
+# Reduced public root surface from linear/linear@87d638c (2026-11-11).
+# Root names and argument signatures are retained; response graphs are reduced
+# to id/success fields. customViewDetailsSuggestion was removed in that release.
+type User { id: ID! }
+type Issue { id: ID! }
+type CustomView { id: ID! }
+type IssueImportJqlCheckPayload { success: Boolean! }
+type IssueImportPayload { success: Boolean! }
+
+type Query {
+  viewer: User!
+  issue(id: String!): Issue!
+  customView(id: String!): CustomView!
+  issueImportJqlCheck(jiraEmail: String!, jiraHostname: String!, jiraProject: String!, jiraToken: String!, jql: String!): IssueImportJqlCheckPayload!
+}
+
+type Mutation {
+  issueImportCreateJira(id: String, includeClosedIssues: Boolean, instantProcess: Boolean, jiraEmail: String!, jiraHostname: String!, jiraProject: String!, jiraToken: String!, jql: String, teamId: String, teamName: String): IssueImportPayload!
+}

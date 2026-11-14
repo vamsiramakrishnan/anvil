@@ -6,12 +6,10 @@ operations:
     state: approved
   issue:
     state: approved
-  # Three fields carry a query language in their arguments: `customViewDetailsSuggestion`
-  # takes a `filter` document, and the Jira import pair takes raw JQL. The compiler
-  # blocks each as an unconstrained passthrough no `query_policy` dialect guards;
-  # holding them blocked here is the reviewed decision, and they stay unexposed.
-  customViewDetailsSuggestion:
-    state: blocked
+  # The Jira import pair takes raw JQL. Keep both blocked without reviewed
+  # query_policy dialect guards. Linear removed customViewDetailsSuggestion
+  # from its public schema in linear/linear@87d638c (2026-11-11); its obsolete
+  # override must not remain here because manifest keys must resolve exactly.
   issueImportJqlCheck:
     state: blocked
   issueImportCreateJira:

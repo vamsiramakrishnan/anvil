@@ -88,9 +88,10 @@
       "opCount": 9
     },
     "linear": {
+      "_note": "linear/linear@87d638c (2026-11-11) removed 90 root fields and added four vs 7616467: 160 queries + 335 mutations + 78 subscriptions = 573. The compiler emits all 573; only opCount is refreshed for this upstream removal (#95).",
       "compileMs": 5077,
       "airBytes": 13897718,
-      "opCount": 653
+      "opCount": 573
     },
     "amadeus": {
       "compileMs": 1187,
