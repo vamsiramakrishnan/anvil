@@ -273,14 +273,14 @@
       "overStrippedResources": 2
     },
     "linear": {
-      "operations": 653,
+      "operations": 573,
       "zeroOverlapResource": 0,
       "stutters": {
         "spec_authored": 2,
         "service_prefix_join": 0,
         "disambiguation_suffix": 0
       },
-      "overStrippedResources": 8
+      "overStrippedResources": 3
     },
     "odata_trippin": {
       "operations": 25,
