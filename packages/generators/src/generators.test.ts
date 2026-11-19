@@ -311,6 +311,16 @@ describe("deploy: upstream credential wiring", () => {
     expect(tf).not.toContain("-auth-token");
     expect(tf).not.toContain("google_secret_manager_secret.auth_token");
     const vars = files["deploy/terraform/variables.tf"];
+    expect(vars).toContain('variable "secret_env_refs"');
+    expect(tf).toMatch(
+      /for_each = var\.secret_env_refs[\s\S]*?value_source\s*\{\s*secret_key_ref\s*\{\s*secret\s*= env\.value\.secret\s+version\s*= env\.value\.version/,
+    );
+    expect(tf).toContain(
+      "setunion(toset(var.credential_secret_ids), toset([for ref in values(var.secret_env_refs) : ref.secret]))",
+    );
+    expect(tf).toContain(
+      "setunion(local.anvil_compiler_owned_runtime_env_names, toset(keys(var.env)), toset(keys(var.credential_secret_refs)))",
+    );
     expect(vars).toContain('variable "credential_secret_refs"');
     expect(vars).toContain('variable "credential_secret_ids"');
     expect(vars).toContain('contains(["", "env", "secret_manager"]');
@@ -1170,7 +1180,7 @@ describe("GCP-native deploy (single owner per concern)", () => {
     expect(tf).toContain("location_id             = var.ledger_location");
     expect(tf).toContain('condition     = var.ledger_database_id != "(default)"');
     expect(tf).toContain(
-      "depends_on = [google_project_iam_member.runtime_ledger, google_firestore_field.ledger_result_expiry]",
+      "depends_on = [google_secret_manager_secret_iam_member.runtime_reads_credential, google_project_iam_member.runtime_ledger, google_firestore_field.ledger_result_expiry]",
     );
     expect(tf).toMatch(
       /startup_probe \{[\s\S]*?timeout_seconds\s+= 12[\s\S]*?period_seconds\s+= 15[\s\S]*?failure_threshold\s+= 16[\s\S]*?path = "\/readyz"[\s\S]*?port = 8080/,

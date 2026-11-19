@@ -783,7 +783,7 @@ resource "google_cloud_run_v2_service" "tools" {
   # and relies on the server's own inbound OAuth check (see var.env below), never
   # on network reachability alone.
   ingress${ledger ? "   " : ""} = var.ingress
-${ledger ? "  depends_on = [google_project_iam_member.runtime_ledger, google_firestore_field.ledger_result_expiry]" : ""}
+  depends_on = [google_secret_manager_secret_iam_member.runtime_reads_credential${ledger ? ", google_project_iam_member.runtime_ledger, google_firestore_field.ledger_result_expiry" : ""}]
 
   lifecycle {
     precondition {
@@ -799,6 +799,13 @@ ${ledger ? "  depends_on = [google_project_iam_member.runtime_ledger, google_fir
         local.anvil_compiler_owned_runtime_env_names,
       )) == 0
       error_message = "credential_secret_refs may not redefine compiler-owned ANVIL runtime settings."
+    }
+    precondition {
+      condition = length(setintersection(
+        toset(keys(var.secret_env_refs)),
+        setunion(local.anvil_compiler_owned_runtime_env_names, toset(keys(var.env)), toset(keys(var.credential_secret_refs))),
+      )) == 0
+      error_message = "secret_env_refs may not override compiler-owned, plain, or runtime-resolved environment variables."
     }
     precondition {
       condition = length(setintersection(
@@ -914,6 +921,19 @@ ${
           value = env.value
         }
       }
+      # Cloud Run resolves each pinned Secret Manager version into this variable at startup.
+      dynamic "env" {
+        for_each = var.secret_env_refs
+        content {
+          name = env.key
+          value_source {
+            secret_key_ref {
+              secret  = env.value.secret
+              version = env.value.version
+            }
+          }
+        }
+      }
       # Upstream credential *references* as PLAIN env: the VALUE is a Secret
       # Manager resource name (sm://…), which the runtime dereferences at call
       # time and TTL-caches — so 'latest' rotates without a new revision. Grant
@@ -945,7 +965,7 @@ resource "google_cloud_run_v2_service_iam_member" "invokers" {
 # One binding per secret — never a project-wide secret role. Pass the secret IDs
 # (projects/P/secrets/S) so the binding is explicit and least-privilege.
 resource "google_secret_manager_secret_iam_member" "runtime_reads_credential" {
-  for_each  = toset(var.credential_secret_ids)
+  for_each  = setunion(toset(var.credential_secret_ids), toset([for ref in values(var.secret_env_refs) : ref.secret]))
   secret_id = each.value
   role      = "roles/secretmanager.secretAccessor"
   member    = "serviceAccount:\${google_service_account.runtime.email}"
@@ -1149,6 +1169,19 @@ variable "secret_project" {
 variable "credential_secret_refs" {
   type    = map(string)
   default = {}
+}
+# Native Cloud Run bindings for code that reads secret values from environment variables.
+variable "secret_env_refs" {
+  type    = map(object({ secret = string, version = string }))
+  default = {}
+  validation {
+    condition = alltrue([for name, ref in var.secret_env_refs :
+      can(regex("^[A-Za-z_][A-Za-z0-9_]*$", name)) &&
+      can(regex("^projects/[A-Za-z0-9-]+/secrets/[A-Za-z0-9_-]+$", ref.secret)) &&
+      can(regex("^[1-9][0-9]*$", ref.version))
+    ])
+    error_message = "Use an environment variable name, a projects/P/secrets/S resource and a numeric, pinned secret version."
+  }
 }
 # Secret IDs (projects/P/secrets/S) this SA may read — one scoped secretAccessor
 # binding each. Provide the secrets backing credential_secret_refs here.
@@ -1450,6 +1483,11 @@ Secret Manager, then either:
   = \`sm://projects/…/secrets/…/versions/latest\`) and grant read with
   \`var.credential_secret_ids\`. The runtime dereferences it at call time and
   TTL-caches it, so \`latest\` rotates without a new revision.
+
+- **Secret environment binding:** for clients that read the value at startup,
+  set \`secret_env_refs = { CLIENT_SECRET = { secret = "projects/PROJECT/secrets/SECRET", version = "1" } }\`.
+  Cloud Run resolves the pinned version. Terraform grants the runtime identity
+  access to each named secret. Rotate by changing the version in a new revision.
 
 Resolution is per-operation by the auth shape: static \`api_key\`/\`basic\`/bearer read
 directly; \`oauth2_client_credentials\` (RFC 6749 §4.4), on-behalf-of (RFC 8693 token

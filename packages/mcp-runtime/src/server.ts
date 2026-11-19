@@ -17,6 +17,7 @@ import {
   type WorkflowSurfacePlan,
 } from "@anvil/air";
 import {
+  AnvilError,
   type ExecuteContext,
   execute,
   handleJobAnswer,
@@ -452,7 +453,14 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         // unchanged call below, exactly as before this phase.
         const hybridContract = hybridStatusOperationContracts.get(op.id);
         const jobId = hybridContract ? input[hybridContract.statusJobIdParam as string] : undefined;
-        if (hybridContract && !dryRun && execContext.ledger?.findBySecondaryKey) {
+        // The webhook index binds a job ID to a result without an owner. An
+        // identity-protected poll must run authorization and resource checks.
+        if (
+          hybridContract &&
+          !dryRun &&
+          !execContext.identity &&
+          execContext.ledger?.findBySecondaryKey
+        ) {
           if (typeof jobId === "string" && jobId.length > 0) {
             const idempotencyKey = await execContext.ledger.findBySecondaryKey(jobId);
             if (idempotencyKey !== undefined) {
@@ -600,6 +608,20 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
         };
         if (typeof jobId !== "string" || jobId.length === 0) return pending();
         const execContext = options.contextFor(submitOp);
+        if (execContext.identity) {
+          const error = new AnvilError({
+            code: "policy_denied",
+            message:
+              "A webhook-only completion has no verified owner. Configure an authorized status operation.",
+            operation: submitOp.id,
+            traceId: `trace_${randomUUID()}`,
+          });
+          return errorResult(
+            error.toEnvelope(),
+            submitOp,
+            resolveResultBudget(options, submitOp).budget,
+          );
+        }
         if (!execContext.ledger?.findBySecondaryKey) return pending();
         const idempotencyKey = await execContext.ledger.findBySecondaryKey(jobId);
         if (idempotencyKey === undefined) return pending();

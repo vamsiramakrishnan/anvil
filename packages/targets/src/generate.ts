@@ -4,7 +4,11 @@
  * byte-identical kit files. The files become pack artifacts under
  * `targets/<id>/`.
  */
-import type { AirDocument } from "@anvil/air";
+import {
+  type AirDocument,
+  ENTERPRISE_OAUTH_CONTROL_SCOPE,
+  enterpriseOAuthControlAudience,
+} from "@anvil/air";
 import { surfaceSignatureFor } from "@anvil/compiler";
 import {
   renderAgentGatewayReadinessJson,
@@ -289,6 +293,13 @@ function adminRunbook(
       : "WARNING: `inbound-auth.env` explicitly sets no-auth. The public `/mcp` endpoint has no bearer-token gate; Gemini Enterprise sign-in and Workforce Identity Federation do not protect it.",
     "Grant the registering administrator `roles/discoveryengine.editor` and ensure the server URL is reachable. A protected project also requires the endpoint to be allowlisted.",
   ];
+  if (config.enterpriseOAuthBinding) {
+    const binding = config.enterpriseOAuthBinding;
+    steps.push(
+      `Register the downstream OAuth client with its exact callback \`${binding.redirectUri}\`. Configure the employee portal to obtain an employee access token for \`${enterpriseOAuthControlAudience(binding.redirectUri)}\` with scope \`${ENTERPRISE_OAUTH_CONTROL_SCOPE}\` and forward the account-management routes on that origin. For private Cloud Run, grant the portal workload invocation on this service. Forward the employee bearer and preserve the browser's Origin and flow cookie.`,
+      `Set Terraform \`secret_env_refs\` entries for \`${binding.clientIdEnv}\` and \`${binding.clientSecretEnv}\`. Each entry takes the Secret Manager resource (projects/PROJECT/secrets/SECRET) and a pinned numeric version. Merge \`ANVIL_VAULT_KMS_KEY\` into the reviewed non-secret env map in the external deployment inputs, retaining both profile JSON values. Set it to the approved Cloud KMS key. Grant the service identity access to the designated Firestore database and encryption key. Test linking and disconnect with two employee identities before enabling the approved operations.`,
+    );
+  }
   if (includesSurface(config, "custom-mcp")) {
     steps.push(
       config.serverAuth === "oauth"
@@ -413,7 +424,15 @@ function isPublicConnector(profile: AgentPlatformTargetProfile): boolean {
  */
 function inboundEnvEntries(config: GeminiEnterpriseTargetConfig): Record<string, string> {
   if (config.identityProfile)
-    return { ANVIL_IDENTITY_PROFILE_JSON: JSON.stringify(config.identityProfile) };
+    return {
+      ANVIL_IDENTITY_PROFILE_JSON: JSON.stringify(config.identityProfile),
+      ...(config.enterpriseOAuthBinding
+        ? {
+            ANVIL_ENTERPRISE_OAUTH_JSON: JSON.stringify(config.enterpriseOAuthBinding),
+            ANVIL_VAULT_BACKEND: "firestore",
+          }
+        : {}),
+    };
   if (config.serverAuth === "no-auth") {
     return { ANVIL_INBOUND_AUTH_MODE: "none" };
   }

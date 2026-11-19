@@ -1,6 +1,13 @@
 import { createHmac } from "node:crypto";
-import { type AirDocument, type AsyncContract, loadAirDocument, Operation } from "@anvil/air";
 import {
+  type AirDocument,
+  type AsyncContract,
+  IdentityProfile,
+  loadAirDocument,
+  Operation,
+} from "@anvil/air";
+import {
+  createIdentityRuntime,
   type HttpRequest,
   type HttpResponse,
   handleWebhook,
@@ -10,7 +17,7 @@ import {
 } from "@anvil/runtime";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { recordWebhookCompletionIfIndexed } from "./async-completion.js";
 import { buildMcpServer, type McpBuildOptions } from "./server.js";
 
@@ -483,5 +490,68 @@ describe("end to end: submit, a real signed webhook, then an instant terminal po
     // No upstream call was ever possible for a synthetic tool — the ONLY
     // transport call in the whole test is the original submit.
     expect(transport.calls).toHaveLength(1);
+  });
+});
+
+describe("identity-protected async status", () => {
+  it.each([
+    true,
+    false,
+  ])("keeps unowned completions outside an employee call (hybrid=%s)", async (hybrid) => {
+    const submit = chargeCreate();
+    if (!hybrid) submit.asyncContract = chargeAsyncContract({ statusOperationId: undefined });
+    const air = buildAir(
+      hybrid
+        ? [submit, chargeStatus(), chargeWebhookReceiver()]
+        : [submit, chargeWebhookReceiver()],
+    );
+    const ledger = new InMemoryLedger();
+    const lookup = vi.spyOn(ledger, "findBySecondaryKey");
+    const transport = countingTransport(() => ({ status: 200, headers: {}, body: "{}" }));
+    const profile = IdentityProfile.parse({
+      id: "protected",
+      version: 1,
+      authentication: {
+        provider: "oidc",
+        issuer: "https://issuer.example",
+        audience: "https://api.example/mcp",
+        jwksUri: "https://issuer.example/keys",
+      },
+      mapping: { tenant: { source: "fixed", value: "customer" } },
+      authorization: { rules: [] },
+    });
+    const client = await connect(air, ledger, transport, {
+      contextFor: () => ({
+        serviceId: air.service.id,
+        baseUrl: "https://payments.example.com",
+        env: "dev",
+        transport,
+        ledger,
+        identity: createIdentityRuntime(profile),
+        inbound: {
+          subjectToken: "fixture",
+          subjectTokenType: "access_token",
+          claims: {
+            iss: profile.authentication.issuer,
+            aud: profile.authentication.audience,
+            sub: "employee",
+            exp: Math.floor(Date.now() / 1000) + 600,
+          },
+        },
+      }),
+    });
+    try {
+      const result = await client.callTool(
+        hybrid
+          ? { name: "get_charge_status", arguments: { charge_id: "ch_1" } }
+          : { name: "create_charge_status", arguments: { job_id: "ch_1" } },
+      );
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain("policy_denied");
+      expect(lookup).not.toHaveBeenCalled();
+      expect(transport.calls).toHaveLength(0);
+    } finally {
+      await client.close();
+    }
   });
 });

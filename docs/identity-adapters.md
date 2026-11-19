@@ -72,7 +72,69 @@ Configure Gemini Enterprise's Custom MCP Server OAuth authorization URL, token U
 | Gemini Enterprise → Cloud Run IAM | Google service-agent ID token | Cloud Run IAM; never mapped to the employee |
 | Anvil → protected-system API | Credential accepted by that API | The upstream credential resolver and application/gateway policy |
 
-The upstream credential is independent. Anvil's existing RFC 8693 path works only with a configured token endpoint that supports that grant. A local authorization decision cannot mint a SiteMinder session or grant a downstream API permission. If the protected system requires a legacy session, implement or connect a shared, reviewed gateway using the supported SiteMinder deployment. Browser cookies are not automatically available to Gemini's server-side MCP requests.
+The upstream API can accept a distinct employee bearer obtained through a supported RFC 8693 grant, or a separate per-user authorization-code grant. Use the code grant when the authorization server offers OAuth authorization and refresh but does not support exchange. A cookie-only API can sit behind a customer-managed session broker. In each case, verify object-level permissions at the receiving resource.
+
+## Link a downstream OAuth account
+
+A standalone HTTP MCP server can resolve a reviewed API or broker bearer for each employee. The employee authorizes the downstream client once from a customer portal. Later `tools/call` requests use that employee’s linked account after Anvil authorizes the effective operation and input.
+
+```text
+Employee -- sign-in --> Gemini Enterprise
+                             |
+                  Google service-agent ID token --> Cloud Run IAM
+                  employee MCP access token ------> Anvil
+                                                     |
+Employee -- portal --> /connect/start                | verified owner
+              |            |                         v
+              |       OAuth code + PKCE       Encrypted grant vault
+              +------ /connect/callback              |
+                                                     v
+                                            API or broker bearer
+                                                     |
+                                            Protected resource
+```
+
+Add `--enterprise-oauth-binding ./downstream-oauth.json` to the `anvil target gemini-enterprise` command above. Supply the reviewed `--identity-profile` and use the Custom MCP surface with OAuth. Start from `examples/identity/per-user-downstream-oauth.json` and replace every sample coordinate with the actual service, approved operation IDs and endpoints. A companion `examples/identity/per-user-payments.yaml` manifest models the payment read for use with `examples/payments/openapi.yaml`. Compile it, inspect the read and approve `payments.payments.get` before generating the target. The target validates the binding against the generated bundle. The runtime checks it again against the deployed upstream URL. The dedicated bundle uses `oauth2_authorization_code`, `principal: end_user` and `secretSource: vault` for its approved HTTP operations. Supply the named OAuth client credentials through secret bindings. The generated `ANVIL_ENTERPRISE_OAUTH_JSON` contains only configuration.
+
+| Resource | Who obtains its user credential | Enforcement |
+| --- | --- | --- |
+| MCP | Gemini Enterprise, through its registered connector OAuth client | Anvil verifies the employee and applies service, operation and input policy. |
+| Account management | The customer portal obtains a token for `https://PORTAL_HOST/connect` with scope `anvil.connect` | `/connect/start`, `/connect/status` and `/connect/disconnect` verify the control audience and employee identity. The portal protects its own browser session and enforces CSRF checks. |
+| API or broker | Anvil exchanges the employee’s authorization code and PKCE verifier at the reviewed token endpoint | Anvil introspects each newly issued or refreshed bearer. It requires a matching issuer, stable user subject, tenant, exact client and resource audience, configured scopes and live expiry. The API or broker enforces its own object permissions. |
+
+All three registrations must support the reviewed identity mapping. This release supports one identity authority that supplies the same stable subject and tenant at the relevant resources. Compare actual user tokens from each client when the IdP uses pairwise subject identifiers. The downstream and control resources require explicit audiences. The downstream authorization server must support the configured resource parameter, RFC 7662 introspection and confidential client Basic authentication. The token and optional revocation endpoints must be reachable over public-address HTTPS from the runtime. The protected API or broker can use private network routing.
+
+**Portal integration.** Route only `/connect/*` from the customer portal’s external origin to the private Anvil service. For Cloud Run, the portal backend needs its own service-scoped `roles/run.invoker` and sends its Google ID token in `X-Serverless-Authorization`. For account-management requests it sends the employee’s control access token in `Authorization`, preserves the browser `Origin` on POST and forwards the callback-binding cookie. Register the downstream client’s exact `https://PORTAL_HOST/connect/callback`. This is separate from the Gemini client callback. Reserve the `/connect` routes on that host. Suppress query strings and credential headers in portal, ingress and application logs.
+
+| Portal route | Behavior |
+| --- | --- |
+| `POST /connect/start` | Returns an authorization URL and expiry and sets a Secure, HttpOnly, SameSite=Lax cookie. The portal sends the employee’s browser to the returned URL. A new start replaces that person’s pending link. |
+| `GET /connect/callback` | Verifies one-time state and the initiating browser cookie, exchanges the code, verifies the downstream employee and stores the grant. Single-use enrollment state lives in the shared encrypted vault. |
+| `GET /connect/status` | Returns the connection state for the authenticated owner. |
+| `POST /connect/disconnect` | Removes local authority. Configure `revocationEndpoint` when the issuer supports RFC 7009. Retry remote revocation through the same endpoint while local use stays denied. |
+
+For generated Cloud Run Terraform, supply the OAuth client environment variables through `secret_env_refs`. Each value has a `secret` resource name (`projects/PROJECT/secrets/SECRET`) and a pinned numeric `version` string. Use `ANVIL_VAULT_BACKEND=firestore` and `ANVIL_VAULT_KMS_KEY` outside development. Choose a dedicated vault collection and key for each deployment trust boundary. The file vault supports single-process development. Per-owner locking and revision checks fence refresh, link completion and disconnect across replicas. An invalid refresh grant requires reconnection. Disconnect old grants before changing client, issuer, resource, requested scopes or other vault namespace coordinates. Ordinary authorization rule edits preserve the stored grant and take effect at the next policy evaluation. Temporary authority or vault failures stop dispatch. Revoking a connector token, deleting the downstream grant, and invalidating a legacy session are distinct events. Measure propagation at each boundary, including requests already in flight. [Vault and IAM setup](branchyard.md#vault-backends).
+
+### Customer-hosted broker for one cookie-protected read
+
+```text
+Anvil -- broker-audience employee token --> customer broker
+                                                | validate token and object access
+                                                | select the employee's live session
+                                                v
+                                         SiteMinder gateway / API
+                                           Cookie: SMSESSION=...
+```
+
+For a legacy API, point the binding’s `upstreamBaseUrl` and `resource` at the customer’s broker. `createLegacySessionReadHandler` from `@anvil/legacy-bridge` supplies a customer-hosted Node HTTP handler for one reviewed `GET /prefix/{id}` route. Deploy it behind the customer's authenticated ingress. Configure the issuer, client, tenant, audience, scope, realm, cookie name, fixed upstream HTTPS path, ID field and output fields. It projects the matching record ID and declared numbers, booleans and enumerated strings. Redirects, login pages, unexpected response shapes and unbounded output fail closed. A downstream 401 requests reauthorization. Valid W3C trace context correlates dispatch and broker audit without logging the employee’s credentials.
+
+| Customer adapter | Required evidence |
+| --- | --- |
+| `verifyEmployeeAccessToken(token, signal)` | Validates an active access token and its employee delegation. Returns verified identity, client, resource audience, scopes, expiry and a stable grant ID. Use the authority’s grant ID or an authoritative binding to the owner's enrollment. Token refresh must preserve that binding. |
+| `authorizeRead(employee, objectId, signal)` | Checks current object ACLs using trusted data. A denial stops before session lookup and wire dispatch. |
+| `resolveSession(employee, realm, signal)` | Checks current grant status, retrieves or renews the employee’s server-issued session, and returns its issuer, tenant, subject, grant, realm, expiry and opaque cookie value. The broker checks these coordinates against the incoming grant. |
+
+The customer manages session enrollment, MFA, storage, rotation and revocation in its own security boundary. Use a supported SiteMinder server-side authentication or federation mechanism that proves the employee’s identity. The Anvil portal cookie binds the OAuth callback to its browser. The legacy session cookie is issued and retained on the customer side. Qualify idle and absolute expiry and any required response-driven cookie rotation for the exact SiteMinder release. The initial read handler discards upstream response headers. A deployment requiring in-band session replacement needs a reviewed adapter for that behavior before use.
 
 ## JWT and opaque OAuth access tokens
 

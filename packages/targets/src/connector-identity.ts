@@ -1,4 +1,4 @@
-import { type AirDocument, IdentityProfile } from "@anvil/air";
+import { type AirDocument, IdentityProfile, validateEnterpriseOAuthBinding } from "@anvil/air";
 import type { GeminiEnterpriseTargetConfig } from "./config.js";
 import { generateIdentityKit } from "./identity.js";
 import type { TargetValidationFinding } from "./model.js";
@@ -8,9 +8,21 @@ export function validateGeminiIdentityBinding(
   air: AirDocument,
   config: GeminiEnterpriseTargetConfig,
 ): TargetValidationFinding[] {
-  if (!config.identityProfile) return [];
   const findings: TargetValidationFinding[] = [];
   const fail = (code: string, message: string) => findings.push({ level: "error", code, message });
+  if (config.enterpriseOAuthBinding) {
+    try {
+      validateEnterpriseOAuthBinding(
+        config.enterpriseOAuthBinding,
+        air,
+        config.identityProfile,
+        air.service.servers[0]?.url ?? "",
+      );
+    } catch (error) {
+      fail("target/invalid_enterprise_oauth_binding", (error as Error).message);
+    }
+  }
+  if (!config.identityProfile) return findings;
   const parsed = IdentityProfile.safeParse(config.identityProfile);
   if (!parsed.success) {
     fail(
