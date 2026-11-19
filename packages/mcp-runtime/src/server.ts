@@ -25,7 +25,7 @@ import {
 } from "@anvil/runtime";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { ledgerWithJobIndexing, peekWebhookStatus } from "./async-completion.js";
+import { ledgerWithJobIndexing, peekSharedJobCompletion } from "./async-completion.js";
 import {
   applyIdempotencyKey,
   callEffectReport,
@@ -444,34 +444,14 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
               }
             : execContext;
 
-        // Hybrid status handler (design doc §6/§14): `op` here IS a status
-        // operation some OTHER operation's AsyncContract names. Before making
-        // the upstream call this tool has always made, check whether a
-        // webhook already answered the job the caller is asking about. Found
-        // -> return the cached completion immediately, no upstream call at
-        // all. Not found (or no ledger, or a dry run) -> fall through to the
-        // unchanged call below, exactly as before this phase.
         const hybridContract = hybridStatusOperationContracts.get(op.id);
         const jobId = hybridContract ? input[hybridContract.statusJobIdParam as string] : undefined;
-        // The webhook index binds a job ID to a result without an owner. An
-        // identity-protected poll must run authorization and resource checks.
-        if (
-          hybridContract &&
-          !dryRun &&
-          !execContext.identity &&
-          execContext.ledger?.findBySecondaryKey
-        ) {
-          if (typeof jobId === "string" && jobId.length > 0) {
-            const idempotencyKey = await execContext.ledger.findBySecondaryKey(jobId);
-            if (idempotencyKey !== undefined) {
-              const peek = await peekWebhookStatus(execContext.ledger, idempotencyKey);
-              if (peek.found) {
-                await report(1, 1, `${jobId}: completed (answered by webhook)`);
-                let text = JSON.stringify(peek.result, null, 2);
-                text = truncateResultText(text, op, budget);
-                return responseResult(text, peek.result, undefined);
-              }
-            }
+        if (hybridContract && !dryRun) {
+          const peek = await peekSharedJobCompletion(execContext, jobId);
+          if (peek.found) {
+            await report(1, 1, `${jobId}: completed (answered by webhook)`);
+            const text = truncateResultText(JSON.stringify(peek.result, null, 2), op, budget);
+            return responseResult(text, peek.result, undefined);
           }
         }
 
@@ -622,10 +602,7 @@ export function buildMcpServer(air: AirDocument, options: McpBuildOptions): McpS
             resolveResultBudget(options, submitOp).budget,
           );
         }
-        if (!execContext.ledger?.findBySecondaryKey) return pending();
-        const idempotencyKey = await execContext.ledger.findBySecondaryKey(jobId);
-        if (idempotencyKey === undefined) return pending();
-        const peek = await peekWebhookStatus(execContext.ledger, idempotencyKey);
+        const peek = await peekSharedJobCompletion(execContext, jobId);
         if (!peek.found) return pending();
         await report(1, 1, `${jobId}: completed (answered by webhook)`);
         return responseResult(JSON.stringify(peek.result, null, 2), peek.result, undefined);

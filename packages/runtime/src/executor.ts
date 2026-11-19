@@ -15,13 +15,7 @@ import {
 } from "@anvil/air";
 import { checkQuery, lexicalFamily, renderTemplate } from "@anvil/grammar";
 import { type AuditSink, auditCall } from "./audit.js";
-import {
-  type AuthMaterial,
-  applyAuth,
-  authMaterialOverwritesIdempotencyCarrier,
-  type CredentialResolver,
-  credentialProfileName,
-} from "./auth.js";
+import { type CredentialResolver, credentialProfileName } from "./auth.js";
 import { describeRequestBody, requestByteLength } from "./body-encoding.js";
 import { throwIfCancelled, transportFailureError } from "./cancellation.js";
 import { codecFor, isFaultAware } from "./codec.js";
@@ -47,11 +41,7 @@ import {
   ledgerPrincipalScope,
 } from "./identity-execution.js";
 import { currentInboundIdentity, type InboundIdentity } from "./inbound-identity.js";
-import {
-  assertInvocationCredentialHeaders,
-  invocationHeaderIdentity,
-  prepareInvocation,
-} from "./invocation.js";
+import { invocationHeaderIdentity, prepareInvocation } from "./invocation.js";
 import { jobSecondaryKey } from "./job-index.js";
 import { checkLimits, type LimitsGate } from "./limits.js";
 import { McpRequestPolicyError, type McpUpstream, type PreparedMcpCall } from "./mcp-upstream.js";
@@ -66,6 +56,7 @@ import {
   runPolicyHook,
   UNRESOLVED_PRINCIPAL,
 } from "./policy.js";
+import { bindRequestCredentials } from "./request-credentials.js";
 import { applyAgentProjection } from "./response-projection.js";
 import {
   computeBackoffMs,
@@ -1199,69 +1190,36 @@ export async function execute(
       const profile = credentialProfileName(ctx.authProfile ?? "default", op.auth);
       const atUse = ctx.credentials?.resolveAtUse === true;
       if (enterprisePrincipal && atUse) record.spanId = randomBytes(8).toString("hex");
-      const resolveRequest = async (): Promise<HttpRequest> => {
-        let material: AuthMaterial | null;
-        try {
-          const grant = grantCredentialContext(principal, ctx.connector, grantDecision);
-          material = ctx.credentials
-            ? await ctx.credentials.resolve(profile, op.auth, {
-                inbound: requestInbound,
-                ...grant,
-                ...(enterprisePrincipal
-                  ? {
-                      enterprise: {
-                        principal: enterprisePrincipal,
-                        service: ctx.serviceId,
-                        operation: op.id,
-                        url: baseRequest.url,
-                        headerNames: Object.keys(baseRequest.headers),
-                        ...(record.spanId
-                          ? { traceparent: `00-${otelTraceId(traceId)}-${record.spanId}-01` }
-                          : {}),
-                        method: baseRequest.method,
-                      },
-                    }
-                  : {}),
-              })
-            : null;
-        } catch (error) {
-          // The vault names the unconnected connector; never a connect link.
-          if (!(error instanceof CredentialUnavailableError)) throw error;
-          throw error.toAnvilError(op.id, traceId);
-        }
-        if (!material) {
-          // Name the credential LOCATIONS the resolver would read (env var names,
-          // secret ids) so the caller knows the next action. Names only — values
-          // are never echoed (spec §13, §18).
-          const expected = ctx.credentials?.expectedCredentials?.(profile, op.auth) ?? [];
-          throw new AnvilError({
-            code: "auth_required",
-            message:
-              `Auth profile '${profile}' could not be resolved for scopes [${op.auth.scopes.join(", ")}].` +
-              (expected.length > 0 ? ` Set ${expected.join(" and ")} and retry.` : ""),
-            operation: op.id,
-            traceId,
-            details: expected.length > 0 ? { expected_env: expected } : undefined,
-          });
-        }
-        if (key && authMaterialOverwritesIdempotencyCarrier(material, carrier)) {
-          throw new AnvilError({
-            code: "unsupported_operation",
-            message:
-              "The resolved credential carrier conflicts with this operation's idempotency carrier. " +
-              "Configure distinct header or query coordinates before retrying.",
-            operation: op.id,
-            traceId,
-            retryable: false,
-            details: {
-              idempotency_carrier: carrier?.mechanism,
-              credential_carrier_conflict: true,
-            },
-          });
-        }
-        assertInvocationCredentialHeaders(invocation, material.headers, op.id, traceId);
-        return applyAuth(baseRequest, material);
-      };
+      const resolveRequest = () =>
+        bindRequestCredentials({
+          request: baseRequest,
+          operation: op,
+          resolver: ctx.credentials,
+          profile,
+          invocation,
+          idempotencyKey: key,
+          carrier,
+          traceId,
+          caller: {
+            inbound: requestInbound,
+            ...grantCredentialContext(principal, ctx.connector, grantDecision),
+            ...(enterprisePrincipal
+              ? {
+                  enterprise: {
+                    principal: enterprisePrincipal,
+                    service: ctx.serviceId,
+                    operation: op.id,
+                    url: baseRequest.url,
+                    method: baseRequest.method,
+                    headerNames: Object.keys(baseRequest.headers),
+                    ...(record.spanId
+                      ? { traceparent: `00-${otelTraceId(traceId)}-${record.spanId}-01` }
+                      : {}),
+                  },
+                }
+              : {}),
+          },
+        });
       if (atUse) bindAtUse = resolveRequest;
       else request = await resolveRequest();
     }
