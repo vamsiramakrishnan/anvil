@@ -6,6 +6,7 @@ export * from "./driver-registry.js";
 export * from "./facade.js";
 export * from "./lower.js";
 export * from "./serve.js";
+export * from "./session-read.js";
 export * from "./stomp-client.js";
 export * from "./stomp-server-double.js";
 export * from "./wire-binding.js";

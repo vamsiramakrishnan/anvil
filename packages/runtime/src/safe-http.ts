@@ -1,7 +1,6 @@
 import { lookup } from "node:dns/promises";
-import { request as httpRequest } from "node:http";
-import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
+import { requestPinnedJson } from "./pinned-http.js";
 
 export type HostResolver = (
   hostname: string,
@@ -33,13 +32,21 @@ export async function validatePublicHttpsUrl(
   raw: string,
   options: PublicJsonFetchOptions = {},
 ): Promise<URL> {
-  return (await resolvePublicHttpsUrl(raw, options)).url;
+  return (
+    await resolvePublicHttpsUrl(
+      raw,
+      options,
+      AbortSignal.timeout(options.timeoutMs ?? DEFAULT_TIMEOUT_MS),
+    )
+  ).url;
 }
 
 async function resolvePublicHttpsUrl(
   raw: string,
   options: PublicJsonFetchOptions,
+  signal: AbortSignal,
 ): Promise<{ url: URL; addresses: readonly { address: string; family: number }[] }> {
+  signal.throwIfAborted();
   let url: URL;
   try {
     url = new URL(raw);
@@ -84,7 +91,20 @@ async function resolvePublicHttpsUrl(
     (options.fetchImpl
       ? async () => [{ address: "93.184.216.34", family: 4 }]
       : async (hostname: string) => lookup(hostname, { all: true, verbatim: true }));
-  const addresses = await resolveHost(host);
+  // Node DNS lookup may outlive the caller. Refuse the request promptly and
+  // discard any late DNS answer without opening a socket.
+  let onAbort!: () => void;
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () => reject(signal.reason);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  let addresses: Awaited<ReturnType<HostResolver>>;
+  try {
+    addresses = await Promise.race([resolveHost(host), aborted]);
+    signal.throwIfAborted();
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
   if (addresses.length === 0 || addresses.some(({ address }) => !isPublicAddress(address))) {
     throw new Error("outbound URL DNS answer is empty or non-public");
   }
@@ -100,16 +120,18 @@ export async function fetchPublicJson(
   init: RequestInit,
   options: PublicJsonFetchOptions = {},
 ): Promise<{ response: Response; json: unknown }> {
-  const resolved = await resolvePublicHttpsUrl(raw, options);
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const signal = requestDeadline(init, timeoutMs);
+  const resolved = await resolvePublicHttpsUrl(raw, options, signal);
+  signal.throwIfAborted();
   if (!options.fetchImpl) {
-    return requestPinnedJson(resolved, init, { maxBytes, timeoutMs });
+    return requestPinnedJson(resolved, { ...init, signal }, { maxBytes, timeoutMs });
   }
   const response = await options.fetchImpl(resolved.url, {
     ...init,
     redirect: "error",
-    signal: init.signal ?? AbortSignal.timeout(timeoutMs),
+    signal,
   });
 
   const headers = response.headers;
@@ -156,108 +178,42 @@ export async function fetchPublicJson(
   return { response, json };
 }
 
-async function requestPinnedJson(
-  resolved: {
-    url: URL;
-    addresses: readonly { address: string; family: number }[];
-  },
+/** Submit a credential to an operator-selected public endpoint whose success
+ * contract is an HTTP status (RFC 7009 revocation commonly has an empty body). */
+export async function fetchPublicStatus(
+  raw: string,
   init: RequestInit,
-  limits: { maxBytes: number; timeoutMs: number },
-): Promise<{ response: Response; json: unknown }> {
-  const selected = resolved.addresses[0];
-  if (!selected) throw new Error("outbound URL has no validated address");
-  const headers = new Headers(init.headers);
-  // Preserve the original authority for HTTP routing while TLS verifies the
-  // original hostname through SNI. The socket lookup is pinned to the address
-  // validated above, eliminating the DNS-rebinding gap.
-  if (!headers.has("host")) headers.set("host", resolved.url.host);
-  const body = requestBody(init.body);
-  const bytes = await new Promise<{
-    status: number;
-    statusText: string;
-    headers: Headers;
-    body: Uint8Array;
-  }>((resolvePromise, reject) => {
-    const request = resolved.url.protocol === "http:" ? httpRequest : httpsRequest;
-    const req = request(
-      resolved.url,
+  options: PublicJsonFetchOptions = {},
+): Promise<number> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const signal = requestDeadline(init, timeoutMs);
+  const resolved = await resolvePublicHttpsUrl(raw, options, signal);
+  signal.throwIfAborted();
+  if (!options.fetchImpl) {
+    const { response } = await requestPinnedJson(
+      resolved,
+      { ...init, signal },
       {
-        method: init.method ?? "GET",
-        headers: Object.fromEntries(headers.entries()),
-        ...(resolved.url.protocol === "https:" ? { servername: resolved.url.hostname } : {}),
-        lookup: (_hostname, _options, callback) => {
-          callback(null, selected.address, selected.family);
-        },
-      },
-      (incoming) => {
-        const responseHeaders = new Headers();
-        for (const [name, value] of Object.entries(incoming.headers)) {
-          if (Array.isArray(value)) for (const item of value) responseHeaders.append(name, item);
-          else if (value !== undefined) responseHeaders.set(name, value);
-        }
-        const contentType = responseHeaders.get("content-type");
-        if (
-          !contentType ||
-          !/^(application\/json|application\/[^;]+\+json)(?:;|$)/i.test(contentType)
-        ) {
-          incoming.destroy();
-          reject(new Error("response is not JSON"));
-          return;
-        }
-        const contentLength = Number(responseHeaders.get("content-length"));
-        if (Number.isFinite(contentLength) && contentLength > limits.maxBytes) {
-          incoming.destroy();
-          reject(new Error("JSON response exceeds the byte limit"));
-          return;
-        }
-        const chunks: Buffer[] = [];
-        let total = 0;
-        incoming.on("data", (chunk: Buffer) => {
-          total += chunk.length;
-          if (total > limits.maxBytes) {
-            incoming.destroy(new Error("JSON response exceeds the byte limit"));
-            return;
-          }
-          chunks.push(chunk);
-        });
-        incoming.on("error", reject);
-        incoming.on("end", () => {
-          const value = Buffer.concat(chunks);
-          resolvePromise({
-            status: incoming.statusCode ?? 500,
-            statusText: incoming.statusMessage ?? "",
-            headers: responseHeaders,
-            body: value,
-          });
-        });
+        timeoutMs,
+        maxBytes: 0,
+        statusOnly: true,
       },
     );
-    req.setTimeout(limits.timeoutMs, () => req.destroy(new Error("outbound request timed out")));
-    const onAbort = () => req.destroy(new Error("outbound request aborted"));
-    init.signal?.addEventListener("abort", onAbort, { once: true });
-    req.on("close", () => init.signal?.removeEventListener("abort", onAbort));
-    req.on("error", reject);
-    if (body) req.write(body);
-    req.end();
+    return response.status;
+  }
+  const res = await options.fetchImpl(resolved.url, {
+    ...init,
+    redirect: "error",
+    signal,
   });
-  const text = new TextDecoder().decode(bytes.body);
-  const json = JSON.parse(text);
-  return {
-    response: new Response(bytes.body, {
-      status: bytes.status,
-      statusText: bytes.statusText,
-      headers: bytes.headers,
-    }),
-    json,
-  };
+  await res.body?.cancel();
+  if (res.status >= 300 && res.status < 400) throw new Error("outbound redirect refused");
+  return res.status;
 }
 
-function requestBody(body: unknown): string | Uint8Array | undefined {
-  if (body === undefined || body === null) return undefined;
-  if (typeof body === "string") return body;
-  if (body instanceof URLSearchParams) return body.toString();
-  if (body instanceof Uint8Array) return body;
-  throw new Error("unsupported outbound request body");
+function requestDeadline(init: RequestInit, timeoutMs: number): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs);
+  return init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
 }
 
 /** Default-deny special, private, documentation, multicast, and loopback IPs. */

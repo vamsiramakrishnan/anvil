@@ -47,6 +47,7 @@ import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { recordWebhookCompletionIfIndexed } from "./async-completion.js";
 import { handleBusinessHttp } from "./business-http.js";
 import { createBusinessServing } from "./business-serving.js";
+import { createEnterpriseConnect } from "./enterprise-connect.js";
 import {
   inboundAuthorizationHeader,
   inboundIdentityFrom,
@@ -310,6 +311,7 @@ function mcpContext() {
     inbound,
     principal: boot.principalFor(inbound),
     ...businessServing?.mcpContext(inbound),
+    ...(enterpriseConnect && { credentials: enterpriseConnect.credentials }),
   };
 }
 
@@ -318,6 +320,7 @@ function mcpContext() {
 // validate it on every protected route rather than trusting the network. Mode
 // "none" (the default) admits everything, for local runs behind other controls.
 const inboundAuth = loadInboundAuthConfig();
+const enterpriseConnect = createEnterpriseConnect(air, inboundAuth, baseUrl, config.env);
 if (air.business && config.env !== "dev" && inboundAuth.mode === "none") {
   throw new Error("Business gateways require verified inbound authentication outside development.");
 }
@@ -357,6 +360,11 @@ async function authorized(req: IncomingMessage, res: ServerResponse): Promise<Au
   if (!result.ok) {
     res.writeHead(result.status, { ...JSON_REFUSAL, "www-authenticate": result.wwwAuthenticate });
     res.end(JSON.stringify({ error: { code: result.error, message: result.description } }));
+    return { ok: false };
+  }
+  if (enterpriseConnect && [result.claims.aud].flat().includes(enterpriseConnect.audience)) {
+    res.writeHead(403, JSON_REFUSAL);
+    res.end(JSON.stringify({ error: { code: "invalid_audience" } }));
     return { ok: false };
   }
   const rawToken =
@@ -517,6 +525,8 @@ const server = createGuardedServer(async (req, res) => {
           error: { code: "not_found", message: "Inbound auth is not configured." },
         });
   }
+  if (enterpriseConnect && url.pathname.startsWith("/connect/"))
+    return enterpriseConnect.handle(req, res, url);
   // Webhook receiver routes (design doc §7/§14) are deliberately UNAUTHENTICATED
   // by the inbound-OAuth check every route below this one goes through — a
   // third-party sender (Stripe, GitHub, …) never has this deployment's inbound

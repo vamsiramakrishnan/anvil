@@ -50,6 +50,26 @@ export class InMemoryFirestore implements VaultDocumentStore {
     this.docs.set(this.path(collection, id), clone(mutate(current ? clone(current) : undefined)));
   }
 
+  async compareAndSwap(
+    collection: string,
+    id: string,
+    expectedRevision: string | undefined,
+    next: VaultDocument | undefined,
+  ) {
+    this.check();
+    const path = this.path(collection, id);
+    const current = this.docs.get(path);
+    if (
+      expectedRevision === undefined
+        ? current !== undefined
+        : current?.revision !== expectedRevision
+    )
+      return false;
+    if (next) this.docs.set(path, clone(next));
+    else this.docs.delete(path);
+    return true;
+  }
+
   async remove(collection: string, id: string) {
     this.check();
     return this.docs.delete(this.path(collection, id));

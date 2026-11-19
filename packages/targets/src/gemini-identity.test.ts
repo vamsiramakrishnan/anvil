@@ -1,4 +1,4 @@
-import { type AirDocument, IdentityProfile } from "@anvil/air";
+import { type AirDocument, type EnterpriseOAuthBinding, IdentityProfile } from "@anvil/air";
 import { approveOperations, compile } from "@anvil/compiler";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
@@ -8,6 +8,7 @@ import {
 import { buildConnectorPlan } from "./connector-plan.js";
 import { GEMINI_ENTERPRISE_PROFILE } from "./gemini-enterprise.js";
 import { generateTargetKit } from "./generate.js";
+import { prepareIdentityBinding } from "./identity-setup.js";
 import { validateTarget } from "./validate.js";
 import { verifyTargetKit } from "./verify.js";
 
@@ -176,6 +177,64 @@ describe("Gemini connector authority is independent of Entra app sign-in", () =>
         (finding) => finding.code,
       ),
     ).toContain("target/identity_operation_binding_invalid");
+  });
+
+  it("binds standalone employee grants across target generation, identity edits and certification", () => {
+    const op = air.operations[0]!;
+    const baseUrl = "https://records.example/api";
+    air.service.servers = [{ url: baseUrl }];
+    op.auth = {
+      type: "oauth2_authorization_code",
+      principal: "end_user",
+      secretSource: "vault",
+      scopes: ["records.read"],
+    };
+    identity.mapping.upstreamScopes = ["records.read"];
+    const issuer = identity.authentication.issuer;
+    const binding: EnterpriseOAuthBinding = {
+      service: air.service.id,
+      operations: [op.id],
+      upstreamBaseUrl: baseUrl,
+      issuer,
+      resource: baseUrl,
+      scopes: ["records.read"],
+      authorizationEndpoint: `${issuer}/authorize`,
+      tokenEndpoint: `${issuer}/token`,
+      introspectionEndpoint: `${issuer}/introspect`,
+      redirectUri: "https://portal.example/connect/callback",
+      clientIdEnv: "RECORDS_OAUTH_CLIENT_ID",
+      clientSecretEnv: "RECORDS_OAUTH_CLIENT_SECRET",
+    };
+    const target = config({ enterpriseOAuthBinding: binding });
+    expect(validateTarget(air, GEMINI_ENTERPRISE_PROFILE, target).ok).toBe(true);
+    const kit = generateTargetKit(air, GEMINI_ENTERPRISE_PROFILE, target);
+    expect(textFile(kit, "inbound-auth.env")).toContain("ANVIL_ENTERPRISE_OAUTH_JSON=");
+    expect(textFile(kit, "cloud-run.tfvars")).toContain('ANVIL_VAULT_BACKEND = "firestore"');
+    const files = Object.fromEntries(
+      kit.files.map((file) => [file.path, Buffer.from(file.bytes).toString("utf8")]),
+    );
+    expect(verifyTargetKit(air, GEMINI_ENTERPRISE_PROFILE, files).ok).toBe(true);
+    const edited = prepareIdentityBinding(air, identity, files);
+    const setupFile = edited.files.find((f) => f.path === "targets/gemini-enterprise/setup.json")!;
+    expect(
+      JSON.parse(Buffer.from(setupFile.bytes).toString()).config.enterpriseOAuthBinding,
+    ).toEqual(binding);
+
+    const overlay = "targets/gemini-enterprise/terraform/cloud-run.tfvars";
+    const drifted = {
+      ...files,
+      [overlay]: files[overlay]!.replace("records.example", "wrong.example"),
+    };
+    expect(verifyTargetKit(air, GEMINI_ENTERPRISE_PROFILE, drifted).ok).toBe(false);
+    for (const badTarget of [
+      config({ identityProfile: undefined, enterpriseOAuthBinding: binding }),
+      config({ enterpriseOAuthBinding: { ...binding, operations: ["unapproved"] } }),
+      config({ enterpriseOAuthBinding: { ...binding, upstreamBaseUrl: "https://other.example" } }),
+    ]) {
+      expect(
+        validateTarget(air, GEMINI_ENTERPRISE_PROFILE, badTarget).findings.map((f) => f.code),
+      ).toContain("target/invalid_enterprise_oauth_binding");
+    }
   });
 
   it("projects an explicit opaque SiteMinder token verifier without a JWT fallback", () => {

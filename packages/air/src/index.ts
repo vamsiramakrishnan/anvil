@@ -19,6 +19,7 @@ export * from "./business-project.js";
 export * from "./disclosure.js";
 export * from "./effect-contract.js";
 export * from "./effect-schema.js";
+export * from "./enterprise-oauth-binding.js";
 export * from "./enums.js";
 export * from "./error-spec.js";
 export * from "./eval-vocabulary.js";

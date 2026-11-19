@@ -193,7 +193,8 @@ Generated files are outputs of the reviewed model. Manual edits are replaced
 when regenerated. The CLI and MCP runtime need installed or linked Anvil
 packages. Generated SDK sources can be vendored independently and use platform
 standard libraries. Business clients also need the shared gateway.
-[SDK guide](docs/client-sdks.md) · [Gemini Enterprise setup](docs/targets.md).
+[SDK guide](docs/client-sdks.md) · [Gemini Enterprise setup](docs/targets.md) ·
+[Per-user API credentials](docs/identity-adapters.md#link-a-downstream-oauth-account).
 
 ## Verify before release
 

@@ -1,7 +1,76 @@
-import { describe, expect, it } from "vitest";
-import { fetchPublicJson, isPublicAddress, validatePublicHttpsUrl } from "./safe-http.js";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
+import { describe, expect, it, vi } from "vitest";
+import { requestPinnedJson } from "./pinned-http.js";
+import {
+  fetchPublicJson,
+  fetchPublicStatus,
+  isPublicAddress,
+  validatePublicHttpsUrl,
+} from "./safe-http.js";
 
 describe("public HTTPS policy", () => {
+  it("uses the validated address for a real hostname socket and never follows a status-only redirect", async () => {
+    const requests: string[] = [];
+    const server = createServer((req, res) => {
+      requests.push(req.url ?? "");
+      if (req.url === "/revoke") {
+        res.writeHead(307, { location: "/unexpected" });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ host: req.headers.host }));
+    });
+    const listening = once(server, "listening");
+    server.listen(0, "127.0.0.1");
+    await listening;
+    const { port } = server.address() as AddressInfo;
+    // Exercise Node's actual hostname lookup path with a prevalidated fixture
+    // address. .invalid cannot resolve in DNS. Older pinning failed on Node
+    // 22/24 when its default address-family selection requested all addresses.
+    const target = {
+      url: new URL(`http://socket-test.invalid:${port}/token`),
+      addresses: [{ address: "127.0.0.1", family: 4 }],
+    };
+    try {
+      const result = await requestPinnedJson(target, {}, { maxBytes: 2048, timeoutMs: 2000 });
+      expect(result.json).toEqual({ host: target.url.host });
+      target.url.pathname = "/revoke";
+      await expect(
+        requestPinnedJson(
+          target,
+          { method: "POST" },
+          { maxBytes: 0, timeoutMs: 2000, statusOnly: true },
+        ),
+      ).rejects.toThrow(/redirect/);
+      expect(requests).toEqual(["/token", "/revoke"]);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it.each([
+    fetchPublicJson,
+    fetchPublicStatus,
+  ])("stops before credential transmission when aborted during DNS", async (send) => {
+    const request = vi.fn<typeof fetch>();
+    const controller = new AbortController();
+    const resolving = new Promise<never>(() => {});
+    const result = send(
+      "https://issuer.example/token",
+      { signal: controller.signal },
+      {
+        fetchImpl: request,
+        resolveHost: () => resolving,
+      },
+    );
+    controller.abort(new Error("caller cancelled"));
+    await expect(result).rejects.toThrow("caller cancelled");
+    expect(request).not.toHaveBeenCalled();
+  });
   it.each([
     "10.0.0.1",
     "127.0.0.1",
