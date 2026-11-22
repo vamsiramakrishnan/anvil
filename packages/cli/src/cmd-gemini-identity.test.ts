@@ -108,11 +108,81 @@ it("binds SiteMinder connector identity separately from Entra sign-in through th
     ).toBe(1);
     expect(badIO.text()).toContain("target/identity_issuer_mismatch");
     expect(readFileSync(setupPath, "utf8")).toBe(before);
+    const bindingPath = join(root, "outbound.json");
+    writeFileSync(bindingPath, JSON.stringify({ clientSecret: "must-never-appear" }));
+    const bindingIO = bufferIO();
+    expect(
+      await runAnvilCli([...args, "--enterprise-oauth-binding", bindingPath], { io: bindingIO }),
+    ).toBe(1);
+    expect(bindingIO.text()).toContain("Downstream OAuth binding");
+    expect(bindingIO.text()).not.toContain("must-never-appear");
+    expect(readFileSync(setupPath, "utf8")).toBe(before);
     writeFileSync(path, JSON.stringify({ ...profile, clientSecret: "do-not-echo-this-secret" }));
     const secretIO = bufferIO();
     expect(await runAnvilCli(args, { io: secretIO })).toBe(1);
     expect(secretIO.text()).not.toContain("do-not-echo-this-secret");
     expect(readFileSync(setupPath, "utf8")).toBe(before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+it("generates the reviewed one-operation downstream OAuth example through the CLI", async () => {
+  const root = mkdtempSync(join(tmpdir(), "anvil-user-oauth-"));
+  const bundle = join(root, "bundle");
+  const examples = fileURLToPath(new URL("../../../examples/", import.meta.url));
+  const identityDir = join(examples, "identity");
+  const run = async (args: string[]) => {
+    const io = bufferIO();
+    expect(await runAnvilCli(args, { io }), io.text()).toBe(0);
+  };
+  try {
+    await run([
+      "compile",
+      join(examples, "payments/openapi.yaml"),
+      "--manifest",
+      join(identityDir, "per-user-payments.yaml"),
+      "--out",
+      bundle,
+      "--root",
+      root,
+    ]);
+    await run(["approve", bundle, "payments.payments.get"]);
+    await run([
+      "target",
+      "gemini-enterprise",
+      bundle,
+      "--surface",
+      "custom-mcp",
+      "--server-auth",
+      "oauth",
+      "--endpoint",
+      "https://mcp.example.com/mcp",
+      "--project",
+      "example-org-demo",
+      "--project-number",
+      "123456789",
+      "--location",
+      "global",
+      "--engine",
+      "payments",
+      "--idp",
+      "other",
+      "--oauth-authorization-url",
+      "https://siteminder.example.com/connector/authorize",
+      "--oauth-token-url",
+      "https://siteminder.example.com/connector/token",
+      "--oauth-scope",
+      "mcp.invoke",
+      "--identity-profile",
+      join(identityDir, "siteminder-oidc.json"),
+      "--enterprise-oauth-binding",
+      join(identityDir, "per-user-downstream-oauth.json"),
+    ]);
+    const setup = JSON.parse(
+      readFileSync(join(bundle, "targets/gemini-enterprise/setup.json"), "utf8"),
+    );
+    expect(setup.config.enterpriseOAuthBinding.operations).toEqual(["payments.payments.get"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

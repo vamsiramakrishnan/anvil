@@ -1,5 +1,9 @@
 import type { WebhookContract } from "@anvil/air";
-import { type IdempotencyLedger, idempotencyKeyIsTransportSafe } from "@anvil/runtime";
+import {
+  type ExecuteContext,
+  type IdempotencyLedger,
+  idempotencyKeyIsTransportSafe,
+} from "@anvil/runtime";
 
 /**
  * Closes two gaps left open between `@anvil/runtime`'s Phase 2 primitives
@@ -245,4 +249,17 @@ export async function peekWebhookStatus(
   // (unreachable given the fixed fingerprint above, but handled the same,
   // conservative way if it ever occurred) — not something this peek owns.
   return { found: false };
+}
+
+/** Webhook completions are indexed by job ID without an owner. For an identity
+ * profile, only an authorized upstream poll may return the result. */
+export async function peekSharedJobCompletion(
+  context: Pick<ExecuteContext, "identity" | "ledger">,
+  jobId: unknown,
+): Promise<WebhookStatusPeekResult> {
+  const { identity, ledger } = context;
+  if (identity || !ledger?.findBySecondaryKey || typeof jobId !== "string" || !jobId)
+    return { found: false };
+  const key = await ledger.findBySecondaryKey(jobId);
+  return key === undefined ? { found: false } : peekWebhookStatus(ledger, key);
 }

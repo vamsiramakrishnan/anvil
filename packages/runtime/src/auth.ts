@@ -7,6 +7,7 @@ import {
   type IdempotencyCarrierBinding,
   type TlsClientMaterialRefs,
 } from "@anvil/air";
+import type { EnterprisePrincipal } from "./identity.js";
 import type { InboundIdentity } from "./inbound-identity.js";
 import { isSendableOAuthEndpoint } from "./oauth-endpoint.js";
 import type { HttpRequest, TlsClientMaterial } from "./transport.js";
@@ -37,6 +38,16 @@ export interface AuthMaterial {
  * backward compatible.
  */
 export interface CredentialCallContext {
+  /** Bound after enterprise policy approved the operation, using the actual dispatch URL. */
+  enterprise?: {
+    principal: EnterprisePrincipal;
+    service: string;
+    operation: string;
+    method: string;
+    traceparent?: string;
+    headerNames: readonly string[];
+    url: string;
+  };
   inbound?: InboundIdentity;
   /**
    * The resolved principal's id, the connector (bundle id) serving the call,
@@ -55,6 +66,9 @@ export interface CredentialCallContext {
  * agent-provided input, and never returning the raw secret to the caller.
  */
 export interface CredentialResolver {
+  /** End-user grants may be revoked during a ledger lookup or retry backoff.
+   * Resolve these just before each send or release of a cached result. */
+  resolveAtUse?: boolean;
   resolve(
     profileName: string,
     auth: AuthRequirement,

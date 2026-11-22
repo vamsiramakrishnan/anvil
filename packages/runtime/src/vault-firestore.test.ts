@@ -391,6 +391,7 @@ describe("the REST clients", () => {
           fields: { holder: { stringValue: "h1" }, expires_at_ms: { integerValue: "5000" } },
         },
       }, // live
+      { status: 200, body: {} }, // rollback read-only outcome
       { status: 200, body: { transaction: "t3" } },
       {
         status: 200,
@@ -406,6 +407,7 @@ describe("the REST clients", () => {
           fields: { holder: { stringValue: "h1" }, expires_at_ms: { integerValue: "5000" } },
         },
       }, // not ours: no write
+      { status: 200, body: {} }, // release the transaction
     ]);
     const store = restFirestoreStore({ project: "p", fetchImpl, accessToken: async () => "tok" });
     expect(await store.acquireLease("anvil_vault_leases", "id1", "h1", 5000, 0)).toBe(true);
@@ -415,6 +417,8 @@ describe("the REST clients", () => {
     await store.releaseLease("anvil_vault_leases", "id1", "h1");
     expect(JSON.stringify(calls.at(-1)?.body)).toContain('"delete"');
     await store.releaseLease("anvil_vault_leases", "id1", "h2");
-    expect(calls.length).toBe(10);
+    expect(calls.filter((call) => call.url.endsWith(":rollback")).map((call) => call.body)).toEqual(
+      [{ transaction: "t2" }, { transaction: "t4" }],
+    );
   });
 });

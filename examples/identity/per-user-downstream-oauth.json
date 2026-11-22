@@ -1,0 +1,14 @@
+{
+  "service": "payments",
+  "operations": ["payments.payments.get"],
+  "upstreamBaseUrl": "https://payments.internal.example.com",
+  "issuer": "https://siteminder.example.com/REPLACE_WITH_REVIEWED_ISSUER",
+  "resource": "https://payments.internal.example.com",
+  "authorizationEndpoint": "https://siteminder.example.com/REPLACE_WITH_AUTHORIZATION_ENDPOINT",
+  "tokenEndpoint": "https://siteminder.example.com/REPLACE_WITH_TOKEN_ENDPOINT",
+  "introspectionEndpoint": "https://siteminder.example.com/REPLACE_WITH_INTROSPECTION_ENDPOINT",
+  "redirectUri": "https://portal.example.com/connect/callback",
+  "scopes": ["payments.read"],
+  "clientIdEnv": "PAYMENTS_OAUTH_CLIENT_ID",
+  "clientSecretEnv": "PAYMENTS_OAUTH_CLIENT_SECRET"
+}

@@ -4,8 +4,8 @@ import {
   coordinates,
   KeyedLock,
   type StoredConnection,
-  type VaultBackend,
   VaultUnavailableError,
+  type VersionedVault,
   vaultRecordId,
 } from "./vault.js";
 
@@ -49,6 +49,8 @@ export interface VaultDocument {
   account: string;
   kind: string;
   status: string;
+  /** Present only on enterprise enrollment documents, also sealed in the ciphertext. */
+  revision?: string;
   created_at: string;
   updated_at: string;
   wrapped_dek: Buffer;
@@ -72,6 +74,13 @@ export interface VaultDocumentStore {
     id: string,
     mutate: (current: VaultDocument | undefined) => VaultDocument,
   ): Promise<void>;
+  /** Atomically update or remove the expected enterprise enrollment revision. */
+  compareAndSwap?(
+    collection: string,
+    id: string,
+    expectedRevision: string | undefined,
+    next: VaultDocument | undefined,
+  ): Promise<boolean>;
   /** Delete in a transaction; whether a document existed. */
   remove(collection: string, id: string): Promise<boolean>;
   /**
@@ -127,7 +136,7 @@ interface CachedKey {
   expiresAt: number;
 }
 
-export class FirestoreVault implements VaultBackend {
+export class FirestoreVault implements VersionedVault {
   private readonly store: VaultDocumentStore;
   private readonly kms: KmsClient;
   private readonly kmsKey: string;
@@ -165,14 +174,15 @@ export class FirestoreVault implements VaultBackend {
     if (
       connection.sub !== sub ||
       connection.connector !== connector ||
-      connection.account !== account
+      connection.account !== account ||
+      connection.enterpriseOAuth?.revision !== doc.revision
     ) {
       throw new Error("vault record coordinates do not match");
     }
     return connection;
   }
 
-  async put(connection: StoredConnection): Promise<void> {
+  private async seal(connection: StoredConnection): Promise<VaultDocument> {
     const { sub, connector, account } = connection;
     const aad = Buffer.from(coordinates(sub, connector, account));
     const dek = randomBytes(DEK_BYTES);
@@ -192,6 +202,7 @@ export class FirestoreVault implements VaultBackend {
       account,
       kind: connection.kind,
       status: connection.status,
+      ...(connection.enterpriseOAuth ? { revision: connection.enterpriseOAuth.revision } : {}),
       created_at: connection.createdAt,
       updated_at: connection.updatedAt,
       wrapped_dek: wrapped.ciphertext,
@@ -200,9 +211,44 @@ export class FirestoreVault implements VaultBackend {
       ciphertext,
       tag,
     };
-    await this.store.transact(this.collection, vaultRecordId(sub, connector, account), () => doc);
     // The key we just made is already unwrapped; no KMS call for the next read.
     this.remember(wrapped.ciphertext, aad, dek);
+    return doc;
+  }
+
+  async put(connection: StoredConnection): Promise<void> {
+    const doc = await this.seal(connection);
+    await this.store.transact(
+      this.collection,
+      vaultRecordId(doc.sub, doc.connector, doc.account),
+      () => doc,
+    );
+  }
+
+  async compareAndSwap(
+    sub: string,
+    connector: string,
+    account: string,
+    expectedRevision: string | undefined,
+    next: StoredConnection | undefined,
+  ): Promise<boolean> {
+    if (!this.store.compareAndSwap)
+      throw new VaultUnavailableError("Vault store lacks conditional writes.");
+    if (
+      next &&
+      (next.sub !== sub ||
+        next.connector !== connector ||
+        next.account !== account ||
+        !next.enterpriseOAuth?.revision)
+    )
+      throw new Error("Invalid conditional vault write.");
+    const doc = next ? await this.seal(next) : undefined;
+    return this.store.compareAndSwap(
+      this.collection,
+      vaultRecordId(sub, connector, account),
+      expectedRevision,
+      doc,
+    );
   }
 
   delete(sub: string, connector: string, account: string): Promise<boolean> {
@@ -469,6 +515,7 @@ function encodeDocument(doc: VaultDocument): FirestoreFields {
     account: str(doc.account),
     kind: str(doc.kind),
     status: str(doc.status),
+    ...(doc.revision ? { revision: str(doc.revision) } : {}),
     created_at: str(doc.created_at),
     updated_at: str(doc.updated_at),
     wrapped_dek: bytes(doc.wrapped_dek),
@@ -498,6 +545,7 @@ function decodeDocument(fields: FirestoreFields | undefined): VaultDocument {
     account: str("account"),
     kind: str("kind"),
     status: str("status"),
+    ...(f.revision ? { revision: str("revision") } : {}),
     created_at: str("created_at"),
     updated_at: str("updated_at"),
     wrapped_dek: bytes("wrapped_dek"),
@@ -560,7 +608,13 @@ export function restFirestoreStore(options: RestFirestoreOptions): VaultDocument
         : outcome.delete
           ? { delete: docName(collection, id) }
           : undefined;
-      if (!write) return outcome.result;
+      if (!write) {
+        // A read-write transaction that found a live lease must release its
+        // read lock before the holder can delete the lease.
+        const rollback = await http.call("POST", `${documents}:rollback`, { transaction });
+        if (rollback.status !== 200) throw failure("rollback", rollback.status);
+        return outcome.result;
+      }
       const commit = await http.call("POST", `${documents}:commit`, {
         writes: [write],
         transaction,
@@ -618,6 +672,34 @@ export function restFirestoreStore(options: RestFirestoreOptions): VaultDocument
         }
         return { write: encodeDocument(mutate(current)), result: undefined };
       });
+    },
+    async compareAndSwap(collection, id, expectedRevision, next) {
+      // Firestore's updateTime precondition closes the race between our read
+      // of the application revision and the write, including delete/recreate.
+      const read = await http.call("GET", docUrl(collection, id));
+      if (read.status !== 200 && read.status !== 404) throw failure("get", read.status);
+      const exists = read.status === 200;
+      const doc = read.json as { updateTime?: string; fields?: FirestoreFields };
+      if (
+        expectedRevision === undefined
+          ? exists
+          : doc.fields?.revision?.stringValue !== expectedRevision
+      )
+        return false;
+      if (!exists && !next) return true;
+      if (exists && !doc.updateTime)
+        throw new VaultUnavailableError("Missing vault document version.");
+      const currentDocument = exists ? { updateTime: doc.updateTime } : { exists: false };
+      const name = docName(collection, id);
+      const write = next
+        ? { update: { name, fields: encodeDocument(next) }, currentDocument }
+        : { delete: name, currentDocument };
+      const commit = await http.call("POST", `${documents}:commit`, { writes: [write] });
+      if (commit.status === 200) return true;
+      const error = (commit.json as { error?: { status?: string } }).error?.status;
+      if (["FAILED_PRECONDITION", "ALREADY_EXISTS", "NOT_FOUND", "ABORTED"].includes(error ?? ""))
+        return false;
+      throw failure("conditional commit", commit.status);
     },
     remove(collection, id) {
       return inTransaction(collection, id, (_current, exists) => ({

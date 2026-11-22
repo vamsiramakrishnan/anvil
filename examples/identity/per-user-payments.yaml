@@ -1,0 +1,15 @@
+# Use with examples/payments/openapi.yaml to prepare one read for review.
+service:
+  name: payments
+operations:
+  getPayment:
+    auth:
+      type: oauth2_authorization_code
+      principal: end_user
+      secret_source: vault
+      scopes: [payments.read]
+      provider:
+        authorization_endpoint: https://siteminder.example.com/REPLACE_WITH_AUTHORIZATION_ENDPOINT
+        token_endpoint: https://siteminder.example.com/REPLACE_WITH_TOKEN_ENDPOINT
+        client_auth: client_secret_basic
+        pkce: true

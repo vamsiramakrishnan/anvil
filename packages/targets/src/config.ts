@@ -7,7 +7,7 @@
  * for regeneration, status checks, and resumable operator handoff.
  */
 import { createHash } from "node:crypto";
-import { IdentityProfile } from "@anvil/air";
+import { EnterpriseOAuthBinding, IdentityProfile } from "@anvil/air";
 import { parseCanonicalEngineResource } from "./coordinates.js";
 
 export const GEMINI_REGISTRATION_SURFACES = ["custom-mcp", "agent-gateway", "both"] as const;
@@ -111,6 +111,8 @@ export interface GeminiEnterpriseTargetConfig {
   connectorOAuth: ConnectorOAuthConfig;
   /** Reviewed connector authority, independent of Gemini Enterprise sign-in. */
   identityProfile?: IdentityProfile;
+  /** Optional per-employee grant for the downstream API or session broker. */
+  enterpriseOAuthBinding?: EnterpriseOAuthBinding;
   /**
    * GE sign-in Workforce pool metadata. It is intentionally separate from
    * connectorOAuth and never changes the token accepted by /mcp.
@@ -135,6 +137,8 @@ export interface GeminiEnterpriseTargetConfigInput {
   gatewayAuthorizationPolicy?: string;
   connectorOAuth?: Partial<ConnectorOAuthConfig>;
   identityProfile?: IdentityProfile;
+  /** Optional per-employee grant for the downstream API or session broker. */
+  enterpriseOAuthBinding?: EnterpriseOAuthBinding;
   workforcePool?: string;
   confirmEngineEgressReroute?: boolean;
 }
@@ -182,6 +186,9 @@ export function createGeminiEnterpriseTargetConfig(
         input.connectorOAuth?.inboundAudience?.trim() || identityProfile?.authentication.audience,
     },
     ...(identityProfile ? { identityProfile } : {}),
+    ...(input.enterpriseOAuthBinding !== undefined
+      ? { enterpriseOAuthBinding: EnterpriseOAuthBinding.parse(input.enterpriseOAuthBinding) }
+      : {}),
     workforcePool: input.workforcePool?.trim() || undefined,
     confirmEngineEgressReroute: input.confirmEngineEgressReroute === true,
   };

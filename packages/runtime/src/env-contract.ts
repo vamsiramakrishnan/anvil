@@ -178,6 +178,40 @@ export const RUNTIME_ENV_CONTRACT: readonly RuntimeEnvVar[] = [
       "Non-secret versioned identity profile JSON, suitable for Cloud Run environment configuration. Exclusive with ANVIL_IDENTITY_PROFILE.",
   },
   {
+    name: "ANVIL_ENTERPRISE_OAUTH_JSON",
+    description:
+      "Reviewed per-user downstream OAuth binding for a standalone HTTP MCP deployment. Contains endpoint coordinates and secret variable names.",
+  },
+  {
+    name: "ANVIL_VAULT_BACKEND",
+    description:
+      "Credential vault backend. Multi-instance enterprise OAuth deployments use firestore.",
+  },
+  {
+    name: "ANVIL_VAULT_KMS_KEY",
+    description: "Cloud KMS crypto key resource wrapping the per-record vault encryption keys.",
+  },
+  {
+    name: "ANVIL_VAULT_FIRESTORE_PROJECT",
+    description: "Firestore vault project. Defaults to the project of the KMS key.",
+  },
+  {
+    name: "ANVIL_VAULT_FIRESTORE_DATABASE",
+    description: "Firestore vault database. Defaults to (default).",
+  },
+  {
+    name: "ANVIL_VAULT_FIRESTORE_COLLECTION",
+    description: "Firestore collection for encrypted vault records. Defaults to anvil_vault.",
+  },
+  {
+    name: "ANVIL_VAULT_KEY_FILE",
+    description: "Path to the protected encryption key file for a local file vault.",
+  },
+  {
+    name: "ANVIL_VAULT_DIR",
+    description: "Local file vault directory.",
+  },
+  {
     name: "ANVIL_PRINCIPALS",
     description:
       "Principal directory, enforced on every serving surface: `token:id:scope1,scope2;…` pairs or a JSON object keyed by bearer token, `issuer:subject`, `subject`, or `email` (an inbound caller resolves by the first key that matches). Unset, every caller is the anonymous every-scope principal. Malformed input yields an empty directory (fail closed).",

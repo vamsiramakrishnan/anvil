@@ -28,6 +28,7 @@ import {
 import { stringify as toYaml } from "yaml";
 import { z } from "zod";
 import { compiledOperations } from "./catalog.js";
+import { cloudRunEnvironment } from "./deploy-cloud-run-env.js";
 import {
   resolvedWebhookRoutes,
   runtimeLockJson,
@@ -783,30 +784,10 @@ resource "google_cloud_run_v2_service" "tools" {
   # and relies on the server's own inbound OAuth check (see var.env below), never
   # on network reachability alone.
   ingress${ledger ? "   " : ""} = var.ingress
-${ledger ? "  depends_on = [google_project_iam_member.runtime_ledger, google_firestore_field.ledger_result_expiry]" : ""}
+  depends_on = [google_secret_manager_secret_iam_member.runtime_reads_credential${ledger ? ", google_project_iam_member.runtime_ledger, google_firestore_field.ledger_result_expiry" : ""}]
 
   lifecycle {
-    precondition {
-      condition = length(setintersection(
-        toset(keys(var.env)),
-        local.anvil_compiler_owned_runtime_env_names,
-      )) == 0
-      error_message = "var.env may not redefine compiler-owned ANVIL runtime settings."
-    }
-    precondition {
-      condition = length(setintersection(
-        toset(keys(var.credential_secret_refs)),
-        local.anvil_compiler_owned_runtime_env_names,
-      )) == 0
-      error_message = "credential_secret_refs may not redefine compiler-owned ANVIL runtime settings."
-    }
-    precondition {
-      condition = length(setintersection(
-        toset(keys(var.env)),
-        toset(keys(var.credential_secret_refs)),
-      )) == 0
-      error_message = "One runtime environment variable may not be supplied by both var.env and credential_secret_refs."
-    }
+${cloudRunEnvironment.preconditions}
 ${
   ledger
     ? `    precondition {
@@ -904,28 +885,7 @@ ${
         name  = "ANVIL_SECRET_PROJECT"
         value = coalesce(var.secret_project, var.project_id)
       }
-      # Additional plain env — a connector target injects its inbound-auth
-      # contract (ANVIL_INBOUND_*) here so the server self-enforces the platform's
-      # token. Empty by default.
-      dynamic "env" {
-        for_each = var.env
-        content {
-          name  = env.key
-          value = env.value
-        }
-      }
-      # Upstream credential *references* as PLAIN env: the VALUE is a Secret
-      # Manager resource name (sm://…), which the runtime dereferences at call
-      # time and TTL-caches — so 'latest' rotates without a new revision. Grant
-      # this SA access via var.credential_secret_ids below. See
-      # deploy/credentials.required.yaml for exactly which keys this surface reads.
-      dynamic "env" {
-        for_each = var.credential_secret_refs
-        content {
-          name  = env.key
-          value = env.value
-        }
-      }
+${cloudRunEnvironment.container}
     }
   }
 }
@@ -940,16 +900,7 @@ resource "google_cloud_run_v2_service_iam_member" "invokers" {
   member   = each.value
 }
 
-# Scoped read access to each upstream credential secret referenced by
-# var.credential_secret_refs (client secrets, assertion keys, bearer tokens).
-# One binding per secret — never a project-wide secret role. Pass the secret IDs
-# (projects/P/secrets/S) so the binding is explicit and least-privilege.
-resource "google_secret_manager_secret_iam_member" "runtime_reads_credential" {
-  for_each  = toset(var.credential_secret_ids)
-  secret_id = each.value
-  role      = "roles/secretmanager.secretAccessor"
-  member    = "serviceAccount:\${google_service_account.runtime.email}"
-}
+${cloudRunEnvironment.secretIam}
 
 # A connector reached by an external platform (Gemini Enterprise calls the /mcp
 # URL over the internet) sets allow_unauthenticated = true. Cloud Run then admits
@@ -1143,19 +1094,7 @@ variable "secret_project" {
   type    = string
   default = ""
 }
-# Upstream credential references as PLAIN env: ENV_NAME → Secret Manager resource
-# name (sm://projects/P/secrets/S/versions/latest). The runtime dereferences and
-# TTL-caches them, so 'latest' rotates without a redeploy. Names, never values.
-variable "credential_secret_refs" {
-  type    = map(string)
-  default = {}
-}
-# Secret IDs (projects/P/secrets/S) this SA may read — one scoped secretAccessor
-# binding each. Provide the secrets backing credential_secret_refs here.
-variable "credential_secret_ids" {
-  type    = list(string)
-  default = []
-}
+${cloudRunEnvironment.secretVariables}
 `;
 }
 
@@ -1450,6 +1389,11 @@ Secret Manager, then either:
   = \`sm://projects/…/secrets/…/versions/latest\`) and grant read with
   \`var.credential_secret_ids\`. The runtime dereferences it at call time and
   TTL-caches it, so \`latest\` rotates without a new revision.
+
+- **Secret environment binding:** for clients that read the value at startup,
+  set \`secret_env_refs = { CLIENT_SECRET = { secret = "projects/PROJECT/secrets/SECRET", version = "1" } }\`.
+  Cloud Run resolves the pinned version. Terraform grants the runtime identity
+  access to each named secret. Rotate by changing the version in a new revision.
 
 Resolution is per-operation by the auth shape: static \`api_key\`/\`basic\`/bearer read
 directly; \`oauth2_client_credentials\` (RFC 6749 §4.4), on-behalf-of (RFC 8693 token

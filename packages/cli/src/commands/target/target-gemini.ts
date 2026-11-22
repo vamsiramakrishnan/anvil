@@ -10,7 +10,7 @@ import {
   statSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { IdentityProfile } from "@anvil/air";
+import { EnterpriseOAuthBinding, IdentityProfile } from "@anvil/air";
 import { loadAir, resolveAirPath } from "@anvil/refinement";
 import {
   buildConnectorPlan,
@@ -108,6 +108,10 @@ export function registerTargetGemini(target: Command, ctx: CommandContext): void
       .option("--inbound-audience <audience>", "audience identifying this MCP API")
       .option("--identity-profile <file>", "reviewed JSON identity profile for connector OAuth")
       .option(
+        "--enterprise-oauth-binding <file>",
+        "reviewed per-user OAuth binding for the downstream API or session broker",
+      )
+      .option(
         "--wif <pool>",
         "full locations/global/workforcePools/<pool-id> resource for GE sign-in (separate from /mcp auth)",
       )
@@ -158,6 +162,7 @@ interface GeminiTargetOptions {
   inboundIssuer?: string;
   inboundAudience?: string;
   identityProfile?: string;
+  enterpriseOauthBinding?: string;
   wif?: string;
   confirmEngineEgressReroute?: boolean;
   agentIdentityPrincipalSet?: string;
@@ -181,6 +186,19 @@ function runGeminiTarget(
       );
     } catch {
       io.err("Identity profile could not be read or does not match the shared identity schema.");
+      return 1;
+    }
+  }
+  let enterpriseOAuthBinding: EnterpriseOAuthBinding | undefined;
+  if (opts.enterpriseOauthBinding) {
+    try {
+      enterpriseOAuthBinding = EnterpriseOAuthBinding.parse(
+        JSON.parse(readFileSync(opts.enterpriseOauthBinding, "utf8")),
+      );
+    } catch {
+      io.err(
+        "Downstream OAuth binding could not be read or does not match the shared binding schema.",
+      );
       return 1;
     }
   }
@@ -208,6 +226,7 @@ function runGeminiTarget(
     },
     workforcePool: opts.wif,
     identityProfile,
+    enterpriseOAuthBinding,
     confirmEngineEgressReroute: opts.confirmEngineEgressReroute,
   });
 

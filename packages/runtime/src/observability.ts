@@ -9,6 +9,8 @@ import type { ErrorCode } from "@anvil/air";
  * to Cloud Trace/Logging, OTLP, or captured in tests. Never contains secrets.
  */
 export interface ExecutionRecord {
+  /** Span id allocated before dispatch when propagating a W3C trace context. */
+  spanId?: string;
   traceId: string;
   operationId: string;
   effect: "read" | "mutation";
@@ -320,6 +322,7 @@ export function otelTraceId(traceId: string): string {
 
 /** A 16-hex span id derived from the record, stable for the same call. */
 export function otelSpanId(record: ExecutionRecord): string {
+  if (record.spanId && /^[0-9a-f]{16}$/.test(record.spanId)) return record.spanId;
   return createHash("sha256")
     .update(`${record.traceId}\0${record.operationId}\0${record.outcome}`)
     .digest("hex")

@@ -163,7 +163,8 @@ jobs:
 
   e2e:
     name: Console end-to-end
-    runs-on: ubuntu-latest
+    # Playwright 1.56 ships Chromium for Ubuntu 24.04.
+    runs-on: ubuntu-24.04
     # Separate runners keep the browser proof independent of mutation edits and
     # report UI failures without waiting for the full workspace mutation gate.
     timeout-minutes: 30

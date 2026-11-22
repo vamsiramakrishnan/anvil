@@ -19,6 +19,7 @@ import {
   type CredentialCallContext,
   type CredentialResolver,
 } from "./auth.js";
+import type { EnterpriseGrantRecord } from "./enterprise-oauth-store.js";
 import { AnvilError } from "./errors.js";
 import type { GoogleWorkloadCredentials } from "./google-workload.js";
 import { DEFAULT_ACCOUNT } from "./grants.js";
@@ -51,6 +52,8 @@ export interface StoredConnection {
   scope?: string;
   /** Resource-bound MCP OAuth tokens; never read as a generic REST bearer. */
   mcp?: { resource: string; issuer: string; tokens: OAuthTokens };
+  /** Separate encrypted grant state for a resource-bound enterprise connector. */
+  enterpriseOAuth?: EnterpriseGrantRecord;
   createdAt: string;
   updatedAt: string;
 }
@@ -174,6 +177,17 @@ export interface VaultBackend {
   withLock<T>(sub: string, connector: string, account: string, fn: () => Promise<T>): Promise<T>;
 }
 
+/** Conditional enrollment writes fence a late callback or refresh after lease expiry. */
+export interface VersionedVault extends VaultBackend {
+  compareAndSwap(
+    sub: string,
+    connector: string,
+    account: string,
+    expectedRevision: string | undefined,
+    next: StoredConnection | undefined,
+  ): Awaitable<boolean>;
+}
+
 /**
  * The vault's backing service (Firestore or KMS) failed or is unreachable.
  * The call fails; a secret the service could not vouch for is never returned.
@@ -207,7 +221,7 @@ export class KeyedLock {
   }
 }
 
-export class ConnectionVault implements VaultBackend {
+export class ConnectionVault implements VersionedVault {
   private readonly lock = new KeyedLock();
 
   constructor(
@@ -284,6 +298,34 @@ export class ConnectionVault implements VaultBackend {
     const file = this.fileFor(sub, connector, account);
     if (!existsSync(file)) return false;
     unlinkSync(file);
+    return true;
+  }
+
+  /** Synchronous read/replace for single-process development. */
+  compareAndSwap(
+    sub: string,
+    connector: string,
+    account: string,
+    expectedRevision: string | undefined,
+    next: StoredConnection | undefined,
+  ): boolean {
+    const current = this.get(sub, connector, account);
+    if (
+      expectedRevision === undefined
+        ? current !== undefined
+        : current?.enterpriseOAuth?.revision !== expectedRevision
+    )
+      return false;
+    if (next) {
+      if (
+        next.sub !== sub ||
+        next.connector !== connector ||
+        next.account !== account ||
+        !next.enterpriseOAuth?.revision
+      )
+        throw new Error("Invalid conditional vault write.");
+      this.put(next);
+    } else this.delete(sub, connector, account);
     return true;
   }
 
