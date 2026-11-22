@@ -110,7 +110,7 @@ function namedStub(name: string, target: unknown): Record<string, unknown> | unk
       ? (target as Record<string, unknown>).type
       : undefined;
   const description = `A '${name}' object; nested one level deep to keep this schema a bounded size — see the '${name}' schema for its full fields.`;
-  return truncateToStub(typeof type === "string" ? { type, description } : { description });
+  return typeof type === "string" ? { type, description } : { description };
 }
 
 /** Collect `components.schemas` from a parsed OpenAPI document, defensively. */
