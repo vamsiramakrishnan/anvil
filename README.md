@@ -250,3 +250,7 @@ The documentation site provides [llms.txt](https://vamsiramakrishnan.github.io/a
 and [llms-full.txt](https://vamsiramakrishnan.github.io/anvil/llms-full.txt).
 
 Apache-2.0. See [LICENSE](LICENSE).
+
+## Related projects
+
+- [aiplex](https://github.com/vamsiramakrishnan/aiplex). Apply identity, policy and usage accounting to model, tool and agent traffic.
